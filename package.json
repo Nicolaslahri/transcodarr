@@ -1,0 +1,22 @@
+{
+  "name": "transcodarr",
+  "private": true,
+  "packageManager": "npm@10.8.2",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev --parallel",
+    "dev:main": "turbo dev --filter=@transcodarr/main",
+    "dev:worker": "turbo dev --filter=@transcodarr/worker",
+    "dev:web": "turbo dev --filter=@transcodarr/web",
+    "lint": "turbo lint",
+    "type-check": "turbo type-check"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

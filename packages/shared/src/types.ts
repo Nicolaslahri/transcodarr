@@ -1,0 +1,181 @@
+// ─── Job & Worker Status ─────────────────────────────────────────────────────
+
+export type JobStatus =
+  | 'pending'
+  | 'analyzing'
+  | 'queued'
+  | 'dispatched'
+  | 'transcoding'
+  | 'swapping'
+  | 'complete'
+  | 'failed'
+  | 'skipped';
+
+export type WorkerStatus = 'pending' | 'active' | 'idle' | 'offline';
+
+export type GpuVendor = 'nvidia' | 'amd' | 'intel' | 'cpu';
+
+// ─── Hardware ────────────────────────────────────────────────────────────────
+
+export interface HardwareProfile {
+  gpu: GpuVendor;
+  gpuName: string;
+  encoders: string[];   // e.g. ['hevc_nvenc', 'h264_nvenc', 'av1_nvenc']
+  decoders: string[];   // e.g. ['h264_cuvid', 'hevc_cuvid']
+  hwaccels: string[];   // e.g. ['cuda', 'nvdec']
+}
+
+// ─── SMB Path Mapping ────────────────────────────────────────────────────────
+
+export interface SmbMapping {
+  /** Network path as seen from Main, e.g. /data/media */
+  networkBasePath: string;
+  /** Local path on this Worker, e.g. N:\ or /mnt/media */
+  localBasePath: string;
+}
+
+// ─── Worker ──────────────────────────────────────────────────────────────────
+
+export interface WorkerInfo {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  status: WorkerStatus;
+  hardware: HardwareProfile;
+  smbMappings: SmbMapping[];
+  lastSeen: number;
+  currentJobId?: string;
+  currentProgress?: number;
+  currentFps?: number;
+}
+
+// ─── Recipe ──────────────────────────────────────────────────────────────────
+
+export interface Recipe {
+  id: string;
+  name: string;
+  description: string;
+  /** Codec string that ffprobe returns — used for smart-filter skip check */
+  targetCodec: string;
+  targetContainer: 'mkv' | 'mp4';
+  icon: string;
+  color: string;
+}
+
+// ─── Job ─────────────────────────────────────────────────────────────────────
+
+export interface Job {
+  id: string;
+  filePath: string;
+  fileName: string;
+  fileSize?: number;
+  codecIn?: string;
+  resolution?: string;
+  bitratIn?: number;
+  recipe: string;
+  status: JobStatus;
+  workerId?: string;
+  workerName?: string;
+  progress: number;
+  fps?: number;
+  eta?: number;
+  error?: string;
+  sizeBefore?: number;
+  sizeAfter?: number;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
+// ─── Job Payload (Main → Worker) ─────────────────────────────────────────────
+
+export interface JobPayload {
+  jobId: string;
+  /** Canonical path on Main (Pi) */
+  filePath: string;
+  /** Translated path if Worker has an SMB mapping covering filePath */
+  smbPath?: string;
+  recipe: Recipe;
+  mainHost: string;
+  mainPort: number;
+  /** Random token for callback auth */
+  callbackToken: string;
+}
+
+// ─── File Analysis (from ffprobe) ─────────────────────────────────────────────
+
+export interface FileAnalysis {
+  codec: string;
+  duration: number;
+  bitrate: number;
+  resolution: string;
+  audioCodec: string;
+  audioLanguages: string[];
+  fileSize: number;
+  container: string;
+}
+
+// ─── Progress Update (Worker → Main) ─────────────────────────────────────────
+
+export interface ProgressUpdate {
+  jobId: string;
+  workerId: string;
+  progress: number;
+  fps?: number;
+  eta?: number;
+  phase: 'analyzing' | 'transcoding' | 'swapping';
+}
+
+// ─── Job Complete (Worker → Main) ────────────────────────────────────────────
+
+export interface JobCompletePayload {
+  jobId: string;
+  workerId: string;
+  callbackToken: string;
+  success: boolean;
+  outputPath?: string;
+  sizeBefore?: number;
+  sizeAfter?: number;
+  error?: string;
+}
+
+// ─── Watched Path ────────────────────────────────────────────────────────────
+
+export interface WatchedPath {
+  id: string;
+  path: string;
+  recipe: string;
+  enabled: boolean;
+  createdAt: number;
+}
+
+// ─── WebSocket Events (Main → Browser) ───────────────────────────────────────
+
+export type WsEventType =
+  | 'worker:discovered'
+  | 'worker:accepted'
+  | 'worker:offline'
+  | 'worker:progress'
+  | 'job:queued'
+  | 'job:progress'
+  | 'job:complete'
+  | 'job:failed'
+  | 'stats:update';
+
+export interface WsEvent<T = unknown> {
+  event: WsEventType;
+  data: T;
+  timestamp: number;
+}
+
+// ─── Stats ───────────────────────────────────────────────────────────────────
+
+export interface DashboardStats {
+  jobsToday: number;
+  jobsTotal: number;
+  gbSaved: number;
+  workersOnline: number;
+  queueDepth: number;
+  activeJobs: number;
+}

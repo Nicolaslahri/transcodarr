@@ -1,0 +1,13 @@
+version: "3.8"
+services:
+  transcodarr-main:
+    build: .
+    container_name: transcodarr-main
+    network_mode: "host" # Required for mDNS to work properly across your home network
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data # Transcodarr Database
+      # NOTE: Map the same paths here as you do for Radarr/Sonarr!
+      - /mnt/media:/data/media 
+    environment:
+      - TZ=America/New_York

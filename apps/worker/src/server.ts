@@ -69,14 +69,17 @@ export async function createWorkerServer(port: number) {
   });
 
   // Identity — tells the Web UI it's a Worker node
-  app.get('/api/meta', async () => ({
-    mode: 'worker',
-    id: workerId,
-    name: process.env.WORKER_NAME ?? workerId,
-    version: process.env.npm_package_version ?? '1.0.5',
-    hardware,
-    mainUrl,
-  }));
+  app.get('/api/meta', async () => {
+    const pkgVersion = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')).version;
+    return {
+      mode: 'worker',
+      id: workerId,
+      name: process.env.WORKER_NAME ?? workerId,
+      version: pkgVersion,
+      hardware,
+      mainUrl,
+    };
+  });
 
   // Settings stubs — Worker has only General settings (no DB)
   app.get('/api/settings/general', async () => ({

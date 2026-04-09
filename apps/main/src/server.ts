@@ -114,7 +114,8 @@ export async function createServer(isSetup = false) {
 
   if (isSetup) {
     // Setup endpoints
-    app.get('/api/meta', async () => ({ mode: 'loading_setup', name: 'Transcodarr Setup', version: process.env.npm_package_version ?? '1.0.5' }));
+    const pkgVersion = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')).version;
+    app.get('/api/meta', async () => ({ mode: 'loading_setup', name: 'Transcodarr Setup', version: pkgVersion }));
     
     // Auto-discover Main Nodes on the network
     app.get('/api/setup/discover', async () => {
@@ -166,12 +167,14 @@ export async function createServer(isSetup = false) {
   await app.register(jobsRoutes,    { prefix: '/api/jobs' });
   await app.register(settingsRoutes, { prefix: '/api/settings' });
 
-  // Identity endpoint — tells the Web UI it's a Main node
-  app.get('/api/meta', async () => ({
-    mode: 'main',
-    name: process.env.NODE_NAME ?? 'Transcodarr Main',
-    version: process.env.npm_package_version ?? '1.0.5',
-  }));
+  app.get('/api/meta', async () => {
+    const pkgVersion = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')).version;
+    return {
+      mode: 'main',
+      name: process.env.NODE_NAME ?? 'Transcodarr Main',
+      version: pkgVersion,
+    };
+  });
 
   // Health check
   app.get('/api/health', async () => ({ status: 'ok', timestamp: Date.now() }));

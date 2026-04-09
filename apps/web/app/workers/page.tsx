@@ -251,6 +251,12 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
   const [saving, setSaving]             = useState(false);
   const [saveOk, setSaveOk]             = useState(false);
 
+  // Keep local state in sync with external DB save if websocket updates it
+  const smbStr = JSON.stringify(worker.smbMappings ?? []);
+  useEffect(() => {
+    setMappings(JSON.parse(smbStr));
+  }, [smbStr]);
+
   const isPending = worker.status === 'pending';
   const isActive  = worker.status === 'active';
   const isOffline = worker.status === 'offline';

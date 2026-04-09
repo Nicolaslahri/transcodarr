@@ -104,8 +104,13 @@ export async function workersRoutes(app: FastifyInstance) {
   app.put<{ Params: { id: string }; Body: { mappings: SmbMapping[] } }>(
     '/:id/mappings',
     async (req) => {
-      getDb().prepare('UPDATE workers SET smb_mappings = ? WHERE id = ?')
+      const db = getDb();
+      db.prepare('UPDATE workers SET smb_mappings = ? WHERE id = ?')
         .run(JSON.stringify(req.body.mappings), req.params.id);
+      
+      const worker = rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(req.params.id) as any);
+      broadcast('worker:updated', worker);
+      
       return { ok: true };
     },
   );

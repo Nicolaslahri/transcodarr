@@ -174,8 +174,8 @@ export async function createWorkerServer(port: number) {
 }
 
 async function transcodeInBackground(payload: JobPayload): Promise<void> {
-  // Always call back to the Host that dispatched this job, not the static MAIN_URL
-  const callbackBase = `http://${payload.mainHost}:${payload.mainPort}`;
+  // Use the verified, user-configured Main IP instead of the potentially unroutable Docker IP sent by dispatcher
+  const callbackBase = mainUrl.replace(/\/$/, '');
   const progressUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/progress`;
   const completeUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/complete`;
   const fileName = (payload.smbPath ?? payload.filePath).split(/[\\/]/).pop() ?? payload.filePath;

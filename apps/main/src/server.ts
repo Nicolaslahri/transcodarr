@@ -111,12 +111,20 @@ export async function createServer(isSetup = false) {
     // Setup endpoints
     app.get('/api/meta', async () => ({ mode: 'loading_setup', name: 'Transcodarr Setup', version: '1.0.0' }));
     
-    app.post<{ Body: { role: 'main' | 'worker' } }>('/api/setup', async (req, reply) => {
+    app.post<{ Body: { role: 'main' | 'worker'; mainUrl?: string } }>('/api/setup', async (req, reply) => {
       fs.mkdirSync(CONFIG_DIR, { recursive: true });
-      fs.writeFileSync(CONFIG_FILE, JSON.stringify({ role: req.body.role, savedAt: new Date().toISOString() }, null, 2));
+      const cfg: any = { role: req.body.role, savedAt: new Date().toISOString() };
+      if (req.body.role === 'worker' && req.body.mainUrl) {
+        cfg.mainUrl = req.body.mainUrl;
+      }
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
       reply.send({ ok: true });
-      // Allow response to send before exiting
-      setTimeout(() => process.exit(0), 100);
+      // Write reset flag so start.mjs restarts cleanly instead of turbo respawning
+      const resetFlag = path.join(CONFIG_DIR, 'reset.flag');
+      setTimeout(() => {
+        try { fs.writeFileSync(resetFlag, '1'); } catch {}
+        process.exit(0);
+      }, 200);
     });
     return app;
   }

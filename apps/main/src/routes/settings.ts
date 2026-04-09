@@ -116,15 +116,16 @@ export async function settingsRoutes(app: FastifyInstance) {
   });
 
   // ─── Reset Setup ─────────────────────────────────────────────────────────────
-  // Deletes ~/.transcodarr/config.json and exits so the launcher re-runs onboarding
+  // Writes a flag file that start.mjs polls for — avoids turbo dev auto-restart issues.
+  // start.mjs kills the turbo child and relaunches in setup mode when it sees the flag.
   app.post('/reset', async (req, reply) => {
-    const configFile = path.join(os.homedir(), '.transcodarr', 'config.json');
-    try {
-      if (fs.existsSync(configFile)) fs.unlinkSync(configFile);
-    } catch { /* ignore */ }
-    reply.send({ ok: true });
-    // Short delay so response is sent before process exits
-    setTimeout(() => process.exit(0), 300);
+    const dir        = path.join(os.homedir(), '.transcodarr');
+    const configFile = path.join(dir, 'config.json');
+    const resetFlag  = path.join(dir, 'reset.flag');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    try { fs.writeFileSync(resetFlag, '1'); } catch {}
+    try { if (fs.existsSync(configFile)) fs.unlinkSync(configFile); } catch {}
+    return reply.send({ ok: true });
   });
 
   // ─── Smart Filters ───────────────────────────────────────────────────────────

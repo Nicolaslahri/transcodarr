@@ -84,14 +84,18 @@ export async function createWorkerServer(port: number) {
 
   app.put('/api/settings/general', async () => ({ ok: true }));
 
-  // Reset — deletes config and restarts the onboarding wizard
+  // Reset — writes flag file for start.mjs to detect and restart in setup mode
   app.post('/api/settings/reset', async (req, reply) => {
     const { default: fs } = await import('fs');
     const { default: os } = await import('os');
-    const configFile = `${os.homedir()}/.transcodarr/config.json`;
-    try { fs.unlinkSync(configFile); } catch { /* ignore */ }
-    reply.send({ ok: true });
-    setTimeout(() => process.exit(0), 300);
+    const { default: path } = await import('path');
+    const dir        = path.join(os.homedir(), '.transcodarr');
+    const configFile = path.join(dir, 'config.json');
+    const resetFlag  = path.join(dir, 'reset.flag');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    try { fs.writeFileSync(resetFlag, '1'); } catch {}
+    try { fs.unlinkSync(configFile); } catch {}
+    return reply.send({ ok: true });
   });
 
   // GET /status — current job state for the Worker UI

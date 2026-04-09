@@ -72,7 +72,7 @@ export async function createWorkerServer(port: number) {
   app.get('/api/meta', async () => ({
     mode: 'worker',
     name: process.env.WORKER_NAME ?? workerId,
-    version: '1.0.0',
+    version: '1.0.1',
     hardware,
     mainUrl,
   }));

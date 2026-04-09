@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import type { JobPayload, HardwareProfile } from '@transcodarr/shared';
 import { transcodeFile } from './transcoder.js';

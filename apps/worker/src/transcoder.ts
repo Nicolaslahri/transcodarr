@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import type { JobPayload, HardwareProfile, ProgressUpdate } from '@transcodarr/shared';
 import { buildFfmpegArgs, getHwDecodeArgs } from '@transcodarr/shared';
+import { resolvedFfmpeg, resolvedFfprobe } from './hardware.js';
 
 export interface TranscodeResult {
   sizeBefore: number;
@@ -13,7 +14,7 @@ export interface TranscodeResult {
 function getFileDuration(inputPath: string): number {
   try {
     const out = execSync(
-      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${inputPath}"`,
+      `"${resolvedFfprobe}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${inputPath}"`,
       { encoding: 'utf8', timeout: 30_000 },
     );
     return parseFloat(out.trim()) || 0;
@@ -78,7 +79,7 @@ export async function transcodeFile(
   console.log(`🎬 ffmpeg ${ffmpegArgs.join(' ')}`);
 
   await new Promise<void>((resolve, reject) => {
-    const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(resolvedFfmpeg, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     let leftover = '';
 
     const handleData = (data: Buffer) => {

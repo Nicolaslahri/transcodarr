@@ -12,8 +12,8 @@ const BIN_DIR = path.join(path.dirname(new URL(import.meta.url).pathname.replace
 const LOCAL_FFMPEG = path.join(BIN_DIR, os.platform() === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
 const LOCAL_FFPROBE = path.join(BIN_DIR, os.platform() === 'win32' ? 'ffprobe.exe' : 'ffprobe');
 
-let resolvedFfmpeg = 'ffmpeg';
-let resolvedFfprobe = 'ffprobe';
+export let resolvedFfmpeg = 'ffmpeg';
+export let resolvedFfprobe = 'ffprobe';
 
 /**
  * Resolves ffmpeg. Priority:

@@ -3,7 +3,7 @@
 import { useAppState } from '@/hooks/useTranscodarrSocket';
 import { CheckCircle2, Cpu, Server, ShieldAlert, X, Plus, MapPin, Trash2, FolderOpen, ChevronRight, ChevronUp, Info } from 'lucide-react';
 import type { WorkerInfo, SmbMapping } from '@transcodarr/shared';
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 
 // ─── Filesystem browser ───────────────────────────────────────────────────────
 

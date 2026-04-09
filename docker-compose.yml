@@ -1,13 +1,14 @@
-# Transcodarr — Portainer Stack
-# Deploy via: Stacks → Add Stack → Repository tab → enter GitHub URL
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║          TRANSCODARR — Portainer Stack (Main Node)              ║
+# ║                                                                  ║
+# ║  Paste this in Portainer → Stacks → Add Stack → Web editor      ║
+# ╚══════════════════════════════════════════════════════════════════╝
 
 version: "3.9"
 
 services:
   transcodarr-main:
-    build:
-      context: .
-      dockerfile: Dockerfile.main
+    image: ghcr.io/nicolaslahri/transcodarr-main:latest
     container_name: transcodarr-main
     restart: unless-stopped
     ports:
@@ -15,10 +16,17 @@ services:
     environment:
       - NODE_NAME=Transcodarr Main
       - MAIN_PORT=3001
+      - TZ=Asia/Kolkata
     volumes:
+      # ── Config & database (persists across restarts) ──────────────
       - transcodarr-config:/root/.transcodarr
+
+      # ── Your media library ────────────────────────────────────────
+      # Host path → Container path
+      # In Transcodarr Settings, use the container path (e.g. /media)
       - /mnt/dietpi_userdata/data/media:/media:ro
-      # Add more media paths here if needed:
+
+      # Add more if needed:
       # - /mnt/usb_drive:/mnt/usb:ro
 
 volumes:

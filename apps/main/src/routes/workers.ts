@@ -151,14 +151,31 @@ export async function workersRoutes(app: FastifyInstance) {
   );
 
   // POST /api/workers/jobs/:jobId/complete — job done callback from Worker
-  app.post<{ Params: { jobId: string }; Body: { workerId: string; success: boolean; sizeBefore?: number; sizeAfter?: number; error?: string } }>(
+  app.post<{ Params: { jobId: string }; Body: { workerId: string; callbackToken: string; success: boolean; outputPath?: string; sizeBefore?: number; sizeAfter?: number; error?: string } }>(
     '/jobs/:jobId/complete',
     async (req) => {
-      const { workerId, success, sizeBefore, sizeAfter, error } = req.body;
+      const { workerId, success, outputPath, sizeBefore, sizeAfter, error } = req.body;
       const db = getDb();
       const now = Math.floor(Date.now() / 1000);
 
       if (success) {
+        // Retrieve the current file_path exactly as it was when queued
+        const job = db.prepare('SELECT file_path FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+        
+        let targetDbPath = job?.file_path;
+        if (targetDbPath && outputPath) {
+            import('path').then(pathMod => {
+                const newExt = pathMod.extname(outputPath);
+                const oldExt = pathMod.extname(targetDbPath);
+                if (newExt && newExt !== oldExt) {
+                    targetDbPath = targetDbPath.slice(0, -oldExt.length) + newExt;
+                    const newBase = pathMod.basename(targetDbPath);
+                    db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
+                      .run(targetDbPath, newBase, req.params.jobId);
+                }
+            });
+        }
+
         db.prepare('UPDATE jobs SET status = ?, progress = 100, size_before = ?, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?')
           .run('complete', sizeBefore ?? null, sizeAfter ?? null, now, now, req.params.jobId);
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });

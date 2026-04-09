@@ -22,7 +22,7 @@ export async function jobsRoutes(app: FastifyInstance) {
 
   // POST /api/jobs — manually enqueue a file
   app.post<{ Body: { filePath: string; recipe: string } }>('/', async (req, reply) => {
-    const job = enqueueFile(req.body.filePath, req.body.recipe);
+    const job = enqueueFile(req.body.filePath, req.body.recipe, true);
     if (!job) return reply.status(400).send({ error: 'Could not enqueue file (already queued, skipped, or unreadable)' });
     return job;
   });

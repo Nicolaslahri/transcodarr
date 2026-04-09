@@ -38,14 +38,21 @@ export function analyzeFile(filePath: string): FileAnalysis | null {
 
 // ─── Queue CRUD ───────────────────────────────────────────────────────────────
 
-export function enqueueFile(filePath: string, recipeId: string): Job | null {
+export function enqueueFile(filePath: string, recipeId: string, force = false): Job | null {
   const db = getDb();
   const recipe = BUILT_IN_RECIPES.find(r => r.id === recipeId);
   if (!recipe) return null;
 
-  // Prevent duplicates
-  const existing = db.prepare('SELECT id FROM jobs WHERE file_path = ? AND status NOT IN (?,?,?)').get(filePath, 'complete', 'skipped', 'failed');
-  if (existing) return null;
+  // Prevent duplicates natively.
+  // If not forced (auto-scanned by Watcher), reject if ANY record of the file exists.
+  // If forced (manual click via UI), only reject if it's currently actively processing.
+  if (!force) {
+    const existing = db.prepare('SELECT id FROM jobs WHERE file_path = ?').get(filePath);
+    if (existing) return null;
+  } else {
+    const existing = db.prepare('SELECT id FROM jobs WHERE file_path = ? AND status NOT IN (?,?,?)').get(filePath, 'complete', 'skipped', 'failed');
+    if (existing) return null;
+  }
 
   // Analyze with ffprobe
   const analysis = analyzeFile(filePath);

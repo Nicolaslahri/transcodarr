@@ -14,8 +14,9 @@ const mainNav = [
 ];
 
 const workerNav = [
-  { href: '/',         icon: Zap,    label: 'Status'  },
-  { href: '/settings', icon: Settings, label: 'Settings' },
+  { href: '/',         icon: Zap,        label: 'Status'  },
+  { href: '/queue',    icon: ListVideo,  label: 'Queue'   },
+  { href: '/settings', icon: Settings,   label: 'Settings' },
 ];
 
 export function Sidebar() {

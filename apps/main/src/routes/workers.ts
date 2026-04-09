@@ -63,14 +63,22 @@ export async function workersRoutes(app: FastifyInstance) {
       const realHost = req.ip && req.ip !== '127.0.0.1' && req.ip !== '::1' ? req.ip : host;
       const db = getDb();
 
-      const existing = db.prepare('SELECT id FROM workers WHERE id = ?').get(id);
+      const existing = db.prepare('SELECT id, status FROM workers WHERE id = ?').get(id) as any;
       if (existing) {
-        db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ? WHERE id = ?')
-          .run(realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), id);
+        // If previously accepted, restore to idle. Otherwise keep current status.
+        const wasAccepted = ['idle', 'active', 'offline'].includes(existing.status);
+        const newStatus   = wasAccepted ? 'idle' : existing.status;
+        db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ?, status = ? WHERE id = ?')
+          .run(realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), newStatus, id);
+        if (wasAccepted) {
+          broadcast('worker:updated', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
+          console.log(`🔄 Worker re-registered (HTTP): ${name} → ${newStatus}`);
+        }
       } else {
         db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen) VALUES (?,?,?,?,'pending',?,?)`)
           .run(id, name, realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000));
-        broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id)));
+        broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
+        console.log(`🔍 New worker registered (HTTP): ${name} (${realHost}:${port})`);
       }
       return { ok: true };
     },

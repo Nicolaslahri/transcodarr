@@ -34,12 +34,22 @@ export function startMdns(mainPort: number): void {
         VALUES (?, ?, ?, ?, 'pending', ?, ?)
       `).run(id, name, host, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000));
 
-      console.log(`🔍 New worker discovered: ${name} (${host}:${port})`);
+      console.log(`🔍 New worker discovered via mDNS: ${name} (${host}:${port})`);
       broadcast('worker:discovered', { id, name, host, port, hardware, status: 'pending', smbMappings: [], lastSeen: Date.now() });
     } else {
-      // Update last_seen and host/port (IP may change)
-      db.prepare('UPDATE workers SET host = ?, port = ?, last_seen = ?, status = CASE WHEN status = ? THEN ? ELSE status END WHERE id = ?')
-        .run(host, port, Math.floor(Date.now() / 1000), 'offline', 'idle', id);
+      // Update host/port/last_seen.
+      // If worker was previously accepted (idle/active), restore to idle.
+      // If it was pending, keep it pending.
+      // If it was offline after being accepted, bring it back as idle.
+      const wasAccepted = ['idle', 'active', 'offline'].includes(existing.status);
+      const newStatus   = wasAccepted ? 'idle' : existing.status;
+      db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ?, status = ? WHERE id = ?')
+        .run(host, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), newStatus, id);
+
+      if (wasAccepted) {
+        console.log(`🔄 Worker reconnected: ${name} (${host}:${port})`);
+        broadcast('worker:updated', { id, name, host, port, hardware, status: 'idle', smbMappings: [], lastSeen: Date.now() });
+      }
     }
   });
 

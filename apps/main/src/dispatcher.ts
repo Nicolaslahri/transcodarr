@@ -44,11 +44,21 @@ export function startDispatcher(): void {
 
 async function dispatchNext(): Promise<void> {
   const queuedJobs = getJobsByStatus('queued');
-  if (queuedJobs.length === 0) return;
+  if (queuedJobs.length === 0) return; // nothing to do, stay quiet
 
-  const workers = getAcceptedWorkers();
+  const workers     = getAcceptedWorkers();
   const idleWorkers = workers.filter(w => w.status === 'idle');
-  if (idleWorkers.length === 0) return;
+
+  if (idleWorkers.length === 0) {
+    const allWorkers = getDb().prepare('SELECT id, name, status FROM workers').all() as any[];
+    if (allWorkers.length === 0) {
+      console.log(`⏳ ${queuedJobs.length} job(s) queued — no workers registered yet`);
+    } else {
+      const summary = allWorkers.map(w => `${w.name}:${w.status}`).join(', ');
+      console.log(`⏳ ${queuedJobs.length} job(s) queued — no idle workers (${summary})`);
+    }
+    return;
+  }
 
   const job = queuedJobs[0];
   const worker = idleWorkers[0];

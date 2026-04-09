@@ -104,14 +104,14 @@ export function getStats() {
 
 export function deleteJob(id: string): boolean {
   const info = getDb().prepare('DELETE FROM jobs WHERE id = ?').run(id);
-  return info.changes > 0;
+  return Number(info.changes) > 0;
 }
 
 /** Clear jobs by status (default: all non-active). Returns count deleted. */
 export function clearQueue(statuses: string[] = ['queued', 'skipped', 'failed', 'complete']): number {
   const placeholders = statuses.map(() => '?').join(',');
   const info = getDb().prepare(`DELETE FROM jobs WHERE status IN (${placeholders})`).run(...statuses);
-  return info.changes;
+  return Number(info.changes);
 }
 
 // ─── Row → Type ───────────────────────────────────────────────────────────────

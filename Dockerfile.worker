@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY package.json package-lock.json turbo.json ./
+COPY package.json package-lock.json turbo.json tsconfig.base.json ./
 COPY packages/shared/package.json  ./packages/shared/
 COPY apps/worker/package.json      ./apps/worker/
 COPY apps/web/package.json         ./apps/web/

@@ -84,23 +84,45 @@ function startResetPoller() {
   }, 500);
 }
 
+// ─── Find an available port (for worker auto-shifting) ────────────────────────
+async function findFreePort(startPort = 3001) {
+  const { createServer } = await import('net');
+  let port = startPort;
+  while (true) {
+    const free = await new Promise((resolve) => {
+      const s = createServer();
+      s.once('error', () => resolve(false));
+      s.once('listening', () => { s.close(); resolve(true); });
+      s.listen(port, '127.0.0.1');
+    });
+    if (free) return port;
+    port++;
+  }
+}
+
 // ─── Launch a role ────────────────────────────────────────────────────────────
 async function launchRole(role) {
-  const isProd = process.env.NODE_ENV === 'production';
-  const filter = role === 'main' ? '@transcodarr/main' : '@transcodarr/worker';
-  const label  = role === 'main' ? '🧠 Main Node' : '⚡ Worker Node';
+  const isProd  = process.env.NODE_ENV === 'production';
+  const filter  = role === 'main' ? '@transcodarr/main' : '@transcodarr/worker';
+  const label   = role === 'main' ? '🧠 Main Node' : '⚡ Worker Node';
 
-  await waitForPortFree();
-  console.log(`\n  Starting ${label}...\n`);
+  // Main always owns 3001. Worker finds its own free port (3002+).
+  const port = role === 'main' ? 3001 : await findFreePort(3002);
+  if (role === 'main') await waitForPortFree(3001);
+  console.log(`\n  Starting ${label} on port ${port}...\n`);
+
+  const portEnvKey = role === 'main' ? 'MAIN_PORT' : 'WORKER_PORT';
 
   if (isProd) {
     const entrypoint = role === 'main' ? 'apps/main/dist/index.js' : 'apps/worker/dist/index.js';
     currentChild = spawn('node', [entrypoint], {
-      stdio: 'inherit', cwd: ROOT, detached: !IS_WIN
+      stdio: 'inherit', cwd: ROOT, detached: !IS_WIN,
+      env: { ...process.env, [portEnvKey]: String(port) }
     });
   } else {
     currentChild = spawn('npm', ['run', 'dev', '--workspace=' + filter], {
-      stdio: 'inherit', shell: true, cwd: ROOT, detached: !IS_WIN
+      stdio: 'inherit', shell: true, cwd: ROOT, detached: !IS_WIN,
+      env: { ...process.env, [portEnvKey]: String(port) }
     });
   }
 

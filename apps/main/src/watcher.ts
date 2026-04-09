@@ -87,9 +87,15 @@ export function addWatchedPath(watchPath: string, recipe: string, triggerScan = 
   }
 }
 
-// Helper to manually scan a directory recursively
+// Helper to manually scan a directory recursively, broadcasting a summary when done
 export function manualScanDirectory(dir: string, recipe: string) {
-  if (!fs.existsSync(dir)) return;
+  if (!fs.existsSync(dir)) {
+    broadcast('scan:summary', { dir, recipe, enqueued: 0, skipped: 0, alreadyActive: 0, error: 'Directory not found' });
+    return;
+  }
+
+  const stats = { enqueued: 0, skipped: 0, alreadyActive: 0, total: 0 };
+
   const scan = (current: string) => {
     try {
       const entries = fs.readdirSync(current, { withFileTypes: true });
@@ -100,11 +106,23 @@ export function manualScanDirectory(dir: string, recipe: string) {
         } else {
           const ext = path.extname(fullPath).toLowerCase();
           if (SUPPORTED_EXTENSIONS.includes(ext)) {
-            // Queue immediately (bypassing the 3s debounce for manual scans)
+            stats.total++;
             const job = enqueueFile(fullPath, recipe);
             if (job) {
-              console.log(`📥 Manual Scan Queued: ${path.basename(fullPath)}`);
+              stats.enqueued++;
+              console.log(`📥 Queued: ${path.basename(fullPath)}`);
               broadcast('job:queued', job);
+            } else {
+              // Check if in-progress vs genuinely skipped (already optimal)
+              const existing = getDb().prepare(
+                "SELECT status FROM jobs WHERE file_path = ?"
+              ).get(fullPath) as any;
+
+              if (existing && ['transcoding', 'dispatched', 'swapping'].includes(existing.status)) {
+                stats.alreadyActive++;
+              } else {
+                stats.skipped++;
+              }
             }
           }
         }
@@ -113,5 +131,10 @@ export function manualScanDirectory(dir: string, recipe: string) {
       console.error(`Failed to scan ${current}:`, err);
     }
   };
+
   scan(dir);
+
+  const msg = `Scan complete for "${path.basename(dir)}": ${stats.enqueued} queued, ${stats.skipped} already optimized, ${stats.alreadyActive} in progress (${stats.total} total files found)`;
+  console.log(`  📊 ${msg}`);
+  broadcast('scan:summary', { dir, recipe, ...stats, message: msg });
 }

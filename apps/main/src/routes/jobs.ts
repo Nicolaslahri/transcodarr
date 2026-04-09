@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { getJobs, getJob, enqueueFile, updateJobStatus, getStats } from '../queue.js';
+import { getJobs, getJob, enqueueFile, updateJobStatus, getStats, deleteJob, clearQueue } from '../queue.js';
+import { broadcast } from '../server.js';
 
 export async function jobsRoutes(app: FastifyInstance) {
   // GET /api/jobs
@@ -26,14 +27,22 @@ export async function jobsRoutes(app: FastifyInstance) {
     return job;
   });
 
-  // DELETE /api/jobs/:id — cancel a pending job
+  // DELETE /api/jobs — clear all non-active jobs
+  app.delete('/', async () => {
+    const count = clearQueue();
+    broadcast('job:cleared', { count });
+    return { ok: true, deleted: count };
+  });
+
+  // DELETE /api/jobs/:id — permanently remove a single job
   app.delete<{ Params: { id: string } }>('/:id', async (req, reply) => {
     const job = getJob(req.params.id);
     if (!job) return reply.status(404).send({ error: 'Not found' });
-    if (!['queued', 'pending', 'failed'].includes(job.status)) {
-      return reply.status(400).send({ error: 'Can only cancel queued/pending/failed jobs' });
+    if (['transcoding', 'dispatched', 'swapping'].includes(job.status)) {
+      return reply.status(400).send({ error: 'Cannot remove an in-progress job' });
     }
-    updateJobStatus(req.params.id, 'failed', { error: 'Cancelled by user' });
+    deleteJob(req.params.id);
+    broadcast('job:removed', { id: req.params.id });
     return { ok: true };
   });
 

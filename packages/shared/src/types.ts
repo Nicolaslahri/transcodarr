@@ -71,6 +71,7 @@ export interface Job {
   fileName: string;
   fileSize?: number;
   codecIn?: string;
+  codecOut?: string;        // target codec from the recipe
   resolution?: string;
   bitratIn?: number;
   recipe: string;
@@ -162,6 +163,9 @@ export type WsEventType =
   | 'job:progress'
   | 'job:complete'
   | 'job:failed'
+  | 'job:removed'
+  | 'job:cleared'
+  | 'scan:summary'
   | 'stats:update';
 
 export interface WsEvent<T = unknown> {

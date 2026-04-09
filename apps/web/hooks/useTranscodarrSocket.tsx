@@ -23,8 +23,20 @@ interface AppState {
   jobs: Job[];
   connected: boolean;
   apiUrl: string;
+  scanSummary: ScanSummary | null;
   acceptWorker: (id: string) => Promise<void>;
   rejectWorker: (id: string) => Promise<void>;
+}
+
+export interface ScanSummary {
+  dir: string;
+  recipe: string;
+  enqueued: number;
+  skipped: number;
+  alreadyActive: number;
+  total: number;
+  message: string;
+  error?: string;
 }
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -38,6 +50,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const [stats, setStats] = useState<DashboardStats>({ jobsToday: 0, jobsTotal: 0, gbSaved: 0, workersOnline: 0, queueDepth: 0, activeJobs: 0 });
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [scanSummary, setScanSummary] = useState<ScanSummary | null>(null);
 
   // The URL we actually talk to (may switch from worker port → main port)
   const localUrl = typeof window !== 'undefined'
@@ -115,6 +128,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
           case 'job:queued':
             setJobs(prev => [data, ...prev]);
             break;
+          case 'job:removed':
+            setJobs(prev => prev.filter(j => j.id !== data.id));
+            break;
+          case 'job:cleared':
+            setJobs(prev => prev.filter(j => ['transcoding', 'dispatched', 'swapping'].includes(j.status)));
+            break;
           case 'job:progress':
           case 'job:complete':
           case 'job:failed':
@@ -125,6 +144,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
               next[idx] = { ...next[idx], ...data };
               return next;
             });
+            break;
+          case 'scan:summary':
+            setScanSummary(data);
             break;
         }
       } catch { /* ignore */ }
@@ -181,7 +203,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   }, [localUrl]);
 
   return (
-    <SocketContext.Provider value={{ meta, connected, stats, workers, jobs, apiUrl, acceptWorker, rejectWorker }}>
+    <SocketContext.Provider value={{ meta, connected, stats, workers, jobs, apiUrl, scanSummary, acceptWorker, rejectWorker }}>
       {children}
     </SocketContext.Provider>
   );

@@ -2,6 +2,7 @@ import { initDb } from './db.js';
 import { createServer, startWorkerHealthPoller } from './server.js';
 import { startWatcher } from './watcher.js';
 import { startMdns } from './mdns.js';
+import { ensureFfmpeg } from './ffmpeg.js';
 
 const PORT = Number(process.env.MAIN_PORT ?? 3001);
 const HOST = process.env.MAIN_HOST ?? '0.0.0.0';
@@ -11,7 +12,10 @@ async function main() {
   const isSetup = process.env.SETUP_MODE === '1';
 
   if (!isSetup) {
-    // 1. Init SQLite
+    // 1. Ensure ffprobe is available (auto-downloads if needed)
+    await ensureFfmpeg();
+
+    // 2. Init SQLite
     initDb();
     console.log('✅ Database ready');
   }

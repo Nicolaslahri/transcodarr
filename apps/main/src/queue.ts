@@ -1,7 +1,8 @@
 import { getDb } from './db.js';
 import { nanoid } from 'nanoid';
 import { BUILT_IN_RECIPES, shouldSkipFile } from '@transcodarr/shared';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
+import { getFfprobePath } from './ffmpeg.js';
 import path from 'path';
 import type { Job, JobStatus, FileAnalysis } from '@transcodarr/shared';
 
@@ -9,12 +10,13 @@ import type { Job, JobStatus, FileAnalysis } from '@transcodarr/shared';
 
 export function analyzeFile(filePath: string): FileAnalysis | null {
   try {
-    const probeJson = execSync(
-      `ffprobe -v quiet -print_format json -show_streams -show_format "${filePath}"`,
+    const probeJson = execFileSync(
+      getFfprobePath(),
+      ['-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', filePath],
       { encoding: 'utf8', timeout: 30_000 },
     );
     const probe = JSON.parse(probeJson);
-    const videoStream = probe.streams?.find((s: any) => s.codec_type === 'video');
+    const videoStream  = probe.streams?.find((s: any) => s.codec_type === 'video');
     const audioStreams = probe.streams?.filter((s: any) => s.codec_type === 'audio') ?? [];
 
     if (!videoStream) return null;
@@ -98,6 +100,18 @@ export function getStats() {
   const queueDepth = (db.prepare("SELECT COUNT(*) as c FROM jobs WHERE status IN ('queued','pending')").get() as any).c;
   const activeJobs = (db.prepare("SELECT COUNT(*) as c FROM jobs WHERE status IN ('transcoding','dispatched','swapping')").get() as any).c;
   return { jobsToday, jobsTotal, gbSaved: Math.round((gbSaved / 1e9) * 100) / 100, queueDepth, activeJobs };
+}
+
+export function deleteJob(id: string): boolean {
+  const info = getDb().prepare('DELETE FROM jobs WHERE id = ?').run(id);
+  return info.changes > 0;
+}
+
+/** Clear jobs by status (default: all non-active). Returns count deleted. */
+export function clearQueue(statuses: string[] = ['queued', 'skipped', 'failed', 'complete']): number {
+  const placeholders = statuses.map(() => '?').join(',');
+  const info = getDb().prepare(`DELETE FROM jobs WHERE status IN (${placeholders})`).run(...statuses);
+  return info.changes;
 }
 
 // ─── Row → Type ───────────────────────────────────────────────────────────────

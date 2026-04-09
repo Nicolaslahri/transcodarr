@@ -147,9 +147,23 @@ export function getHwDecodeArgs(hw: HardwareProfile): string[] {
 
 // ─── Smart-filter: should we skip this file? ─────────────────────────────────
 
+/**
+ * Determines if a file should be skipped for a given recipe.
+ *
+ * For codec-only recipes (space-saver, universal-player, downscale), 
+ * skip if the file is already in the target codec.
+ *
+ * For intent-driven recipes (anime-cleaner, audio-normalizer), 
+ * never skip — the recipe's value is in audio/subtitle processing, 
+ * not just codec conversion.
+ */
 export function shouldSkipFile(currentCodec: string, recipe: Recipe): boolean {
+  // These recipes do more than just transcode video — always run them
+  const noSkipRecipes = ['anime-cleaner', 'audio-normalizer'];
+  if (noSkipRecipes.includes(recipe.id)) return false;
+
   const normalized = currentCodec.toLowerCase();
-  const target = recipe.targetCodec.toLowerCase();
+  const target      = recipe.targetCodec.toLowerCase();
 
   const hevcAliases = ['hevc', 'h265', 'h.265'];
   const h264Aliases = ['h264', 'h.264', 'avc'];

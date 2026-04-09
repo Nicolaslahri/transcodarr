@@ -1,16 +1,12 @@
-# ╔══════════════════════════════════════════════════════════════════╗
-# ║          TRANSCODARR — Portainer Stack (Main Node)              ║
-# ║                                                                  ║
-# ║  Builds the image directly from GitHub — no registry needed.    ║
-# ║  First deploy takes 5-10 mins while Docker compiles the app.    ║
-# ╚══════════════════════════════════════════════════════════════════╝
+# Transcodarr — Portainer Stack
+# Deploy via: Stacks → Add Stack → Repository tab → enter GitHub URL
 
 version: "3.9"
 
 services:
   transcodarr-main:
     build:
-      context: https://github.com/Nicolaslahri/transcodarr.git
+      context: .
       dockerfile: Dockerfile.main
     container_name: transcodarr-main
     restart: unless-stopped
@@ -20,16 +16,10 @@ services:
       - NODE_NAME=Transcodarr Main
       - MAIN_PORT=3001
     volumes:
-      # ── Config & database ─────────────────────────────────────────
       - transcodarr-config:/root/.transcodarr
-
-      # ── Media paths (edit to match your actual DietPi paths) ──────
-      # Inside the container these appear as /media, /mnt/usb etc.
-      # In Settings → Watched Folders, use the container path (e.g. /media)
       - /mnt/dietpi_userdata/data/media:/media:ro
-      #
-      # Add more mounts as needed:
-      # - /mnt/usb_drive:/mnt/usb_drive:ro
+      # Add more media paths here if needed:
+      # - /mnt/usb_drive:/mnt/usb:ro
 
 volumes:
   transcodarr-config:

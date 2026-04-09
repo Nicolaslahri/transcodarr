@@ -81,18 +81,25 @@ export default function WorkersPage() {
               <X className="w-5 h-5" />
             </button>
             <h3 className="text-xl font-bold text-white mb-2">Add Worker Node</h3>
-            <p className="text-sm text-textMuted mb-6">If automatic discovery failed, enter the IP address of the worker machine on your network.</p>
+            <p className="text-sm text-textMuted mb-6">If automatic discovery failed, enter the IP and port of the worker machine on your network.</p>
             
-            <form onSubmit={e => {
+            <form onSubmit={async e => {
               e.preventDefault();
-              const ip = new FormData(e.currentTarget).get('ip') as string;
+              const fd = new FormData(e.currentTarget);
+              const ip   = fd.get('ip') as string;
+              const port = fd.get('port') as string || '3002';
               if (ip) {
-                fetch(`${apiUrl}/api/workers/add-manual`, {
+                const res = await fetch(`${apiUrl}/api/workers/add-manual`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ ip })
+                  body: JSON.stringify({ ip, port: Number(port) })
                 });
-                setAddModalOpen(false);
+                if (!res.ok) {
+                  const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+                  alert(`Failed to connect: ${err.error}`);
+                } else {
+                  setAddModalOpen(false);
+                }
               }
             }}>
               <label className="text-xs font-bold uppercase tracking-wider text-textMuted mb-2 block">Worker IP Address</label>
@@ -101,6 +108,13 @@ export default function WorkersPage() {
                 required
                 autoFocus
                 placeholder="192.168.1.50"
+                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white mb-4 focus:outline-none focus:border-primary/50 font-mono"
+              />
+              <label className="text-xs font-bold uppercase tracking-wider text-textMuted mb-2 block">Port <span className="font-normal text-textMuted/60">(default: 3002)</span></label>
+              <input
+                name="port"
+                placeholder="3002"
+                defaultValue="3002"
                 className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white mb-6 focus:outline-none focus:border-primary/50 font-mono"
               />
               <div className="flex gap-3 justify-end">
@@ -133,7 +147,7 @@ function WorkerCard({ worker, onAccept, onReject }: {
 
   const saveMappings = async () => {
     setSaving(true);
-    await fetch(`/api/workers/${worker.id}/mappings`, {
+    await fetch(`${apiUrl}/api/workers/${worker.id}/mappings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mappings }),

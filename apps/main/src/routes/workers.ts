@@ -26,23 +26,28 @@ export async function workersRoutes(app: FastifyInstance) {
   app.post('/scan', async () => ({ ok: true }));
 
   // POST /api/workers/add-manual — Manually add a worker by IP
-  app.post<{ Body: { ip: string } }>('/add-manual', async (req, reply) => {
+  app.post<{ Body: { ip: string; port?: number } }>('/add-manual', async (req, reply) => {
     try {
       const { ip } = req.body;
-      const port = 3001; // default worker port
-      const res = await fetch(`http://${ip}:${port}/api/meta`);
-      if (!res.ok) throw new Error('Worker not responding');
+      const port = req.body.port ?? 3002; // Workers auto-shift to 3002+ when Main owns 3001
+      const res = await fetch(`http://${ip}:${port}/api/meta`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error(`Worker not responding on ${ip}:${port}`);
       
       const meta = await res.json() as any;
-      if (meta.mode !== 'worker') throw new Error('Not a worker node');
+      if (meta.mode !== 'worker') throw new Error(`Not a worker node (got mode: ${meta.mode})`);
 
       const db = getDb();
-      const existing = db.prepare('SELECT id FROM workers WHERE id = ?').get(meta.name);
+      const workerId = meta.id ?? meta.name;
+      const existing = db.prepare('SELECT id FROM workers WHERE id = ?').get(workerId);
       
       if (!existing) {
         db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen) VALUES (?,?,?,?,'pending',?,?)`)
-          .run(meta.name, meta.name, ip, port, JSON.stringify(meta.hardware ?? {}), Math.floor(Date.now() / 1000));
-        broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(meta.name)));
+          .run(workerId, meta.name, ip, port, JSON.stringify(meta.hardware ?? {}), Math.floor(Date.now() / 1000));
+        broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(workerId) as any));
+      } else {
+        // Update existing (might have changed port/IP)
+        db.prepare('UPDATE workers SET host = ?, port = ?, last_seen = ? WHERE id = ?')
+          .run(ip, port, Math.floor(Date.now() / 1000), workerId);
       }
       return { ok: true };
     } catch (err: any) {

@@ -71,6 +71,7 @@ export async function createWorkerServer(port: number) {
   // Identity — tells the Web UI it's a Worker node
   app.get('/api/meta', async () => ({
     mode: 'worker',
+    id: workerId,
     name: process.env.WORKER_NAME ?? workerId,
     version: '1.0.1',
     hardware,

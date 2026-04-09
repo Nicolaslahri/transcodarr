@@ -39,9 +39,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
 
-  const apiUrl = typeof window !== 'undefined'
+  const initialApiUrl = typeof window !== 'undefined'
     ? (process.env.NEXT_PUBLIC_MAIN_URL || `http://${window.location.hostname}:${window.location.port || 3001}`)
     : '';
+
+  const [apiUrl, setApiUrl] = useState(initialApiUrl);
 
   // ─── Accept / Reject actions ─────────────────────────────────────────────
   const acceptWorker = useCallback(async (id: string) => {
@@ -58,79 +60,103 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!apiUrl) return;
 
+    let isSubscribed = true;
+
     // Fetch identity
     fetch(`${apiUrl}/api/meta`)
       .then(r => r.json())
-      .then(data => setMeta(data))
-      .catch(() => setMeta({ mode: 'main', name: 'Transcodarr', version: '1.0.0' }));
-
-    // WebSocket
-    const wsUrl = apiUrl.replace('http', 'ws') + '/ws';
-    const ws = new WebSocket(wsUrl);
-    ws.onopen = () => setConnected(true);
-    ws.onclose = () => setConnected(false);
-
-    ws.onmessage = (msg) => {
-      try {
-        const { event, data } = JSON.parse(msg.data) as WsEvent<any>;
-        switch (event) {
-          case 'stats:update':
-            setStats(data);
-            break;
-          case 'worker:discovered':
-            setWorkers(prev => {
-              const exists = prev.find(w => w.id === data.id);
-              if (!exists) {
-                // 🔔 Toast notification — the Fleet Commander moment
-                addToast({
-                  type: 'worker-discovered',
-                  title: 'New Hardware Detected',
-                  message: `${data.name} · ${data.hardware?.gpuName ?? 'unknown GPU'}`,
-                  workerId: data.id,
-                  onAccept: () => acceptWorker(data.id),
-                  onReject: () => rejectWorker(data.id),
-                });
-                return [...prev, data];
-              }
-              return prev.map(w => w.id === data.id ? data : w);
-            });
-            break;
-          case 'worker:accepted':
-            setWorkers(prev => prev.map(w => w.id === data.id ? data : w));
-            break;
-          case 'worker:offline':
-            setWorkers(prev => prev.filter(w => w.id !== data.id));
-            break;
-          case 'job:queued':
-            setJobs(prev => [data, ...prev]);
-            break;
-          case 'job:progress':
-          case 'job:complete':
-          case 'job:failed':
-            setJobs(prev => {
-              const idx = prev.findIndex(j => j.id === data.jobId);
-              if (idx === -1) return prev;
-              const next = [...prev];
-              next[idx] = { ...next[idx], ...data };
-              return next;
-            });
-            break;
+      .then(data => {
+        if (!isSubscribed) return;
+        setMeta(data);
+        if (data.mode === 'worker' && data.mainUrl && data.mainUrl !== apiUrl) {
+          setApiUrl(data.mainUrl.replace(/\/$/, ''));
+          return; // Stop connecting ws here, let the effect re-run with new apiUrl
         }
-      } catch { /* ignore */ }
+        connect(apiUrl); // Only connect if we didn't redirect
+      })
+      .catch(() => {
+        if (!isSubscribed) return;
+        setMeta({ mode: 'main', name: 'Transcodarr', version: '1.0.0' });
+        connect(apiUrl);
+      });
+
+    let ws: WebSocket | null = null;
+    
+    function connect(targetUrl: string) {
+      const wsUrl = targetUrl.replace('http', 'ws') + '/ws';
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => setConnected(true);
+      ws.onclose = () => setConnected(false);
+
+      ws.onmessage = (msg) => {
+        try {
+          const { event, data } = JSON.parse(msg.data) as WsEvent<any>;
+          switch (event) {
+            case 'stats:update':
+              setStats(data);
+              break;
+            case 'worker:discovered':
+              setWorkers(prev => {
+                const exists = prev.find(w => w.id === data.id);
+                if (!exists) {
+                  // 🔔 Toast notification — the Fleet Commander moment
+                  addToast({
+                    type: 'worker-discovered',
+                    title: 'New Hardware Detected',
+                    message: `${data.name} · ${data.hardware?.gpuName ?? 'unknown GPU'}`,
+                    workerId: data.id,
+                    onAccept: () => acceptWorker(data.id),
+                    onReject: () => rejectWorker(data.id),
+                  });
+                  return [...prev, data];
+                }
+                return prev.map(w => w.id === data.id ? data : w);
+              });
+              break;
+            case 'worker:accepted':
+              setWorkers(prev => prev.map(w => w.id === data.id ? data : w));
+              break;
+            case 'worker:offline':
+              setWorkers(prev => prev.filter(w => w.id !== data.id));
+              break;
+            case 'job:queued':
+              setJobs(prev => [data, ...prev]);
+              break;
+            case 'job:progress':
+            case 'job:complete':
+            case 'job:failed':
+              setJobs(prev => {
+                const idx = prev.findIndex(j => j.id === data.jobId);
+                if (idx === -1) return prev;
+                const next = [...prev];
+                next[idx] = { ...next[idx], ...data };
+                return next;
+              });
+              break;
+          }
+        } catch { /* ignore */ }
+      };
+
+      // Initial data fetch
+      Promise.all([
+        fetch(`${targetUrl}/api/workers`).then(r => r.json()),
+        fetch(`${targetUrl}/api/jobs?limit=20`).then(r => r.json()),
+        fetch(`${targetUrl}/api/jobs/stats`).then(r => r.json()),
+      ]).then(([w, j, s]) => {
+        if (!isSubscribed) return;
+        setWorkers(w);
+        setJobs(j);
+        setStats(s);
+      }).catch(() => {});
+    }
+
+    // Initial data fetch only if we aren't redirecting
+    // (If we redirect, it will be skipped until the re-run)
+
+    return () => {
+      isSubscribed = false;
+      ws?.close();
     };
-
-    // Initial data fetch
-    Promise.all([
-      fetch(`${apiUrl}/api/workers`).then(r => r.json()),
-      fetch(`${apiUrl}/api/jobs?limit=20`).then(r => r.json()),
-      fetch(`${apiUrl}/api/jobs/stats`).then(r => r.json()),
-    ]).then(([w, j, s]) => {
-      setWorkers(w);
-      setJobs(j);
-      setStats(s);
-    }).catch(() => {});
-
-    return () => ws.close();
   }, [apiUrl]);
 
   return (

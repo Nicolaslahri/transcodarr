@@ -1,7 +1,7 @@
 'use client';
 
 import { useAppState } from '@/hooks/useTranscodarrSocket';
-import { CheckCircle2, Cpu, Server, ShieldAlert, X, Plus, MapPin } from 'lucide-react';
+import { CheckCircle2, Cpu, Server, ShieldAlert, X, Plus, MapPin, Trash2 } from 'lucide-react';
 import type { WorkerInfo, SmbMapping } from '@transcodarr/shared';
 import { useState } from 'react';
 
@@ -196,31 +196,46 @@ function WorkerCard({ worker, onAccept, onReject }: {
               onClick={() => onAccept(worker.id)}
               className="flex-1 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-black text-sm font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
             >
-              <CheckCircle2 className="w-4 h-4" /> Add to Fleet
+               Accept
             </button>
             <button
               onClick={() => onReject(worker.id)}
               className="py-2.5 px-4 bg-background hover:bg-border text-textMuted text-sm rounded-xl border border-border transition-colors"
             >
-              <X className="w-4 h-4" />
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
         )}
 
-        {/* SMB mappings (active workers) */}
+        {/* Active Worker Actions */}
         {!isPending && (
-          <div className="mt-4 pt-4 border-t border-border">
+          <div className="flex gap-2 mt-4 pt-4 border-t border-border items-center justify-between">
             <button
               onClick={() => setShowMappings(!showMappings)}
-              className="flex items-center gap-2 text-xs text-textMuted hover:text-white transition-colors w-full"
+              className="flex items-center gap-2 text-xs text-textMuted hover:text-white transition-colors"
             >
               <MapPin className="w-3.5 h-3.5" />
               Path Mappings ({mappings.length})
-              <span className="ml-auto">{showMappings ? '▲' : '▼'}</span>
+              <span className="">{showMappings ? '▲' : '▼'}</span>
             </button>
+            
+            <button
+              onClick={() => {
+                if (confirm('Are you sure you want to remove this Worker from the fleet?')) {
+                  onReject(worker.id);
+                }
+              }}
+              title="Remove Worker"
+              className="text-textMuted hover:text-red-400 transition-colors p-1"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
-            {showMappings && (
-              <div className="mt-3 space-y-2">
+        {/* SMB mappings panel */}
+        {!isPending && showMappings && (
+          <div className="mt-3 space-y-2">
                 {mappings.map((m, i) => (
                   <div key={i} className="flex gap-2 items-center">
                     <input
@@ -258,8 +273,6 @@ function WorkerCard({ worker, onAccept, onReject }: {
                 </div>
               </div>
             )}
-          </div>
-        )}
       </div>
     </div>
   );

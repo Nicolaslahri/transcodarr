@@ -456,7 +456,7 @@ function GeneralPanel() {
   };
 
   const switchRole = () => {
-    if (confirm('Switch this machine\'s role? The app will restart with the role selection screen.')) {
+    if (confirm('Are you sure you want to completely reset Transcodarr? This will wipe your node role configuration.')) {
       // Delete the config file via API and reload
       fetch('/api/settings/general', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -521,13 +521,13 @@ function GeneralPanel() {
 
       {/* Danger zone */}
       <div className="bg-surface border border-red-500/20 rounded-2xl p-6">
-        <h3 className="text-red-400 font-bold text-sm mb-1">Role Configuration</h3>
-        <p className="text-textMuted text-xs mb-4">Switch this machine between Main Node and Worker Node. The app will restart.</p>
+        <h3 className="text-red-400 font-bold text-sm mb-1">Reset Setup</h3>
+        <p className="text-textMuted text-xs mb-4">Wipe this node's role configuration and restart the onboarding wizard. All settings will be cleared.</p>
         <button
           onClick={switchRole}
           className="px-5 py-2.5 bg-red-500/10 text-red-400 text-sm font-bold rounded-xl border border-red-500/30 hover:bg-red-500/20 transition-colors"
         >
-          Switch Role…
+          Reset Setup…
         </button>
       </div>
     </div>

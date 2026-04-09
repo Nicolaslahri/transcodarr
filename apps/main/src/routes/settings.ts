@@ -12,28 +12,35 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.get('/fs', async (req) => {
     const q = req.query as { path?: string };
-    
-    if (!q.path && os.platform() === 'win32') {
+    const isWindows = os.platform() === 'win32';
+
+    // On Windows with no path: enumerate drive letters first
+    if (!q.path && isWindows) {
       const drives: { name: string; path: string }[] = [];
-      const potentialDrives = 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
-      for (const letter of potentialDrives) {
+      for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')) {
         const root = `${letter}:\\`;
-        try {
-          if (fs.existsSync(root)) drives.push({ name: root, path: root });
-        } catch { /* ignore permission errors */ }
+        try { if (fs.existsSync(root)) drives.push({ name: root, path: root }); } catch { /**/ }
       }
       return { current: '', parent: '', dirs: drives };
     }
 
-    let target = q.path ? path.resolve(q.path) : '/';
-    if (!fs.existsSync(target)) {
-       target = os.platform() === 'win32' ? 'C:\\' : '/';
-    }
+    // Default root: / on Linux, C:\ on Windows
+    const defaultRoot = isWindows ? 'C:\\' : '/';
+    let target = q.path ? path.resolve(q.path) : defaultRoot;
+    if (!fs.existsSync(target)) target = defaultRoot;
 
     try {
       const dirents = fs.readdirSync(target, { withFileTypes: true });
       const dirs = dirents
-        .filter(d => d.isDirectory() && !d.name.startsWith('.'))
+        .filter(d => {
+          if (!d.isDirectory()) return false;
+          // On Linux, skip proc/sys/dev virtual filesystems but keep /mnt and /media
+          if (!isWindows) {
+            const skip = ['proc', 'sys', 'dev', 'run', 'snap', 'lost+found'];
+            if (skip.includes(d.name)) return false;
+          }
+          return true;
+        })
         .map(d => ({ name: d.name, path: path.join(target, d.name) }));
       return { current: target, parent: path.dirname(target), dirs };
     } catch {

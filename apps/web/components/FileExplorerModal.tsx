@@ -48,7 +48,8 @@ export function FileExplorerModal({
 
   useEffect(() => {
     if (open) {
-      loadPath(initialPath || '');
+      // Pass empty string initially: backend handles Windows (drive list) vs Linux (/)
+      loadPath(initialPath ?? '');
     } else {
       setData(null);
     }
@@ -92,13 +93,24 @@ export function FileExplorerModal({
 
           {data && (
             <div className="space-y-1">
-              {data.current !== data.parent && (
+              {/* Up button: show when we have a meaningful parent */}
+              {data.current && data.current !== data.parent && (
                 <button
                   onClick={() => loadPath(data.parent)}
                   className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 text-left transition-colors group"
                 >
                   <CornerLeftUp className="w-5 h-5 text-textMuted group-hover:text-white transition-colors" />
                   <span className="text-textMuted font-medium group-hover:text-white transition-colors">.. (Up a level)</span>
+                </button>
+              )}
+              {/* Back to root/drives button when browsing deeper */}
+              {data.current && data.current === data.parent && (
+                <button
+                  onClick={() => loadPath('')}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 text-left transition-colors group"
+                >
+                  <HardDrive className="w-5 h-5 text-textMuted group-hover:text-white transition-colors" />
+                  <span className="text-textMuted font-medium group-hover:text-white transition-colors">← Root / Drives</span>
                 </button>
               )}
               

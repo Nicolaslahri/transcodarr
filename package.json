@@ -4,6 +4,7 @@
   "packageManager": "npm@10.8.2",
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
+    "start": "node start.mjs",
     "build": "turbo build",
     "dev": "turbo dev --parallel",
     "dev:main": "turbo dev --filter=@transcodarr/main",

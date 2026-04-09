@@ -6,6 +6,7 @@ import { transcodeFile } from './transcoder.js';
 let hardware: HardwareProfile;
 let workerId: string;
 let mainUrl: string;
+export let currentJob: { jobId: string; fileName: string; progress: number; fps?: number } | null = null;
 
 export function initWorkerServer(hw: HardwareProfile, wid: string, mUrl: string) {
   hardware = hw;
@@ -34,6 +35,18 @@ export async function createWorkerServer(port: number) {
     });
   });
 
+  // Identity — tells the Web UI it's a Worker node
+  app.get('/api/meta', async () => ({
+    mode: 'worker',
+    name: process.env.WORKER_NAME ?? workerId,
+    version: '1.0.0',
+    hardware,
+    mainUrl,
+  }));
+
+  // GET /status — current job state for the Worker UI
+  app.get('/status', async () => ({ workerId, hardware, currentJob: currentJob ?? null }));
+
   // GET /health
   app.get('/health', async () => ({ ok: true, workerId, hardware }));
 
@@ -45,8 +58,13 @@ export async function createWorkerServer(port: number) {
 async function transcodeInBackground(payload: JobPayload): Promise<void> {
   const progressUrl = `${mainUrl}/api/workers/jobs/${payload.jobId}/progress`;
   const completeUrl = `${mainUrl}/api/workers/jobs/${payload.jobId}/complete`;
+  const fileName = payload.filePath.split(/[\\/]/).pop() ?? payload.filePath;
+
+  // Track current job for /status endpoint
+  currentJob = { jobId: payload.jobId, fileName, progress: 0 };
 
   const sendProgress = async (progress: number, fps?: number, eta?: number, phase = 'transcoding') => {
+    currentJob = { jobId: payload.jobId, fileName, progress, fps };
     try {
       await fetch(progressUrl, {
         method:  'POST',
@@ -83,5 +101,7 @@ async function transcodeInBackground(payload: JobPayload): Promise<void> {
       body:    JSON.stringify({ workerId, callbackToken: payload.callbackToken, success: false, error: err.message }),
     });
     console.error(`❌ Transcoding failed: ${err.message}`);
+  } finally {
+    currentJob = null;
   }
 }

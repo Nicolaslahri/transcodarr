@@ -1,14 +1,13 @@
 import os from 'os';
 import { nanoid } from 'nanoid';
-import { detectHardware } from './hardware.js';
+import { ensureFfmpeg, detectHardware } from './hardware.js';
 import { broadcastWorkerMdns, stopMdns } from './mdns.js';
 import { createWorkerServer, initWorkerServer } from './server.js';
 
 const WORKER_NAME = process.env.WORKER_NAME ?? os.hostname();
-const WORKER_PORT = Number(process.env.WORKER_PORT ?? 3002);
+const WORKER_PORT = Number(process.env.WORKER_PORT ?? 3001);
 const MAIN_URL    = process.env.MAIN_URL ?? 'http://localhost:3001';
 
-// Persist ID across restarts by using a simple env var or generated value
 const WORKER_ID = process.env.WORKER_ID ?? `worker-${nanoid(8)}`;
 
 async function main() {
@@ -16,6 +15,9 @@ async function main() {
   console.log(`   Name: ${WORKER_NAME}`);
   console.log(`   ID:   ${WORKER_ID}`);
   console.log(`   Main: ${MAIN_URL}\n`);
+
+  // 0. Ensure ffmpeg is available (auto-downloads if missing)
+  await ensureFfmpeg();
 
   // 1. Detect hardware
   const hardware = detectHardware();

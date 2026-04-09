@@ -55,6 +55,13 @@ export async function createServer() {
   await app.register(jobsRoutes,    { prefix: '/api/jobs' });
   await app.register(settingsRoutes, { prefix: '/api/settings' });
 
+  // Identity endpoint — tells the Web UI it's a Main node
+  app.get('/api/meta', async () => ({
+    mode: 'main',
+    name: process.env.NODE_NAME ?? 'Transcodarr Main',
+    version: '1.0.0',
+  }));
+
   // Health check
   app.get('/api/health', async () => ({ status: 'ok', timestamp: Date.now() }));
 

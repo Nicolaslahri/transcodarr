@@ -52,11 +52,15 @@ export function initDb(): void {
     );
 
     CREATE TABLE IF NOT EXISTS watched_paths (
-      id         TEXT PRIMARY KEY,
-      path       TEXT NOT NULL UNIQUE,
-      recipe     TEXT NOT NULL,
-      enabled    INTEGER DEFAULT 1,
-      created_at INTEGER DEFAULT (unixepoch())
+      id           TEXT PRIMARY KEY,
+      path         TEXT NOT NULL UNIQUE,
+      recipe       TEXT NOT NULL,
+      enabled      INTEGER DEFAULT 1,
+      recurse      INTEGER DEFAULT 1,
+      extensions   TEXT DEFAULT '.mkv,.mp4,.avi,.ts,.mov',
+      priority     TEXT DEFAULT 'normal',
+      min_size_mb  INTEGER DEFAULT 100,
+      created_at   INTEGER DEFAULT (unixepoch())
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -67,4 +71,11 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_worker ON jobs(worker_id);
   `);
+
+  // Migrations — safely add columns if they don't exist yet
+  const migrate = (sql: string) => { try { db.exec(sql); } catch { /* column exists */ } };
+  migrate(`ALTER TABLE watched_paths ADD COLUMN recurse INTEGER DEFAULT 1`);
+  migrate(`ALTER TABLE watched_paths ADD COLUMN extensions TEXT DEFAULT '.mkv,.mp4,.avi,.ts,.mov'`);
+  migrate(`ALTER TABLE watched_paths ADD COLUMN priority TEXT DEFAULT 'normal'`);
+  migrate(`ALTER TABLE watched_paths ADD COLUMN min_size_mb INTEGER DEFAULT 100`);
 }

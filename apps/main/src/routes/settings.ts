@@ -4,45 +4,68 @@ import { nanoid } from 'nanoid';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 
 export async function settingsRoutes(app: FastifyInstance) {
-  // GET /api/settings/recipes — list all recipes
+  // ─── Recipes ────────────────────────────────────────────────────────────────
   app.get('/recipes', async () => BUILT_IN_RECIPES);
 
-  // GET /api/settings/paths — list watched paths
+  // ─── Watched Paths ───────────────────────────────────────────────────────────
   app.get('/paths', async () => {
     return getDb().prepare('SELECT * FROM watched_paths ORDER BY created_at DESC').all();
   });
 
-  // POST /api/settings/paths — add a watched path
-  app.post<{ Body: { path: string; recipe: string } }>('/paths', async (req, reply) => {
-    const { path: watchPath, recipe } = req.body;
+  app.post<{ Body: {
+    path: string; recipe: string;
+    recurse?: boolean; extensions?: string;
+    priority?: string; minSizeMb?: number;
+  } }>('/paths', async (req, reply) => {
+    const { path: watchPath, recipe, recurse = true, extensions = '.mkv,.mp4,.avi,.ts,.mov', priority = 'normal', minSizeMb = 100 } = req.body;
     if (!watchPath || !recipe) return reply.status(400).send({ error: 'path and recipe required' });
 
     const id = nanoid();
-    getDb().prepare('INSERT INTO watched_paths (id, path, recipe) VALUES (?, ?, ?)')
-      .run(id, watchPath, recipe);
-    return { id, path: watchPath, recipe, enabled: 1, createdAt: Math.floor(Date.now() / 1000) };
+    getDb().prepare(`
+      INSERT INTO watched_paths (id, path, recipe, recurse, extensions, priority, min_size_mb)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, watchPath, recipe, recurse ? 1 : 0, extensions, priority, minSizeMb);
+    return { id, path: watchPath, recipe, enabled: true, recurse, extensions, priority, minSizeMb, createdAt: Date.now() };
   });
 
-  // DELETE /api/settings/paths/:id — remove a watched path
+  app.put<{ Params: { id: string }; Body: {
+    path?: string; recipe?: string;
+    recurse?: boolean; extensions?: string;
+    priority?: string; minSizeMb?: number;
+  } }>('/paths/:id', async (req) => {
+    const { path: watchPath, recipe, recurse, extensions, priority, minSizeMb } = req.body;
+    const fields: string[] = [];
+    const vals: any[] = [];
+    if (watchPath !== undefined) { fields.push('path = ?'); vals.push(watchPath); }
+    if (recipe !== undefined) { fields.push('recipe = ?'); vals.push(recipe); }
+    if (recurse !== undefined) { fields.push('recurse = ?'); vals.push(recurse ? 1 : 0); }
+    if (extensions !== undefined) { fields.push('extensions = ?'); vals.push(extensions); }
+    if (priority !== undefined) { fields.push('priority = ?'); vals.push(priority); }
+    if (minSizeMb !== undefined) { fields.push('min_size_mb = ?'); vals.push(minSizeMb); }
+    if (fields.length) {
+      vals.push(req.params.id);
+      getDb().prepare(`UPDATE watched_paths SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
+    }
+    return { ok: true };
+  });
+
   app.delete<{ Params: { id: string } }>('/paths/:id', async (req) => {
     getDb().prepare('DELETE FROM watched_paths WHERE id = ?').run(req.params.id);
     return { ok: true };
   });
 
-  // PUT /api/settings/paths/:id/toggle — enable/disable a watched path
   app.put<{ Params: { id: string }; Body: { enabled: boolean } }>('/paths/:id/toggle', async (req) => {
     getDb().prepare('UPDATE watched_paths SET enabled = ? WHERE id = ?')
       .run(req.body.enabled ? 1 : 0, req.params.id);
     return { ok: true };
   });
 
-  // GET /api/settings/general — key/value settings
+  // ─── General Settings (key-value) ────────────────────────────────────────────
   app.get('/general', async () => {
     const rows = getDb().prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
     return Object.fromEntries(rows.map(r => [r.key, r.value]));
   });
 
-  // PUT /api/settings/general — update key/value settings
   app.put<{ Body: Record<string, string> }>('/general', async (req) => {
     const stmt = getDb().prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
     for (const [key, value] of Object.entries(req.body)) {
@@ -50,4 +73,39 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
     return { ok: true };
   });
+
+  // ─── Smart Filters ───────────────────────────────────────────────────────────
+  // Filters are stored as JSON in settings table under key 'smart_filters'
+  app.get('/filters', async () => {
+    const row = getDb().prepare("SELECT value FROM settings WHERE key = 'smart_filters'").get() as any;
+    if (!row) return getDefaultFilters();
+    try { return JSON.parse(row.value); } catch { return getDefaultFilters(); }
+  });
+
+  app.put<{ Body: SmartFilters }>('/filters', async (req) => {
+    const db = getDb();
+    db.prepare("INSERT INTO settings (key, value) VALUES ('smart_filters', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(JSON.stringify(req.body));
+    return { ok: true };
+  });
+}
+
+export interface SmartFilters {
+  skipAlreadyTargetCodec: boolean;
+  skipBelowBitrateKbps: number | null;
+  skipBelowHeightPx: number | null;
+  skipBelowSizeMb: number | null;
+  skipKeywords: string[];
+  skipDolbyAtmos: boolean;
+}
+
+function getDefaultFilters(): SmartFilters {
+  return {
+    skipAlreadyTargetCodec: true,
+    skipBelowBitrateKbps: 500,
+    skipBelowHeightPx: 480,
+    skipBelowSizeMb: 50,
+    skipKeywords: ['REMUX', 'BDREMUX'],
+    skipDolbyAtmos: true,
+  };
 }

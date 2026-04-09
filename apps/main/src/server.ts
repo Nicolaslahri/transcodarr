@@ -12,6 +12,7 @@ import type { WsEvent, WsEventType } from '@transcodarr/shared';
 import { workersRoutes } from './routes/workers.js';
 import { jobsRoutes } from './routes/jobs.js';
 import { settingsRoutes } from './routes/settings.js';
+import { getDb } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -26,6 +27,48 @@ export function broadcast<T>(event: WsEventType, data: T): void {
       client.send(payload);
     }
   }
+}
+
+// ─── Worker Health Poller ─────────────────────────────────────────────────────
+
+function rowToWorker(row: any) {
+  return {
+    id: row.id, name: row.name, host: row.host, port: row.port,
+    status: row.status, hardware: JSON.parse(row.hardware ?? '{}'),
+    smbMappings: JSON.parse(row.smb_mappings ?? '[]'), lastSeen: row.last_seen,
+  };
+}
+
+export function startWorkerHealthPoller() {
+  const INTERVAL_MS = 20_000; // ping every 20 seconds
+
+  const tick = async () => {
+    const db = getDb();
+    const workers = db.prepare("SELECT * FROM workers WHERE status != 'pending'").all() as any[];
+    
+    await Promise.all(workers.map(async (row) => {
+      const url = `http://${row.host}:${row.port}/health`;
+      let newStatus: string;
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        newStatus = res.ok ? 'online' : 'offline';
+      } catch {
+        newStatus = 'offline';
+      }
+
+      if (newStatus !== row.status) {
+        db.prepare('UPDATE workers SET status = ?, last_seen = ? WHERE id = ?')
+          .run(newStatus, Math.floor(Date.now() / 1000), row.id);
+        broadcast('worker:updated', rowToWorker(
+          db.prepare('SELECT * FROM workers WHERE id = ?').get(row.id)
+        ));
+      }
+    }));
+  };
+
+  // Run once immediately, then on interval
+  tick();
+  setInterval(tick, INTERVAL_MS);
 }
 
 // ─── Server factory ───────────────────────────────────────────────────────────

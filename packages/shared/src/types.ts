@@ -11,7 +11,7 @@ export type JobStatus =
   | 'failed'
   | 'skipped';
 
-export type WorkerStatus = 'pending' | 'active' | 'idle' | 'offline';
+export type WorkerStatus = 'pending' | 'active' | 'idle' | 'online' | 'offline';
 
 export type GpuVendor = 'nvidia' | 'amd' | 'intel' | 'cpu';
 
@@ -155,6 +155,7 @@ export interface WatchedPath {
 export type WsEventType =
   | 'worker:discovered'
   | 'worker:accepted'
+  | 'worker:updated'
   | 'worker:offline'
   | 'worker:progress'
   | 'job:queued'

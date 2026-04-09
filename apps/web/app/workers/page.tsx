@@ -280,12 +280,13 @@ function WorkerCard({ worker, onAccept, onReject }: {
 
 function StatusBadge({ status }: { status: string }) {
   const configs: Record<string, { cls: string; dot?: string; label: string }> = {
-    pending: { cls: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20', label: 'PENDING' },
-    idle:    { cls: 'bg-green-500/10 text-green-400 border-green-500/20', dot: 'bg-green-400', label: 'IDLE' },
-    active:  { cls: 'bg-primary/10 text-primary border-primary/20', dot: 'bg-primary animate-pulse', label: 'ACTIVE' },
-    offline: { cls: 'bg-red-500/10 text-red-400 border-red-500/20', label: 'OFFLINE' },
+    pending:  { cls: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20', label: 'PENDING' },
+    idle:     { cls: 'bg-green-500/10 text-green-400 border-green-500/20', dot: 'bg-green-400', label: 'IDLE' },
+    online:   { cls: 'bg-green-500/10 text-green-400 border-green-500/20', dot: 'bg-green-400 animate-pulse', label: 'ONLINE' },
+    active:   { cls: 'bg-primary/10 text-primary border-primary/20', dot: 'bg-primary animate-pulse', label: 'TRANSCODING' },
+    offline:  { cls: 'bg-red-500/10 text-red-400 border-red-500/20', label: 'OFFLINE' },
   };
-  const c = configs[status] ?? configs.idle;
+  const c = configs[status] ?? { cls: 'bg-border/10 text-textMuted border-border/20', label: status.toUpperCase() };
   return (
     <span className={`px-2.5 py-1 text-xs font-bold rounded-full border flex items-center gap-1.5 ${c.cls}`}>
       {c.dot && <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />}

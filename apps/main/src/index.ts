@@ -1,5 +1,5 @@
 import { initDb } from './db.js';
-import { createServer } from './server.js';
+import { createServer, startWorkerHealthPoller } from './server.js';
 import { startWatcher } from './watcher.js';
 import { startMdns } from './mdns.js';
 
@@ -29,6 +29,10 @@ async function main() {
     // 4. Advertise via mDNS
     startMdns(PORT);
     console.log('✅ mDNS listener active');
+
+    // 5. Start worker health poller
+    startWorkerHealthPoller();
+    console.log('✅ Worker health poller active (20s interval)');
   } else {
     console.log('✅ Setup mode active. Waiting for Configuration via UI.');
   }

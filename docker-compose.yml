@@ -8,7 +8,9 @@ version: "3.9"
 
 services:
   transcodarr-main:
-    image: ghcr.io/nicolaslahri/transcodarr:latest
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: transcodarr-main
     restart: unless-stopped
     ports:

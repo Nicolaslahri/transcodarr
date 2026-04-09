@@ -3,6 +3,7 @@ import path from 'path';
 import { getDb } from './db.js';
 import { enqueueFile } from './queue.js';
 import { broadcast } from './server.js';
+import * as fs from 'fs';
 
 const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.ts', '.m2ts', '.wmv'];
 
@@ -10,6 +11,7 @@ const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.ts', '.m2ts', '.
 const pendingFiles = new Map<string, ReturnType<typeof setTimeout>>();
 
 let sharedWatcher: chokidar.FSWatcher | null = null;
+const activePaths: string[] = [];
 const pathToRecipe = new Map<string, string>();
 
 export function startWatcher(): void {
@@ -21,12 +23,15 @@ export function startWatcher(): void {
     return;
   }
 
-  const paths = watched.map(w => w.path);
   for (const w of watched) {
-    pathToRecipe.set(w.path, w.recipe);
+    addWatchedPath(w.path, w.recipe, false); // false = don't trigger deep scan on startup (initial: false covers it)
   }
+}
 
-  sharedWatcher = chokidar.watch(paths, {
+function initWatcher() {
+  if (sharedWatcher) return;
+
+  sharedWatcher = chokidar.watch([], {
     persistent: true,
     ignoreInitial: false,
     awaitWriteFinish: { stabilityThreshold: 5000, pollInterval: 500 },
@@ -38,7 +43,8 @@ export function startWatcher(): void {
     if (!SUPPORTED_EXTENSIONS.includes(ext)) return;
 
     // Find which watched path this file belongs to
-    const watchedRoot = paths.find(p => filePath.startsWith(p));
+    // Use the live activePaths array
+    const watchedRoot = activePaths.find(p => filePath.startsWith(p));
     if (!watchedRoot) return;
     const recipe = pathToRecipe.get(watchedRoot) ?? 'space-saver';
 
@@ -57,20 +63,31 @@ export function startWatcher(): void {
   });
 
   sharedWatcher.on('error', (err) => console.error('Watcher error:', err));
-  console.log(`  Watching ${paths.length} path(s): ${paths.join(', ')}`);
 }
 
 // Called from settings API when a new path is added — hot-reload watcher
-export function addWatchedPath(watchPath: string, recipe: string): void {
+export function addWatchedPath(watchPath: string, recipe: string, triggerScan = true): void {
+  if (!activePaths.includes(watchPath)) {
+    activePaths.push(watchPath);
+  }
   pathToRecipe.set(watchPath, recipe);
+
+  if (!sharedWatcher) {
+    initWatcher();
+  }
+
   if (sharedWatcher) {
     sharedWatcher.add(watchPath);
     console.log(`  👁️ Watcher hot-reloaded: added ${watchPath}`);
+    
+    if (triggerScan) {
+      console.log(`  🔍 Auto-triggering deep scan for: ${watchPath}`);
+      manualScanDirectory(watchPath, recipe);
+    }
   }
 }
 
 // Helper to manually scan a directory recursively
-import * as fs from 'fs';
 export function manualScanDirectory(dir: string, recipe: string) {
   if (!fs.existsSync(dir)) return;
   const scan = (current: string) => {

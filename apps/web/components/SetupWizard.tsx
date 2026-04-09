@@ -14,6 +14,23 @@ export function SetupWizard({ onComplete }: Props) {
   const [role, setRole]     = useState<'main' | 'worker' | null>(null);
   const [mainIp, setMainIp] = useState('');
   const [error, setError]   = useState('');
+  const [scanning, setScanning] = useState(false);
+
+  const scanForMainNode = async () => {
+    setStep('worker-ip');
+    setScanning(true);
+    try {
+      const res = await fetch('/api/setup/discover');
+      const ips = await res.json();
+      if (ips && ips.length > 0) {
+        setMainIp(ips[0]);
+      }
+    } catch (e) {
+      // silently ignore scan failures, they can easily fallback to manual entry
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const save = async (selectedRole: 'main' | 'worker') => {
     setStep('saving');
@@ -86,7 +103,7 @@ export function SetupWizard({ onComplete }: Props) {
             </button>
 
             <button
-              onClick={() => { setRole('worker'); setStep('worker-ip'); }}
+              onClick={() => { setRole('worker'); scanForMainNode(); }}
               className="w-full group bg-surface border border-border hover:border-yellow-500/50 rounded-2xl p-6 text-left transition-all duration-200 hover:shadow-lg hover:shadow-yellow-500/5"
             >
               <div className="flex items-start gap-4">
@@ -116,16 +133,25 @@ export function SetupWizard({ onComplete }: Props) {
             </div>
 
             <div>
-              <label className="text-xs font-bold uppercase tracking-wider text-textMuted mb-2 block">
-                Main Node IP Address
-              </label>
+              <div className="flex justify-between items-end mb-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-textMuted block">
+                  Main Node IP Address
+                </label>
+                {scanning && (
+                  <span className="text-xs text-primary flex items-center gap-1.5 animate-pulse">
+                    <Loader2 className="w-3 h-3 animate-spin border-0" />
+                    Scanning network
+                  </span>
+                )}
+              </div>
               <input
                 value={mainIp}
                 onChange={e => { setMainIp(e.target.value); setError(''); }}
-                placeholder="192.168.1.100"
+                placeholder={scanning ? "Scanning..." : "192.168.1.100"}
                 autoFocus
-                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-primary/50 text-sm"
-                onKeyDown={e => e.key === 'Enter' && mainIp && save('worker')}
+                disabled={scanning}
+                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white font-mono focus:outline-none focus:border-primary/50 text-sm disabled:opacity-50"
+                onKeyDown={e => e.key === 'Enter' && mainIp && !scanning && save('worker')}
               />
               {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
               <p className="text-textMuted text-xs mt-2">

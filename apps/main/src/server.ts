@@ -111,6 +111,25 @@ export async function createServer(isSetup = false) {
     // Setup endpoints
     app.get('/api/meta', async () => ({ mode: 'loading_setup', name: 'Transcodarr Setup', version: '1.0.0' }));
     
+    // Auto-discover Main Nodes on the network
+    app.get('/api/setup/discover', async () => {
+      const { Bonjour } = await import('bonjour-service');
+      return new Promise((resolve) => {
+        const bonjour = new Bonjour();
+        const browser = bonjour.find({ type: 'transcodarr-main' });
+        const nodes: string[] = [];
+        browser.on('up', (service) => {
+          const host = service.addresses?.[0] ?? service.host;
+          nodes.push(host);
+        });
+        setTimeout(() => {
+          browser.stop();
+          bonjour.destroy();
+          resolve(Array.from(new Set(nodes))); // return unique IPs
+        }, 1500); // 1.5 seconds is plenty for local network broadcast
+      });
+    });
+    
     app.post<{ Body: { role: 'main' | 'worker'; mainUrl?: string } }>('/api/setup', async (req, reply) => {
       fs.mkdirSync(CONFIG_DIR, { recursive: true });
       const cfg: any = { role: req.body.role, savedAt: new Date().toISOString() };

@@ -51,7 +51,12 @@ export function startWorkerHealthPoller() {
       let newStatus: string;
       try {
         const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        newStatus = res.ok ? 'online' : 'offline';
+        if (res.ok) {
+          // If it was offline, bring it back to idle. Otherwise preserve current active/idle state.
+          newStatus = row.status === 'offline' ? 'idle' : row.status;
+        } else {
+          newStatus = 'offline';
+        }
       } catch {
         newStatus = 'offline';
       }

@@ -103,7 +103,7 @@ function WatchedFoldersPanel() {
 
   const scanNow = async (p: WatchedPath) => {
     try {
-      await fetch(`${apiUrl}/api/settings/paths/${p.id}/scan`, { method: 'POST' });
+      await fetch(`/api/settings/paths/${p.id}/scan`, { method: 'POST' });
     } catch (err) {
       console.error('Manual scan failed to start', err);
     }

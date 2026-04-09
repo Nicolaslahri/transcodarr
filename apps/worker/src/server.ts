@@ -111,9 +111,13 @@ export async function createWorkerServer(port: number) {
 }
 
 async function transcodeInBackground(payload: JobPayload): Promise<void> {
-  const progressUrl = `${mainUrl}/api/workers/jobs/${payload.jobId}/progress`;
-  const completeUrl = `${mainUrl}/api/workers/jobs/${payload.jobId}/complete`;
-  const fileName = payload.filePath.split(/[\\/]/).pop() ?? payload.filePath;
+  // Always call back to the Host that dispatched this job, not the static MAIN_URL
+  const callbackBase = `http://${payload.mainHost}:${payload.mainPort}`;
+  const progressUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/progress`;
+  const completeUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/complete`;
+  const fileName = (payload.smbPath ?? payload.filePath).split(/[\\/]/).pop() ?? payload.filePath;
+
+  console.log(`   Callback base: ${callbackBase}`);
 
   // Track current job for /status endpoint
   currentJob = { jobId: payload.jobId, fileName, progress: 0 };

@@ -114,7 +114,7 @@ export async function createServer(isSetup = false) {
 
   if (isSetup) {
     // Setup endpoints
-    app.get('/api/meta', async () => ({ mode: 'loading_setup', name: 'Transcodarr Setup', version: '1.0.1' }));
+    app.get('/api/meta', async () => ({ mode: 'loading_setup', name: 'Transcodarr Setup', version: process.env.npm_package_version ?? '1.0.5' }));
     
     // Auto-discover Main Nodes on the network
     app.get('/api/setup/discover', async () => {
@@ -170,7 +170,7 @@ export async function createServer(isSetup = false) {
   app.get('/api/meta', async () => ({
     mode: 'main',
     name: process.env.NODE_NAME ?? 'Transcodarr Main',
-    version: '1.0.1',
+    version: process.env.npm_package_version ?? '1.0.5',
   }));
 
   // Health check

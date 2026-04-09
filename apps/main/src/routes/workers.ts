@@ -65,9 +65,10 @@ export async function workersRoutes(app: FastifyInstance) {
 
       const existing = db.prepare('SELECT id, status FROM workers WHERE id = ?').get(id) as any;
       if (existing) {
-        // If previously accepted, restore to idle. Otherwise keep current status.
-        const wasAccepted = ['idle', 'active', 'offline'].includes(existing.status);
-        const newStatus   = wasAccepted ? 'idle' : existing.status;
+        // If it was previously accepted, transition smoothly back to idle (skipping pending)
+        // Note: include 'online' to recover any workers corrupted by the old health poller
+        const wasAccepted = ['idle', 'active', 'offline', 'online'].includes(existing.status);
+        const newStatus = wasAccepted ? 'idle' : existing.status;
         db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ?, status = ? WHERE id = ?')
           .run(realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), newStatus, id);
         if (wasAccepted) {

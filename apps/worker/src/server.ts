@@ -73,7 +73,7 @@ export async function createWorkerServer(port: number) {
     mode: 'worker',
     id: workerId,
     name: process.env.WORKER_NAME ?? workerId,
-    version: '1.0.1',
+    version: process.env.npm_package_version ?? '1.0.5',
     hardware,
     mainUrl,
   }));

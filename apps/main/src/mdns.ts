@@ -41,7 +41,7 @@ export function startMdns(mainPort: number): void {
       // If worker was previously accepted (idle/active), restore to idle.
       // If it was pending, keep it pending.
       // If it was offline after being accepted, bring it back as idle.
-      const wasAccepted = ['idle', 'active', 'offline'].includes(existing.status);
+      const wasAccepted = ['idle', 'active', 'offline', 'online'].includes(existing.status);
       const newStatus   = wasAccepted ? 'idle' : existing.status;
       db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ?, status = ? WHERE id = ?')
         .run(host, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), newStatus, id);

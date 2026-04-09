@@ -45,6 +45,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     : '';
   const [apiUrl, setApiUrl] = useState(localUrl);
   const wsRef = useRef<WebSocket | null>(null);
+  const metaRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─── Accept / Reject ──────────────────────────────────────────────────────
   const acceptWorker = useCallback(async (id: string) => {
@@ -142,30 +143,35 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   }, [addToast, acceptWorker, rejectWorker]);
 
   // ─── Boot: detect mode, possibly redirect to main ─────────────────────────
-  useEffect(() => {
-    if (!localUrl) return;
-
-    fetch(`${localUrl}/api/meta`)
+  const fetchMeta = useCallback((url: string) => {
+    fetch(`${url}/api/meta`)
       .then(r => r.json())
       .then((data: AppMeta) => {
+        if (metaRetryRef.current) { clearTimeout(metaRetryRef.current); metaRetryRef.current = null; }
         setMeta(data);
-        // If this port is a Worker, transparently redirect all API/WS calls to Main
         if (data.mode === 'worker' && data.mainUrl) {
           const mainTarget = data.mainUrl.replace(/\/$/, '');
           setApiUrl(mainTarget);
           connectTo(mainTarget);
         } else {
-          setApiUrl(localUrl);
-          connectTo(localUrl);
+          setApiUrl(url);
+          connectTo(url);
         }
       })
       .catch(() => {
-        setMeta({ mode: 'main', name: 'Transcodarr', version: '1.0.0' });
-        setApiUrl(localUrl);
-        connectTo(localUrl);
+        // Server not ready yet (restarting after reset/setup).
+        // NEVER default to mode:'main' — that would dismiss the setup wizard.
+        // Stay in 'loading' and retry every 2s until we get a real response.
+        metaRetryRef.current = setTimeout(() => fetchMeta(url), 2000);
       });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectTo]);
 
+  useEffect(() => {
+    if (!localUrl) return;
+    fetchMeta(localUrl);
     return () => {
+      if (metaRetryRef.current) clearTimeout(metaRetryRef.current);
       if (wsRef.current) {
         wsRef.current.onclose = null;
         wsRef.current.close();

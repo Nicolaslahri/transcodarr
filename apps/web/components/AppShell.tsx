@@ -4,23 +4,31 @@ import { useAppState } from '@/hooks/useTranscodarrSocket';
 import { Sidebar } from '@/components/Sidebar';
 import { SetupWizard } from '@/components/SetupWizard';
 
-// AppShell: shows the setup wizard when in setup/loading mode,
-// otherwise renders the full app with sidebar.
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { meta } = useAppState();
-  const isSetup = meta.mode === 'loading_setup' || meta.mode === 'loading';
+  const { meta, connected } = useAppState();
 
-  // Show onboarding overlay when server is in setup mode
-  if (isSetup) {
+  // Server explicitly said we're in setup mode — show the wizard
+  if (meta.mode === 'loading_setup') {
     return <SetupWizard onComplete={() => {}} />;
+  }
+
+  // Still waiting for server response — show neutral splash, NOT the wizard
+  // (prevents wizard flashing on every normal page load)
+  if (meta.mode === 'loading' && !connected) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-background">
+        <div className="text-center space-y-4">
+          <div className="text-4xl">🎬</div>
+          <p className="text-textMuted text-sm animate-pulse">Connecting to Transcodarr…</p>
+        </div>
+      </div>
+    );
   }
 
   return (
     <>
       <Sidebar />
-      <main className="flex-1 overflow-y-auto">
-        {children}
-      </main>
+      <main className="flex-1 overflow-y-auto">{children}</main>
     </>
   );
 }

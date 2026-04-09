@@ -4,11 +4,12 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 
 const CONFIG_DIR  = path.join(os.homedir(), '.transcodarr');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const RESET_FLAG  = path.join(CONFIG_DIR, 'reset.flag');
+const IS_WIN      = process.platform === 'win32';
 
 const ROOT = path.dirname(
   new URL(import.meta.url).pathname.replace(/^\/[a-zA-Z]:/, (m) => m.slice(1))
@@ -19,110 +20,155 @@ function loadConfig() {
   catch { return null; }
 }
 
-// ─── Watch for reset flag written by the API reset endpoint ──────────────────
-// This is the only reliable cross-platform way to signal start.mjs from inside
-// a turbo dev child, since turbo intercepts process signals and auto-restarts.
+// ─── Kill entire process tree (cross-platform) ────────────────────────────────
+function killTree(child) {
+  if (!child || child.exitCode !== null) return; // already dead
+  try {
+    if (IS_WIN) {
+      // Windows: taskkill /F /T kills the PID and ALL its descendants
+      spawnSync('taskkill', ['/F', '/T', '/PID', String(child.pid)], { shell: false });
+    } else {
+      // Unix: negative PID kills the entire process group
+      process.kill(-child.pid, 'SIGKILL');
+    }
+  } catch { /* already gone */ }
+}
 
+// ─── Free the port (Brute-force cleanup) ──────────────────────────────────────
+async function freePort(port = 3001) {
+  if (!IS_WIN) return; // Unix killTree usually works perfectly
+  try {
+    // Force kill the process holding the port on Windows
+    const cmd = `PowerShell -Command "Stop-Process -Id (Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue"`;
+    spawnSync(cmd, { shell: true });
+  } catch {}
+}
+
+// ─── Wait until port 3001 is free (max 10 s) ─────────────────────────────────
+async function waitForPortFree(port = 3001, timeoutMs = 10_000) {
+  await freePort(port);
+  const { createConnection } = await import('net');
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const free = await new Promise((resolve) => {
+      const s = createConnection(port, '127.0.0.1');
+      s.on('connect', () => { s.destroy(); resolve(false); });   // port in use
+      s.on('error',   () => resolve(true));                       // port free
+    });
+    if (free) return;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  console.warn(`  ⚠️  Port ${port} still in use after ${timeoutMs / 1000}s — trying anyway…`);
+}
+
+// ─── Reset flag poller ────────────────────────────────────────────────────────
 let currentChild = null;
 let resetPoller  = null;
 
-function startResetPoller() {
+function startResetPoller(onReset) {
   resetPoller = setInterval(() => {
     if (!fs.existsSync(RESET_FLAG)) return;
-
-    // Flag found — wipe it and the config, then kill & restart
+    clearInterval(resetPoller);
     try { fs.unlinkSync(RESET_FLAG); }  catch { /* ok */ }
     try { fs.unlinkSync(CONFIG_FILE); } catch { /* ok */ }
-
-    console.log('\n  🔄 Reset triggered — restarting setup wizard...\n');
-    clearInterval(resetPoller);
-
-    if (currentChild) {
-      currentChild.kill('SIGTERM');
-      // Force kill after 3 s if still alive
-      setTimeout(() => { try { currentChild.kill('SIGKILL'); } catch {} }, 3000);
-    }
-
-    // Relaunch in setup mode after child has had time to die
-    setTimeout(() => main().catch(console.error), 2000);
-  }, 1000);
+    console.log('\n  🔄 Reset triggered — stopping current node…\n');
+    killTree(currentChild);
+    onReset();
+  }, 500); // poll every 500ms for snappier response
 }
 
 // ─── Launch a role ────────────────────────────────────────────────────────────
-
-function launchRole(role) {
+async function launchRole(role) {
   const filter = role === 'main' ? '@transcodarr/main' : '@transcodarr/worker';
   const label  = role === 'main' ? '🧠 Main Node' : '⚡ Worker Node';
 
+  await waitForPortFree();
   console.log(`\n  Starting ${label}...\n`);
 
   currentChild = spawn(
-    'npx',
-    ['turbo', 'dev', `--filter=${filter}`],
-    { stdio: 'inherit', shell: true, cwd: ROOT }
+    'npm', ['run', 'dev', '--workspace=' + filter],
+    { stdio: 'inherit', shell: true, cwd: ROOT, detached: !IS_WIN }
   );
 
-  startResetPoller();
+  startResetPoller(async () => {
+    await waitForPortFree();
+    main().catch(console.error);
+  });
 
   currentChild.on('error', (err) => {
+    clearInterval(resetPoller);
     console.error('\n  ❌ Failed to launch:', err.message);
     process.exit(1);
   });
 
   currentChild.on('exit', (code) => {
     clearInterval(resetPoller);
-    // Only exit completely if no reset is pending
-    if (!fs.existsSync(RESET_FLAG)) {
+    // If reset flag appeared while exit was in flight, restart
+    if (fs.existsSync(RESET_FLAG)) {
+      try { fs.unlinkSync(RESET_FLAG); }  catch {}
+      try { fs.unlinkSync(CONFIG_FILE); } catch {}
+      waitForPortFree().then(() => main().catch(console.error));
+    } else {
       process.exit(code ?? 0);
     }
   });
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
-
 async function main() {
-  // Clean up any stale reset flag from a crashed previous session
-  try { if (fs.existsSync(RESET_FLAG)) fs.unlinkSync(RESET_FLAG); } catch { /* ok */ }
+  // Clean stale flag from crashed previous session
+  try { if (fs.existsSync(RESET_FLAG)) fs.unlinkSync(RESET_FLAG); } catch {}
 
   const config = loadConfig();
 
   if (config?.role) {
     console.log(`\n  Transcodarr — resuming as ${config.role === 'main' ? '🧠 Main Node' : '⚡ Worker Node'}`);
     console.log(`  \x1b[2m(Reset: Settings → General → Reset Setup)\x1b[0m\n`);
-    launchRole(config.role);
+    await launchRole(config.role);
     return;
   }
 
   // No config → launch setup wizard
   console.log('\n  🚀 First boot — opening Setup UI on http://localhost:3001 ...\n');
+  await waitForPortFree();
 
   currentChild = spawn(
-    'npx',
-    ['turbo', 'dev', '--filter=@transcodarr/main'],
+    'npm', ['run', 'dev', '--workspace=@transcodarr/main'],
     {
       stdio: 'inherit',
       shell: true,
       cwd: ROOT,
+      detached: !IS_WIN,
       env: { ...process.env, SETUP_MODE: '1' }
     }
   );
 
-  startResetPoller();
+  startResetPoller(async () => {
+    await waitForPortFree();
+    main().catch(console.error);
+  });
 
   currentChild.on('error', (err) => {
+    clearInterval(resetPoller);
     console.error('\n  ❌ Failed to launch setup:', err.message);
     process.exit(1);
   });
 
   currentChild.on('exit', () => {
     clearInterval(resetPoller);
+    if (fs.existsSync(RESET_FLAG)) {
+      try { fs.unlinkSync(RESET_FLAG); }  catch {}
+      try { fs.unlinkSync(CONFIG_FILE); } catch {}
+      waitForPortFree().then(() => main().catch(console.error));
+      return;
+    }
     const newConfig = loadConfig();
     if (newConfig?.role) {
-      console.log('\n  ✅ Setup complete! Restarting...\n');
-      setTimeout(() => launchRole(newConfig.role), 1500);
+      console.log('\n  ✅ Setup complete! Restarting as configured role...\n');
+      waitForPortFree().then(() => launchRole(newConfig.role));
     } else {
-      // Still no config — re-show setup
-      setTimeout(() => main().catch(console.error), 1500);
+      // No role saved yet — re-show setup
+      waitForPortFree().then(() => main().catch(console.error));
     }
   });
 }

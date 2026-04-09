@@ -86,16 +86,23 @@ function startResetPoller() {
 
 // ─── Launch a role ────────────────────────────────────────────────────────────
 async function launchRole(role) {
+  const isProd = process.env.NODE_ENV === 'production';
   const filter = role === 'main' ? '@transcodarr/main' : '@transcodarr/worker';
   const label  = role === 'main' ? '🧠 Main Node' : '⚡ Worker Node';
 
   await waitForPortFree();
   console.log(`\n  Starting ${label}...\n`);
 
-  currentChild = spawn(
-    'npm', ['run', 'dev', '--workspace=' + filter],
-    { stdio: 'inherit', shell: true, cwd: ROOT, detached: !IS_WIN }
-  );
+  if (isProd) {
+    const entrypoint = role === 'main' ? 'apps/main/dist/index.js' : 'apps/worker/dist/index.js';
+    currentChild = spawn('node', [entrypoint], {
+      stdio: 'inherit', cwd: ROOT, detached: !IS_WIN
+    });
+  } else {
+    currentChild = spawn('npm', ['run', 'dev', '--workspace=' + filter], {
+      stdio: 'inherit', shell: true, cwd: ROOT, detached: !IS_WIN
+    });
+  }
 
   startResetPoller();
 
@@ -134,16 +141,24 @@ async function main() {
   console.log('\n  🚀 First boot — opening Setup UI on http://localhost:3001 ...\n');
   await waitForPortFree();
 
-  currentChild = spawn(
-    'npm', ['run', 'dev', '--workspace=@transcodarr/main'],
-    {
+  const isProd = process.env.NODE_ENV === 'production';
+
+  if (isProd) {
+    currentChild = spawn('node', ['apps/main/dist/index.js'], {
+      stdio: 'inherit',
+      cwd: ROOT,
+      detached: !IS_WIN,
+      env: { ...process.env, SETUP_MODE: '1' }
+    });
+  } else {
+    currentChild = spawn('npm', ['run', 'dev', '--workspace=@transcodarr/main'], {
       stdio: 'inherit',
       shell: true,
       cwd: ROOT,
       detached: !IS_WIN,
       env: { ...process.env, SETUP_MODE: '1' }
-    }
-  );
+    });
+  }
 
   startResetPoller();
 

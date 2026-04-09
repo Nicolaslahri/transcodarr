@@ -1,43 +1,71 @@
-# Use the official Node 22 image (needed for node:sqlite)
-FROM node:22-alpine AS builder
+# ─── Stage 1: Build ────────────────────────────────────────────────────────────
+FROM node:22-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install turbo
-RUN npm install -g turbo
+# Copy workspace manifests first for layer caching
+COPY package.json package-lock.json turbo.json tsconfig.base.json ./
+COPY packages/shared/package.json   ./packages/shared/
+COPY apps/main/package.json         ./apps/main/
+COPY apps/worker/package.json       ./apps/worker/
+COPY apps/web/package.json          ./apps/web/
 
-# Copy the monorepo over
-COPY . .
+RUN npm ci --prefer-offline
 
-# Install dependencies and build everything
-RUN npm install
-RUN turbo build
+# Copy source
+COPY packages/ ./packages/
+COPY apps/main/ ./apps/main/
+COPY apps/worker/ ./apps/worker/
+COPY apps/web/  ./apps/web/
 
-# Production image
-FROM node:22-alpine
+# Build all packages via Turbo
+RUN npx turbo build --filter=@transcodarr/shared
+RUN npx turbo build --filter=@transcodarr/web
+RUN npx turbo build --filter=@transcodarr/main
+RUN npx turbo build --filter=@transcodarr/worker
+
+# ─── Stage 2: Runtime ──────────────────────────────────────────────────────────
+FROM node:22-slim AS runtime
+
+# ffmpeg is required by both main (probing) and worker (transcoding)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-# We need ffmpeg/ffprobe on the MAIN node to do initial file analysis
-RUN apk add --no-cache ffmpeg tzdata
 
-# Need to copy over the dist payload for Main, the static `out` for Web, and package config
-COPY --from=builder /app/package.json /app/package.json
-COPY --from=builder /app/node_modules /app/node_modules
+# Copy compiled assets
+COPY --from=builder /app/packages/shared/dist     ./packages/shared/dist
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/package.json
 
-COPY --from=builder /app/packages/shared/dist /app/packages/shared/dist
-COPY --from=builder /app/packages/shared/package.json /app/packages/shared/package.json
+COPY --from=builder /app/apps/main/dist           ./apps/main/dist
+COPY --from=builder /app/apps/main/package.json   ./apps/main/package.json
 
-COPY --from=builder /app/apps/main/dist /app/apps/main/dist
-COPY --from=builder /app/apps/main/package.json /app/apps/main/package.json
+COPY --from=builder /app/apps/worker/dist         ./apps/worker/dist
+COPY --from=builder /app/apps/worker/package.json ./apps/worker/package.json
 
-COPY --from=builder /app/apps/web/out /app/apps/web/out
+COPY --from=builder /app/apps/web/out             ./apps/web/out
 
-# Setting env variables
+# Copy dependency node_modules
+COPY --from=builder /app/node_modules             ./node_modules
+
+# Copy unified launcher
+COPY --from=builder /app/package.json             ./package.json
+COPY start.mjs ./
+
+# Set environment
 ENV NODE_ENV=production
 ENV MAIN_PORT=3001
-ENV MAIN_HOST=0.0.0.0
-ENV DB_PATH=/app/data/transcodarr.db
+ENV WORKER_PORT=3001
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
+ENV FFPROBE_PATH=/usr/bin/ffprobe
 
 EXPOSE 3001
 
-CMD ["node", "apps/main/dist/index.js"]
+# The unified launcher handles reading the config, showing the wizard, 
+# and spinning up either main/dist/index.js or worker/dist/index.js
+CMD ["node", "start.mjs"]

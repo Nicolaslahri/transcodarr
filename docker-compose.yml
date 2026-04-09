@@ -8,7 +8,7 @@ version: "3.9"
 
 services:
   transcodarr-main:
-    image: ghcr.io/nicolaslahri/transcodarr-main:latest
+    image: ghcr.io/nicolaslahri/transcodarr:latest
     container_name: transcodarr-main
     restart: unless-stopped
     ports:

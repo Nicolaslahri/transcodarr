@@ -109,6 +109,20 @@ export async function workersRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // GET /api/workers/:id/fs — proxy worker filesystem browser (avoids browser CORS)
+  app.get<{ Params: { id: string }; Querystring: { path?: string } }>('/:id/fs', async (req, reply) => {
+    const worker = getDb().prepare('SELECT host, port FROM workers WHERE id = ?').get(req.params.id) as any;
+    if (!worker) return reply.status(404).send({ error: 'Worker not found' });
+    try {
+      const qs  = req.query.path ? `?path=${encodeURIComponent(req.query.path)}` : '';
+      const res = await fetch(`http://${worker.host}:${worker.port}/fs${qs}`, { signal: AbortSignal.timeout(5000) });
+      const json = await res.json();
+      return json;
+    } catch (err: any) {
+      return reply.status(502).send({ error: `Worker unreachable: ${err.message}` });
+    }
+  });
+
   // POST /api/workers/jobs/:jobId/progress — progress callback from Worker
   app.post<{ Params: { jobId: string }; Body: { workerId: string; progress: number; fps?: number; eta?: number; phase: string } }>(
     '/jobs/:jobId/progress',

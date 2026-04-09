@@ -105,6 +105,45 @@ export async function createWorkerServer(port: number) {
   // GET /health
   app.get('/health', async () => ({ ok: true, workerId, hardware }));
 
+  // GET /fs?path= — browse worker's filesystem (used by Main UI for path mapping)
+  app.get<{ Querystring: { path?: string } }>('/fs', async (req) => {
+    const { default: fsSync } = await import('fs');
+    const { default: pathMod } = await import('path');
+    const { default: osMod }   = await import('os');
+    const isWindows = osMod.platform() === 'win32';
+    const q = req.query;
+
+    if (!q.path && isWindows) {
+      const drives: { name: string; path: string }[] = [];
+      for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')) {
+        const root = `${letter}:\\`;
+        try { if (fsSync.existsSync(root)) drives.push({ name: root, path: root }); } catch { /**/ }
+      }
+      return { current: '', parent: '', dirs: drives };
+    }
+
+    const defaultRoot = isWindows ? 'C:\\' : '/';
+    let target = q.path ? pathMod.resolve(q.path) : defaultRoot;
+    if (!fsSync.existsSync(target)) target = defaultRoot;
+
+    try {
+      const dirents = fsSync.readdirSync(target, { withFileTypes: true });
+      const dirs = dirents
+        .filter(d => {
+          if (!d.isDirectory()) return false;
+          if (!isWindows) {
+            const skip = ['proc', 'sys', 'dev', 'run', 'snap', 'lost+found'];
+            if (skip.includes(d.name)) return false;
+          }
+          return true;
+        })
+        .map(d => ({ name: d.name, path: pathMod.join(target, d.name) }));
+      return { current: target, parent: pathMod.dirname(target), dirs };
+    } catch {
+      return { current: target, parent: pathMod.dirname(target), dirs: [] };
+    }
+  });
+
   await app.listen({ port, host: '0.0.0.0' });
   console.log(`✅ Worker HTTP server listening on :${port}`);
   return app;

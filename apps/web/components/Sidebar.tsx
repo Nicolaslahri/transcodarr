@@ -33,9 +33,14 @@ export function Sidebar() {
           <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shrink-0">
             <Radio className="w-4 h-4 text-background" />
           </div>
-          <div>
-            <p className="font-bold text-white text-sm leading-tight">Transcodarr</p>
-            <p className="text-xs text-textMuted leading-tight">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between">
+              <p className="font-bold text-white text-sm leading-tight">Transcodarr</p>
+              <span className="text-[10px] bg-white/10 px-1.5 py-0.5 rounded-md text-white/70 font-mono">
+                v{meta.version || '1.0.0'}
+              </span>
+            </div>
+            <p className="text-xs text-textMuted leading-tight mt-0.5">
               {isLoading ? '…' : meta.mode === 'worker' ? 'Worker Node' : 'Main Node'}
             </p>
           </div>

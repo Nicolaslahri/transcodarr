@@ -7,6 +7,8 @@ import { useState } from 'react';
 
 export default function WorkersPage() {
   const { workers, acceptWorker, rejectWorker, apiUrl } = useAppState();
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  
   const pendingWorkers = workers.filter(w => w.status === 'pending');
   const activeWorkers = workers.filter(w => w.status !== 'pending');
 
@@ -27,16 +29,7 @@ export default function WorkersPage() {
              Refresh Fleet
            </button>
            <button 
-             onClick={() => {
-                const ip = prompt('Enter Worker IP address (e.g. 192.168.1.50):');
-                if (ip) {
-                   fetch(`${apiUrl}/api/workers/add-manual`, { 
-                     method: 'POST',
-                     headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({ ip })
-                   });
-                }
-             }}
+             onClick={() => setAddModalOpen(true)}
              className="flex items-center gap-2 px-4 py-2 bg-primary text-background rounded-xl text-sm font-bold hover:bg-primary/90 transition-colors"
            >
              <Plus className="w-4 h-4" /> Add Worker...
@@ -79,6 +72,49 @@ export default function WorkersPage() {
           </div>
         )}
       </section>
+
+      {/* Manual Add Worker Modal */}
+      {addModalOpen && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface border border-border w-full max-w-md rounded-2xl p-6 shadow-2xl relative">
+            <button onClick={() => setAddModalOpen(false)} className="absolute top-4 right-4 text-textMuted hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-xl font-bold text-white mb-2">Add Worker Node</h3>
+            <p className="text-sm text-textMuted mb-6">If automatic discovery failed, enter the IP address of the worker machine on your network.</p>
+            
+            <form onSubmit={e => {
+              e.preventDefault();
+              const ip = new FormData(e.currentTarget).get('ip') as string;
+              if (ip) {
+                fetch(`${apiUrl}/api/workers/add-manual`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ip })
+                });
+                setAddModalOpen(false);
+              }
+            }}>
+              <label className="text-xs font-bold uppercase tracking-wider text-textMuted mb-2 block">Worker IP Address</label>
+              <input
+                name="ip"
+                required
+                autoFocus
+                placeholder="192.168.1.50"
+                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white mb-6 focus:outline-none focus:border-primary/50 font-mono"
+              />
+              <div className="flex gap-3 justify-end">
+                <button type="button" onClick={() => setAddModalOpen(false)} className="px-5 py-2.5 rounded-xl font-medium text-textMuted hover:bg-background transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" className="px-5 py-2.5 rounded-xl font-bold bg-primary text-background hover:bg-primary/90 transition-colors">
+                  Connect Node
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

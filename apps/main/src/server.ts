@@ -47,6 +47,19 @@ export async function createServer(isSetup = false) {
       prefix: '/',
       extensions: ['html'] 
     });
+    
+    app.setNotFoundHandler((req, reply) => {
+      if (req.url.startsWith('/api/')) {
+         reply.code(404).send({ error: 'Not Found', path: req.url });
+         return;
+      }
+      const page = req.url.split('?')[0] + '.html';
+      const tryPath = path.join(webOutPath, page);
+      if (fs.existsSync(tryPath)) {
+        return reply.sendFile(page);
+      }
+      return reply.sendFile('index.html');
+    });
   } catch {
     // Web UI not built yet — fine in dev
   }

@@ -12,8 +12,23 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.get('/fs', async (req) => {
     const q = req.query as { path?: string };
-    let target = q.path ? path.resolve(q.path) : (os.platform() === 'win32' ? 'C:\\' : '/');
-    if (!fs.existsSync(target)) target = os.platform() === 'win32' ? 'C:\\' : '/';
+    
+    if (!q.path && os.platform() === 'win32') {
+      const drives: { name: string; path: string }[] = [];
+      const potentialDrives = 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+      for (const letter of potentialDrives) {
+        const root = `${letter}:\\`;
+        try {
+          if (fs.existsSync(root)) drives.push({ name: root, path: root });
+        } catch { /* ignore permission errors */ }
+      }
+      return { current: '', parent: '', dirs: drives };
+    }
+
+    let target = q.path ? path.resolve(q.path) : '/';
+    if (!fs.existsSync(target)) {
+       target = os.platform() === 'win32' ? 'C:\\' : '/';
+    }
 
     try {
       const dirents = fs.readdirSync(target, { withFileTypes: true });

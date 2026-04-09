@@ -3,24 +3,32 @@
 import { useEffect, useState } from 'react';
 import { FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight, ChevronDown, Filter, Settings2, BookOpen } from 'lucide-react';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
+import { useAppState } from '@/hooks/useTranscodarrSocket';
 
 type Tab = 'folders' | 'filters' | 'recipes' | 'general';
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>('folders');
+  const { meta } = useAppState();
+  const [tab, setTab] = useState<Tab>(meta.mode === 'worker' ? 'general' : 'folders');
 
-  const tabs: { id: Tab; icon: React.ElementType; label: string }[] = [
+  const mainTabs: { id: Tab; icon: React.ElementType; label: string }[] = [
     { id: 'folders',  icon: FolderOpen, label: 'Watched Folders' },
     { id: 'filters',  icon: Filter,     label: 'Smart Filters'   },
     { id: 'recipes',  icon: BookOpen,   label: 'Recipes'          },
     { id: 'general',  icon: Settings2,  label: 'General'          },
   ];
 
+  const tabs = meta.mode === 'worker' 
+    ? [{ id: 'general', icon: Settings2, label: 'General' } as const]
+    : mainTabs;
+
   return (
     <div className="p-10 max-w-5xl mx-auto space-y-8">
       <header>
         <h1 className="text-4xl font-bold tracking-tight text-white mb-1">Settings</h1>
-        <p className="text-textMuted">Configure scanning, filters, and preferences.</p>
+        <p className="text-textMuted">
+          {meta.mode === 'worker' ? 'Configure worker preferences' : 'Configure scanning, filters, and preferences.'}
+        </p>
       </header>
 
       {/* Tab bar */}
@@ -39,10 +47,10 @@ export default function SettingsPage() {
       </div>
 
       {/* Panels */}
-      {tab === 'folders'  && <WatchedFoldersPanel />}
-      {tab === 'filters'  && <SmartFiltersPanel />}
-      {tab === 'recipes'  && <RecipesPanel />}
-      {tab === 'general'  && <GeneralPanel />}
+      {tab === 'folders' && meta.mode !== 'worker' && <WatchedFoldersPanel />}
+      {tab === 'filters' && meta.mode !== 'worker' && <SmartFiltersPanel />}
+      {tab === 'recipes' && meta.mode !== 'worker' && <RecipesPanel />}
+      {tab === 'general' && <GeneralPanel />}
     </div>
   );
 }

@@ -31,6 +31,22 @@ export async function createWorkerServer(port: number) {
       prefix: '/',
       extensions: ['html'] 
     });
+    
+    app.setNotFoundHandler((req, reply) => {
+      // API or other specific routes fallback to raw index or standard 404
+      if (req.url.startsWith('/api/') || req.url.startsWith('/job') || req.url.startsWith('/status') || req.url.startsWith('/health')) {
+         reply.code(404).send({ error: 'Not Found', path: req.url });
+         return;
+      }
+      const page = req.url.split('?')[0] + '.html';
+      const tryPath = path.join(webOutPath, page);
+      import('fs').then(fs => {
+        if (fs.existsSync(tryPath)) {
+          return reply.sendFile(page);
+        }
+        return reply.sendFile('index.html');
+      });
+    });
   } catch {
     // Web UI not built yet
   }

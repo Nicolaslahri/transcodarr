@@ -44,8 +44,8 @@ export default function WorkersPage() {
             <ShieldAlert className="w-3.5 h-3.5" /> Awaiting Approval ({pendingWorkers.length})
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {pendingWorkers.map(w => (
-              <WorkerCard key={w.id} worker={w} onAccept={acceptWorker} onReject={rejectWorker} />
+      {pendingWorkers.map(w => (
+              <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={acceptWorker} onReject={rejectWorker} />
             ))}
           </div>
         </section>
@@ -67,7 +67,7 @@ export default function WorkersPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {activeWorkers.map(w => (
-              <WorkerCard key={w.id} worker={w} onAccept={acceptWorker} onReject={rejectWorker} />
+              <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={acceptWorker} onReject={rejectWorker} />
             ))}
           </div>
         )}
@@ -133,8 +133,9 @@ export default function WorkersPage() {
   );
 }
 
-function WorkerCard({ worker, onAccept, onReject }: {
+function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
   worker: WorkerInfo;
+  apiUrl: string;
   onAccept: (id: string) => void;
   onReject: (id: string) => void;
 }) {

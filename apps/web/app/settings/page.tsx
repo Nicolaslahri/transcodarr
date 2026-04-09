@@ -438,8 +438,8 @@ function RecipesPanel() {
 // ─── General ─────────────────────────────────────────────────────────────────
 
 function GeneralPanel() {
-  const { apiUrl } = useAppState();
-  const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false' });
+  const { apiUrl, meta } = useAppState();
+  const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '' });
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -449,6 +449,7 @@ function GeneralPanel() {
         maxConcurrentJobs: data.maxConcurrentJobs ?? s.maxConcurrentJobs,
         queueStrategy: data.queueStrategy ?? s.queueStrategy,
         autoAcceptWorkers: data.autoAcceptWorkers ?? s.autoAcceptWorkers,
+        mainUrl: data.mainUrl ?? s.mainUrl,
       }));
     }).catch(() => {});
   }, [apiUrl]);
@@ -519,6 +520,18 @@ function GeneralPanel() {
             </button>
           </div>
         </Field>
+
+        {meta.mode === 'worker' && (
+          <Field label="Main Node URL">
+            <input
+              value={settings.mainUrl}
+              onChange={e => setSettings(s => ({ ...s, mainUrl: e.target.value }))}
+              placeholder="http://192.168.1.50:3001"
+              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
+            />
+            <p className="text-xs text-textMuted mt-1.5 ml-1">Requires a manual restart of the worker executable to apply.</p>
+          </Field>
+        )}
       </div>
 
       <div className="flex items-center gap-3">

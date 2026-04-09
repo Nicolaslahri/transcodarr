@@ -3,12 +3,29 @@ import { nanoid } from 'nanoid';
 import { ensureFfmpeg, detectHardware } from './hardware.js';
 import { broadcastWorkerMdns, stopMdns } from './mdns.js';
 import { createWorkerServer, initWorkerServer } from './server.js';
+import fs from 'fs';
+import path from 'path';
 
-const WORKER_NAME = process.env.WORKER_NAME ?? os.hostname();
+let config: any = {};
+try {
+  config = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.transcodarr', 'config.json'), 'utf8'));
+} catch { /**/ }
+
+const WORKER_NAME = config.nodeName || process.env.WORKER_NAME || os.hostname();
 const WORKER_PORT = Number(process.env.WORKER_PORT ?? 3001);
-const MAIN_URL    = process.env.MAIN_URL ?? 'http://localhost:3001';
+const MAIN_URL    = config.mainUrl || process.env.MAIN_URL || 'http://localhost:3001';
 
-const WORKER_ID = process.env.WORKER_ID ?? `worker-${nanoid(8)}`;
+const WORKER_ID = config.workerId || process.env.WORKER_ID || `worker-${nanoid(8)}`;
+
+// Save the ID if it wasn't saved so it survives reboots
+if (!config.workerId) {
+  try {
+    fs.writeFileSync(
+      path.join(os.homedir(), '.transcodarr', 'config.json'),
+      JSON.stringify({ ...config, workerId: WORKER_ID }, null, 2)
+    );
+  } catch { /**/ }
+}
 
 async function main() {
   console.log('⚡ Transcodarr Worker starting...');

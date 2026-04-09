@@ -9,6 +9,33 @@ interface Props {
   onComplete: () => void;
 }
 
+/**
+ * Normalises whatever the user typed into a clean http://host:port URL.
+ * Handles: bare IPs, IP:port, http://IP, http://IP:port, accidental double-prefix.
+ */
+function normalizeMainUrl(input: string): string {
+  // Strip any leading/trailing whitespace and trailing slashes
+  let s = input.trim().replace(/\/+$/, '');
+
+  // Remove accidental duplicate scheme like "http://http://"
+  s = s.replace(/^(https?:\/\/)+/i, (_, scheme) => scheme);
+
+  // If no scheme, add one
+  if (!/^https?:\/\//i.test(s)) s = `http://${s}`;
+
+  try {
+    const url = new URL(s);
+    if (!url.port) url.port = '3001';
+    // Return without trailing slash
+    return `${url.protocol}//${url.hostname}:${url.port}`;
+  } catch {
+    // Fallback: treat as bare host
+    const clean = s.replace(/^https?:\/\//i, '');
+    const [host, port] = clean.split(':');
+    return `http://${host}:${port ?? '3001'}`;
+  }
+}
+
 export function SetupWizard({ onComplete }: Props) {
   const [step, setStep]     = useState<Step>('choose');
   const [role, setRole]     = useState<'main' | 'worker' | null>(null);
@@ -43,15 +70,7 @@ export function SetupWizard({ onComplete }: Props) {
     try {
       const body: any = { role: selectedRole };
       if (selectedRole === 'worker' && mainIp) {
-        let base = mainIp.trim();
-        if (!/^https?:\/\//i.test(base)) base = `http://${base}`;
-        try {
-          const url = new URL(base);
-          if (!url.port) url.port = '3001';
-          body.mainUrl = url.toString().replace(/\/$/, '');
-        } catch {
-          body.mainUrl = `http://${mainIp.trim()}:3001`;
-        }
+        body.mainUrl = normalizeMainUrl(mainIp.trim());
       }
 
       const res = await fetch('/api/setup', {

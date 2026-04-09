@@ -81,9 +81,33 @@ export async function createWorkerServer(port: number) {
   // Settings stubs — Worker has only General settings (no DB)
   app.get('/api/settings/general', async () => ({
     nodeName: process.env.WORKER_NAME ?? workerId,
+    mainUrl,
   }));
 
-  app.put('/api/settings/general', async () => ({ ok: true }));
+  app.put<{ Body: { nodeName?: string; mainUrl?: string } }>('/api/settings/general', async (req, reply) => {
+    const { default: fs } = await import('fs');
+    const { default: os } = await import('os');
+    const { default: path } = await import('path');
+    const dir        = path.join(os.homedir(), '.transcodarr');
+    const configFile = path.join(dir, 'config.json');
+
+    try {
+      let config: any = { role: 'worker' };
+      if (fs.existsSync(configFile)) {
+        config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      }
+      if (req.body.nodeName) config.nodeName = req.body.nodeName;
+      if (req.body.mainUrl)  config.mainUrl = req.body.mainUrl;
+      
+      fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+      
+      // Send response then exit after 500ms so start.mjs restarts it with new config
+      setTimeout(() => process.exit(0), 500);
+      return reply.send({ ok: true, message: 'Worker is restarting to apply changes' });
+    } catch {
+      return reply.status(500).send({ error: 'Failed to write config' });
+    }
+  });
 
   // Reset — writes flag file for start.mjs to detect and restart in setup mode
   app.post('/api/settings/reset', async (req, reply) => {

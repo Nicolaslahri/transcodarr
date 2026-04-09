@@ -8,23 +8,30 @@ const HOST = process.env.MAIN_HOST ?? '0.0.0.0';
 
 async function main() {
   console.log('🚀 Transcodarr Main Node starting...');
+  const isSetup = process.env.SETUP_MODE === '1';
 
-  // 1. Init SQLite
-  initDb();
-  console.log('✅ Database ready');
+  if (!isSetup) {
+    // 1. Init SQLite
+    initDb();
+    console.log('✅ Database ready');
+  }
 
   // 2. Start Fastify server
-  const app = await createServer();
+  const app = await createServer(isSetup);
   await app.listen({ port: PORT, host: HOST });
   console.log(`✅ API server listening on http://${HOST}:${PORT}`);
 
-  // 3. Start file watcher
-  startWatcher();
-  console.log('✅ File watcher active');
+  if (!isSetup) {
+    // 3. Start file watcher
+    startWatcher();
+    console.log('✅ File watcher active');
 
-  // 4. Advertise via mDNS
-  startMdns(PORT);
-  console.log('✅ mDNS listener active');
+    // 4. Advertise via mDNS
+    startMdns(PORT);
+    console.log('✅ mDNS listener active');
+  } else {
+    console.log('✅ Setup mode active. Waiting for Configuration via UI.');
+  }
 
   console.log('\n🎬 Transcodarr is ready. Open the UI to get started.\n');
 }

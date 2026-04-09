@@ -1,3 +1,5 @@
+import fs from 'fs';
+import os from 'os';
 import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyCors from '@fastify/cors';
@@ -28,7 +30,10 @@ export function broadcast<T>(event: WsEventType, data: T): void {
 
 // ─── Server factory ───────────────────────────────────────────────────────────
 
-export async function createServer() {
+const CONFIG_DIR = path.join(os.homedir(), '.transcodarr');
+const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+
+export async function createServer(isSetup = false) {
   const app = Fastify({ logger: { level: 'warn' } });
 
   await app.register(fastifyCors, { origin: true });
@@ -37,9 +42,27 @@ export async function createServer() {
   // Serve built web UI
   const webOutPath = path.resolve(__dirname, '../../web/out');
   try {
-    await app.register(fastifyStatic, { root: webOutPath, prefix: '/' });
+    await app.register(fastifyStatic, { 
+      root: webOutPath, 
+      prefix: '/',
+      extensions: ['html'] 
+    });
   } catch {
     // Web UI not built yet — fine in dev
+  }
+
+  if (isSetup) {
+    // Setup endpoints
+    app.get('/api/meta', async () => ({ mode: 'loading_setup', name: 'Transcodarr Setup', version: '1.0.0' }));
+    
+    app.post<{ Body: { role: 'main' | 'worker' } }>('/api/setup', async (req, reply) => {
+      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify({ role: req.body.role, savedAt: new Date().toISOString() }, null, 2));
+      reply.send({ ok: true });
+      // Allow response to send before exiting
+      setTimeout(() => process.exit(0), 100);
+    });
+    return app;
   }
 
   // WebSocket endpoint

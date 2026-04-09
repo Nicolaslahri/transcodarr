@@ -43,44 +43,6 @@ function launchRole(role) {
   child.on('exit', (code) => process.exit(code ?? 0));
 }
 
-async function promptRole() {
-  const RESET = '\x1b[0m';
-  const BOLD = '\x1b[1m';
-  const DIM = '\x1b[2m';
-  const CYAN = '\x1b[36m';
-  const YELLOW = '\x1b[33m';
-  const GREEN = '\x1b[32m';
-
-  console.clear();
-  console.log(`
-${BOLD}${CYAN}  ████████╗██████╗  █████╗ ███╗  ██╗███████╗ ██████╗  █████╗ ██████╗ ██████╗${RESET}
-${DIM}${CYAN}     ██║  ██╔══██╗██╔══██╗████╗ ██║██╔════╝██╔════╝██╔══██╗██╔══██╗██╔══██╗${RESET}
-${BOLD}${CYAN}     ██║  ██████╔╝███████║██╔██╗██║███████╗██║     ██║  ██║██║  ██║███████╔╝${RESET}
-${DIM}${CYAN}     ██║  ██╔══██╗██╔══██║██║╚████║╚════██║██║     ██║  ██║██║  ██║██╔══██╗${RESET}
-${BOLD}${CYAN}     ██║  ██║  ██║██║  ██║██║ ╚███║███████║╚██████╗╚█████╔╝██████╔╝██║  ██║${RESET}
-${DIM}  ─────────────────────── ${RESET}${DIM}Zero-Config Intelligent Transcoding${RESET}${DIM} ────────────────────${RESET}
-
-  ${BOLD}Welcome! What is this machine's role?${RESET}
-
-    ${BOLD}${GREEN}[1]  Main Node${RESET}   ${DIM}— Manages the queue, watches folders, serves the Web UI${RESET}
-         ${DIM}Best for: Raspberry Pi, NAS, or always-on server${RESET}
-
-    ${BOLD}${YELLOW}[2]  Worker Node${RESET}  ${DIM}— GPU-accelerated transcoding powerhouse${RESET}
-         ${DIM}Best for: Windows PC with Nvidia / AMD GPU${RESET}
-
-`);
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-
-  return new Promise((resolve) => {
-    rl.question(`  Enter choice ${DIM}[1 or 2]${RESET}: `, (answer) => {
-      rl.close();
-      const role = answer.trim() === '2' ? 'worker' : 'main';
-      resolve(role);
-    });
-  });
-}
-
 async function main() {
   const config = loadConfig();
 
@@ -92,10 +54,33 @@ async function main() {
     return;
   }
 
-  // First boot: show role selector
-  const role = await promptRole();
-  saveConfig({ role, savedAt: new Date().toISOString() });
-  launchRole(role);
+  // First boot: launch Setup mode via Main node
+  console.log('\n  🚀 First boot detected! Launching Setup UI on http://localhost:3001 ...\n');
+  const child = spawn(
+    'npx',
+    ['turbo', 'dev', '--filter=@transcodarr/main'],
+    { 
+      stdio: 'inherit', 
+      shell: true, 
+      cwd: path.dirname(new URL(import.meta.url).pathname.replace(/^\/[a-zA-Z]:/, (m) => m.slice(1))),
+      env: { ...process.env, SETUP_MODE: '1' } 
+    }
+  );
+
+  child.on('error', (err) => {
+    console.error('\n  ❌ Failed to launch setup:', err.message);
+    process.exit(1);
+  });
+
+  child.on('exit', (code) => {
+    const newConfig = loadConfig();
+    if (newConfig?.role) {
+      console.log('\n  ✅ Setup complete! Restarting to apply role...\n');
+      launchRole(newConfig.role);
+    } else {
+      process.exit(code ?? 0);
+    }
+  });
 }
 
 main().catch(console.error);

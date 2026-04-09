@@ -1,7 +1,12 @@
 import Fastify from 'fastify';
 import fastifyCors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import type { JobPayload, HardwareProfile } from '@transcodarr/shared';
 import { transcodeFile } from './transcoder.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let hardware: HardwareProfile;
 let workerId: string;
@@ -17,6 +22,18 @@ export function initWorkerServer(hw: HardwareProfile, wid: string, mUrl: string)
 export async function createWorkerServer(port: number) {
   const app = Fastify({ logger: { level: 'warn' } });
   await app.register(fastifyCors, { origin: true });
+
+  // Serve built web UI
+  const webOutPath = path.resolve(__dirname, '../../web/out');
+  try {
+    await app.register(fastifyStatic, { 
+      root: webOutPath, 
+      prefix: '/',
+      extensions: ['html'] 
+    });
+  } catch {
+    // Web UI not built yet
+  }
 
   // POST /job — receive a job from Main
   app.post<{ Body: JobPayload }>('/job', async (req, reply) => {

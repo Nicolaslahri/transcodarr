@@ -2,10 +2,29 @@ import type { FastifyInstance } from 'fastify';
 import { getDb } from '../db.js';
 import { nanoid } from 'nanoid';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 export async function settingsRoutes(app: FastifyInstance) {
   // ─── Recipes ────────────────────────────────────────────────────────────────
   app.get('/recipes', async () => BUILT_IN_RECIPES);
+
+  app.get('/fs', async (req) => {
+    const q = req.query as { path?: string };
+    let target = q.path ? path.resolve(q.path) : (os.platform() === 'win32' ? 'C:\\' : '/');
+    if (!fs.existsSync(target)) target = os.platform() === 'win32' ? 'C:\\' : '/';
+
+    try {
+      const dirents = fs.readdirSync(target, { withFileTypes: true });
+      const dirs = dirents
+        .filter(d => d.isDirectory() && !d.name.startsWith('.'))
+        .map(d => ({ name: d.name, path: path.join(target, d.name) }));
+      return { current: target, parent: path.dirname(target), dirs };
+    } catch {
+      return { current: target, parent: path.dirname(target), dirs: [] };
+    }
+  });
 
   // ─── Watched Paths ───────────────────────────────────────────────────────────
   app.get('/paths', async () => {

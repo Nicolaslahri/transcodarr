@@ -47,6 +47,8 @@ export default function SettingsPage() {
   );
 }
 
+import { FileExplorerModal } from '@/components/FileExplorerModal';
+
 // ─── Watched Folders ─────────────────────────────────────────────────────────
 
 interface WatchedPath {
@@ -58,6 +60,7 @@ interface WatchedPath {
 function WatchedFoldersPanel() {
   const [paths, setPaths] = useState<WatchedPath[]>([]);
   const [adding, setAdding] = useState(false);
+  const [explorerOpen, setExplorerOpen] = useState(false);
   const [form, setForm] = useState({ path: '', recipe: 'hevc-1080p', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100 });
 
   const load = () => fetch('/api/settings/paths').then(r => r.json()).then(setPaths).catch(() => {});
@@ -138,12 +141,21 @@ function WatchedFoldersPanel() {
 
           <div>
             <label className="text-xs text-textMuted font-medium mb-1.5 block">Folder Path</label>
-            <input
-              value={form.path}
-              onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
-              placeholder="/data/media/movies"
-              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
-            />
+            <div className="flex gap-2">
+              <input
+                value={form.path}
+                onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
+                placeholder="/data/media/movies"
+                className="flex-1 bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
+              />
+              <button
+                title="Browse Folders"
+                onClick={() => setExplorerOpen(true)}
+                className="px-4 py-2 bg-surface border border-border rounded-xl hover:bg-white/5 transition-colors text-textMuted hover:text-white flex items-center justify-center shrink-0"
+              >
+                <FolderOpen className="w-5 h-5 text-primary" />
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -222,6 +234,17 @@ function WatchedFoldersPanel() {
           <Plus className="w-4 h-4" /> Add Watched Folder
         </button>
       )}
+
+      {/* File Explorer Modal */}
+      <FileExplorerModal
+        open={explorerOpen}
+        onClose={() => setExplorerOpen(false)}
+        initialPath={form.path}
+        onSelect={(path) => {
+          setForm(f => ({ ...f, path }));
+          setExplorerOpen(false);
+        }}
+      />
     </div>
   );
 }

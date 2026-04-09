@@ -3,9 +3,10 @@
 import { useAppState } from '@/hooks/useTranscodarrSocket';
 import dynamic from 'next/dynamic';
 
-// Lazy-load both UIs — only one will ever mount per session
+// Lazy-load all UIs — only one will ever mount per session
 const WorkerStatusPage  = dynamic(() => import('./_worker-status'));
 const MainOverviewPage  = dynamic(() => import('./_main-overview'));
+const SetupWizardPage   = dynamic(() => import('./_setup-wizard'));
 
 // Spinner while we wait for /api/meta
 function Loading() {
@@ -23,6 +24,7 @@ export default function RootPage() {
   const { meta } = useAppState();
 
   if (meta.mode === 'loading') return <Loading />;
+  if (meta.mode === 'loading_setup') return <SetupWizardPage />;
   if (meta.mode === 'worker')  return <WorkerStatusPage />;
   return <MainOverviewPage />;
 }

@@ -6,15 +6,42 @@ import type { WorkerInfo, SmbMapping } from '@transcodarr/shared';
 import { useState } from 'react';
 
 export default function WorkersPage() {
-  const { workers, acceptWorker, rejectWorker } = useAppState();
+  const { workers, acceptWorker, rejectWorker, apiUrl } = useAppState();
   const pendingWorkers = workers.filter(w => w.status === 'pending');
   const activeWorkers = workers.filter(w => w.status !== 'pending');
 
   return (
     <div className="p-10 max-w-7xl mx-auto space-y-10">
-      <header>
-        <h1 className="text-4xl font-bold tracking-tight text-white mb-1">Fleet</h1>
-        <p className="text-textMuted">Manage transcoding nodes and path mappings.</p>
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-4xl font-bold tracking-tight text-white mb-1">Fleet</h1>
+          <p className="text-textMuted">Manage transcoding nodes and path mappings.</p>
+        </div>
+        <div className="flex items-center gap-3">
+           <button 
+             onClick={async () => {
+                await fetch(`${apiUrl}/api/workers/scan`, { method: 'POST' });
+             }}
+             className="px-4 py-2 bg-surface border border-border rounded-xl text-sm font-medium text-textMuted hover:text-white transition-colors"
+           >
+             Refresh Fleet
+           </button>
+           <button 
+             onClick={() => {
+                const ip = prompt('Enter Worker IP address (e.g. 192.168.1.50):');
+                if (ip) {
+                   fetch(`${apiUrl}/api/workers/add-manual`, { 
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ ip })
+                   });
+                }
+             }}
+             className="flex items-center gap-2 px-4 py-2 bg-primary text-background rounded-xl text-sm font-bold hover:bg-primary/90 transition-colors"
+           >
+             <Plus className="w-4 h-4" /> Add Worker...
+           </button>
+        </div>
       </header>
 
       {/* Pending approval */}

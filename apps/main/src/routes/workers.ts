@@ -22,6 +22,34 @@ export async function workersRoutes(app: FastifyInstance) {
     return (getDb().prepare('SELECT * FROM workers ORDER BY last_seen DESC').all() as any[]).map(rowToWorker);
   });
 
+  // POST /api/workers/scan — Force re-scan (handled implicitly via mDNS polling long-term, for now just a no-op that UI uses to trigger refresh)
+  app.post('/scan', async () => ({ ok: true }));
+
+  // POST /api/workers/add-manual — Manually add a worker by IP
+  app.post<{ Body: { ip: string } }>('/add-manual', async (req, reply) => {
+    try {
+      const { ip } = req.body;
+      const port = 3001; // default worker port
+      const res = await fetch(`http://${ip}:${port}/api/meta`);
+      if (!res.ok) throw new Error('Worker not responding');
+      
+      const meta = await res.json() as any;
+      if (meta.mode !== 'worker') throw new Error('Not a worker node');
+
+      const db = getDb();
+      const existing = db.prepare('SELECT id FROM workers WHERE id = ?').get(meta.name);
+      
+      if (!existing) {
+        db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen) VALUES (?,?,?,?,'pending',?,?)`)
+          .run(meta.name, meta.name, ip, port, JSON.stringify(meta.hardware ?? {}), Math.floor(Date.now() / 1000));
+        broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(meta.name)));
+      }
+      return { ok: true };
+    } catch (err: any) {
+      reply.status(400).send({ error: err.message });
+    }
+  });
+
   // POST /api/workers/register — called by Worker on boot (fallback if mDNS fails)
   app.post<{ Body: { id: string; name: string; host: string; port: number; hardware: any } }>(
     '/register',

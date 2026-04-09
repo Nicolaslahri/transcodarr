@@ -6,7 +6,7 @@ import { useToast } from './useToast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AppMode = 'main' | 'worker' | 'loading';
+export type AppMode = 'main' | 'worker' | 'loading' | 'loading_setup';
 
 export interface AppMeta {
   mode: AppMode;
@@ -22,6 +22,7 @@ interface AppState {
   workers: WorkerInfo[];
   jobs: Job[];
   connected: boolean;
+  apiUrl: string;
   acceptWorker: (id: string) => Promise<void>;
   rejectWorker: (id: string) => Promise<void>;
 }
@@ -133,7 +134,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   }, [apiUrl]);
 
   return (
-    <SocketContext.Provider value={{ meta, connected, stats, workers, jobs, acceptWorker, rejectWorker }}>
+    <SocketContext.Provider value={{ meta, connected, stats, workers, jobs, apiUrl, acceptWorker, rejectWorker }}>
       {children}
     </SocketContext.Provider>
   );

@@ -73,21 +73,28 @@ async function dispatchNext(): Promise<void> {
   };
 
   try {
-    const res = await fetch(`http://${worker.host}:${worker.port}/job`, {
+    const workerUrl = `http://${worker.host}:${worker.port}/job`;
+    console.log(`📤 Dispatching "${job.fileName}" → ${worker.name} (${workerUrl})`);
+    console.log(`   Callback: ${payload.mainHost}:${payload.mainPort}`);
+
+    const res = await fetch(workerUrl, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(payload),
       signal:  AbortSignal.timeout(10_000),
     });
 
-    if (!res.ok) throw new Error(`Worker returned ${res.status}`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Worker returned ${res.status}: ${text}`);
+    }
 
     updateJobStatus(job.id, 'dispatched', { worker_id: worker.id });
     getDb().prepare('UPDATE workers SET status = ? WHERE id = ?').run('active', worker.id);
     broadcast('job:progress', { ...getJob(job.id), workerName: worker.name });
-    console.log(`📤 Dispatched "${job.fileName}" → ${worker.name}`);
+    console.log(`✅ Dispatched successfully → ${worker.name}`);
   } catch (err: any) {
-    console.error(`Failed to dispatch to ${worker.name}:`, err.message);
+    console.error(`❌ Failed to dispatch to ${worker.name} (${worker.host}:${worker.port}):`, err.message);
   }
 }
 

@@ -3,6 +3,8 @@ import { createServer, startWorkerHealthPoller } from './server.js';
 import { startWatcher } from './watcher.js';
 import { startMdns } from './mdns.js';
 import { ensureFfmpeg } from './ffmpeg.js';
+import { startDispatcher } from './dispatcher.js';
+import os from 'os';
 
 const PORT = Number(process.env.MAIN_PORT ?? 3001);
 const HOST = process.env.MAIN_HOST ?? '0.0.0.0';
@@ -37,11 +39,26 @@ async function main() {
     // 5. Start worker health poller
     startWorkerHealthPoller();
     console.log('✅ Worker health poller active (20s interval)');
+
+    // 6. Start job dispatcher
+    process.env.MAIN_HOST = getLocalIp();
+    startDispatcher();
+    console.log(`✅ Dispatcher started (callback: ${process.env.MAIN_HOST}:${PORT})`);
   } else {
     console.log('✅ Setup mode active. Waiting for Configuration via UI.');
   }
 
   console.log('\n🎬 Transcodarr is ready. Open the UI to get started.\n');
+}
+
+function getLocalIp(): string {
+  const ifaces = os.networkInterfaces();
+  for (const iface of Object.values(ifaces)) {
+    for (const addr of iface ?? []) {
+      if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+    }
+  }
+  return '127.0.0.1';
 }
 
 main().catch(err => {

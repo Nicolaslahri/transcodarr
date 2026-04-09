@@ -4,7 +4,6 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import readline from 'readline';
 import { spawn } from 'child_process';
 
 const CONFIG_DIR = path.join(os.homedir(), '.transcodarr');
@@ -18,21 +17,19 @@ function loadConfig() {
   }
 }
 
-function saveConfig(config) {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-}
+// Resolve the monorepo root regardless of platform
+const ROOT = path.dirname(new URL(import.meta.url).pathname.replace(/^\/[a-zA-Z]:/, (m) => m.slice(1)));
 
 function launchRole(role) {
   const filter = role === 'main' ? '@transcodarr/main' : '@transcodarr/worker';
-  const label = role === 'main' ? '🧠 Main Node' : '⚡ Worker Node';
+  const label  = role === 'main' ? '🧠 Main Node' : '⚡ Worker Node';
 
   console.log(`\n  Starting ${label}...\n`);
 
   const child = spawn(
     'npx',
     ['turbo', 'dev', `--filter=${filter}`],
-    { stdio: 'inherit', shell: true, cwd: path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')) }
+    { stdio: 'inherit', shell: true, cwd: ROOT }
   );
 
   child.on('error', (err) => {
@@ -40,30 +37,42 @@ function launchRole(role) {
     process.exit(1);
   });
 
-  child.on('exit', (code) => process.exit(code ?? 0));
+  // When the child exits, check if config was wiped (reset flow)
+  // If so, restart in setup mode. Otherwise propagate the exit code.
+  child.on('exit', (code) => {
+    const config = loadConfig();
+    if (!config?.role) {
+      console.log('\n  🔄 Config wiped — restarting setup wizard...\n');
+      // Short delay so any port release completes
+      setTimeout(() => main().catch(console.error), 1500);
+    } else {
+      process.exit(code ?? 0);
+    }
+  });
 }
 
 async function main() {
   const config = loadConfig();
 
-  // If role already saved, use it
+  // If role already saved, launch it
   if (config?.role) {
     console.log(`\n  Transcodarr — resuming as ${config.role === 'main' ? '🧠 Main Node' : '⚡ Worker Node'}`);
-    console.log(`  ${'\x1b[2m'}(To change role: Settings → General → Switch Role)\x1b[0m\n`);
+    console.log(`  \x1b[2m(Reset: Settings → General → Reset Setup)\x1b[0m\n`);
     launchRole(config.role);
     return;
   }
 
-  // First boot: launch Setup mode via Main node
+  // No config → launch setup mode
   console.log('\n  🚀 First boot detected! Launching Setup UI on http://localhost:3001 ...\n');
+
   const child = spawn(
     'npx',
     ['turbo', 'dev', '--filter=@transcodarr/main'],
-    { 
-      stdio: 'inherit', 
-      shell: true, 
-      cwd: path.dirname(new URL(import.meta.url).pathname.replace(/^\/[a-zA-Z]:/, (m) => m.slice(1))),
-      env: { ...process.env, SETUP_MODE: '1' } 
+    {
+      stdio: 'inherit',
+      shell: true,
+      cwd: ROOT,
+      env: { ...process.env, SETUP_MODE: '1' }
     }
   );
 
@@ -72,13 +81,14 @@ async function main() {
     process.exit(1);
   });
 
-  child.on('exit', (code) => {
+  child.on('exit', () => {
     const newConfig = loadConfig();
     if (newConfig?.role) {
-      console.log('\n  ✅ Setup complete! Restarting to apply role...\n');
-      launchRole(newConfig.role);
+      console.log('\n  ✅ Setup complete! Restarting...\n');
+      setTimeout(() => launchRole(newConfig.role), 1500);
     } else {
-      process.exit(code ?? 0);
+      // Config still not set — re-show setup
+      setTimeout(() => main().catch(console.error), 1500);
     }
   });
 }

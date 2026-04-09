@@ -462,10 +462,12 @@ function GeneralPanel() {
   const resetSetup = async () => {
     if (!confirm('Are you sure you want to completely reset Transcodarr? This will wipe your node role and restart the setup wizard.')) return;
     try {
-      await fetch(`${apiUrl}/api/settings/reset`, { method: 'POST' });
-    } catch { /* server exits, ignore */ }
-    // Wait a moment then reload — the server will be in setup mode
-    setTimeout(() => window.location.reload(), 1000);
+      // Always call the LOCAL server — apiUrl may point to Main when in Worker mode
+      const localOrigin = window.location.origin;
+      await fetch(`${localOrigin}/api/settings/reset`, { method: 'POST' });
+    } catch { /* server exits → fetch throws, that's expected */ }
+    // Wait for the server to restart in setup mode, then reload
+    setTimeout(() => window.location.reload(), 1500);
   };
 
   return (

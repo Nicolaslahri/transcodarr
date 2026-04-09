@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Cpu, Server, ArrowRight, CheckCircle2, Loader2 } from 'lucide-react';
+import { Cpu, Server, ArrowRight, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 
 type Step = 'choose' | 'worker-ip' | 'saving' | 'done';
 
@@ -15,18 +15,23 @@ export function SetupWizard({ onComplete }: Props) {
   const [mainIp, setMainIp] = useState('');
   const [error, setError]   = useState('');
   const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<'found' | 'not-found' | null>(null);
 
   const scanForMainNode = async () => {
     setStep('worker-ip');
     setScanning(true);
+    setScanResult(null);
     try {
       const res = await fetch('/api/setup/discover');
       const ips = await res.json();
       if (ips && ips.length > 0) {
         setMainIp(ips[0]);
+        setScanResult('found');
+      } else {
+        setScanResult('not-found');
       }
     } catch (e) {
-      // silently ignore scan failures, they can easily fallback to manual entry
+      setScanResult('not-found');
     } finally {
       setScanning(false);
     }
@@ -142,6 +147,26 @@ export function SetupWizard({ onComplete }: Props) {
                     <Loader2 className="w-3 h-3 animate-spin border-0" />
                     Scanning network
                   </span>
+                )}
+                {!scanning && scanResult === 'found' && (
+                  <span className="text-xs text-green-400 flex items-center gap-1.5 animate-in fade-in">
+                    <CheckCircle2 className="w-3 h-3" />
+                    Main Node Found
+                  </span>
+                )}
+                {!scanning && scanResult === 'not-found' && (
+                  <div className="flex items-center gap-2 animate-in fade-in">
+                    <span className="text-xs text-yellow-500/70 flex items-center gap-1.5">
+                      No nodes found automatically
+                    </span>
+                    <button
+                      onClick={scanForMainNode}
+                      className="text-xs font-bold text-primary hover:text-primary/80 transition-colors uppercase tracking-wider flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Scan Again
+                    </button>
+                  </div>
                 )}
               </div>
               <input

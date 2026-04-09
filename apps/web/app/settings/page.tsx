@@ -102,8 +102,11 @@ function WatchedFoldersPanel() {
   };
 
   const scanNow = async (p: WatchedPath) => {
-    // trigger a manual scan (future API hook)
-    alert(`Manual scan triggered for: ${p.path}`);
+    try {
+      await fetch(`${apiUrl}/api/settings/paths/${p.id}/scan`, { method: 'POST' });
+    } catch (err) {
+      console.error('Manual scan failed to start', err);
+    }
   };
 
   return (

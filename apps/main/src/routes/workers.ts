@@ -55,15 +55,16 @@ export async function workersRoutes(app: FastifyInstance) {
     '/register',
     async (req) => {
       const { id, name, host, port, hardware } = req.body;
+      const realHost = req.ip && req.ip !== '127.0.0.1' && req.ip !== '::1' ? req.ip : host;
       const db = getDb();
 
       const existing = db.prepare('SELECT id FROM workers WHERE id = ?').get(id);
       if (existing) {
         db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ? WHERE id = ?')
-          .run(host, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), id);
+          .run(realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), id);
       } else {
         db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen) VALUES (?,?,?,?,'pending',?,?)`)
-          .run(id, name, host, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000));
+          .run(id, name, realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000));
         broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id)));
       }
       return { ok: true };

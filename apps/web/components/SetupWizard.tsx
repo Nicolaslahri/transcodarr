@@ -42,7 +42,17 @@ export function SetupWizard({ onComplete }: Props) {
     setError('');
     try {
       const body: any = { role: selectedRole };
-      if (selectedRole === 'worker' && mainIp) body.mainUrl = `http://${mainIp}:3001`;
+      if (selectedRole === 'worker' && mainIp) {
+        let base = mainIp.trim();
+        if (!/^https?:\/\//i.test(base)) base = `http://${base}`;
+        try {
+          const url = new URL(base);
+          if (!url.port) url.port = '3001';
+          body.mainUrl = url.toString().replace(/\/$/, '');
+        } catch {
+          body.mainUrl = `http://${mainIp.trim()}:3001`;
+        }
+      }
 
       const res = await fetch('/api/setup', {
         method: 'POST',

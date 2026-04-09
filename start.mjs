@@ -64,17 +64,24 @@ async function waitForPortFree(port = 3001, timeoutMs = 10_000) {
 // ─── Reset flag poller ────────────────────────────────────────────────────────
 let currentChild = null;
 let resetPoller  = null;
+let isRestarting = false;
 
-function startResetPoller(onReset) {
+function startResetPoller() {
+  isRestarting = false;
   resetPoller = setInterval(() => {
     if (!fs.existsSync(RESET_FLAG)) return;
     clearInterval(resetPoller);
-    try { fs.unlinkSync(RESET_FLAG); }  catch { /* ok */ }
-    try { fs.unlinkSync(CONFIG_FILE); } catch { /* ok */ }
-    console.log('\n  🔄 Reset triggered — stopping current node…\n');
+    isRestarting = true;
+    
+    try { fs.unlinkSync(RESET_FLAG); } catch {}
+    // We strictly DO NOT delete config.json here. The API endpoints handle that.
+    
+    console.log('\n  🔄 Restart requested — stopping current node…\n');
     killTree(currentChild);
-    onReset();
-  }, 500); // poll every 500ms for snappier response
+    
+    // Relaunch the entire pipeline
+    waitForPortFree().then(() => main().catch(console.error));
+  }, 500);
 }
 
 // ─── Launch a role ────────────────────────────────────────────────────────────
@@ -90,10 +97,7 @@ async function launchRole(role) {
     { stdio: 'inherit', shell: true, cwd: ROOT, detached: !IS_WIN }
   );
 
-  startResetPoller(async () => {
-    await waitForPortFree();
-    main().catch(console.error);
-  });
+  startResetPoller();
 
   currentChild.on('error', (err) => {
     clearInterval(resetPoller);
@@ -103,10 +107,10 @@ async function launchRole(role) {
 
   currentChild.on('exit', (code) => {
     clearInterval(resetPoller);
-    // If reset flag appeared while exit was in flight, restart
+    if (isRestarting) return; // Handled by poller
+    
     if (fs.existsSync(RESET_FLAG)) {
-      try { fs.unlinkSync(RESET_FLAG); }  catch {}
-      try { fs.unlinkSync(CONFIG_FILE); } catch {}
+      try { fs.unlinkSync(RESET_FLAG); } catch {}
       waitForPortFree().then(() => main().catch(console.error));
     } else {
       process.exit(code ?? 0);
@@ -116,7 +120,6 @@ async function launchRole(role) {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 async function main() {
-  // Clean stale flag from crashed previous session
   try { if (fs.existsSync(RESET_FLAG)) fs.unlinkSync(RESET_FLAG); } catch {}
 
   const config = loadConfig();
@@ -128,7 +131,6 @@ async function main() {
     return;
   }
 
-  // No config → launch setup wizard
   console.log('\n  🚀 First boot — opening Setup UI on http://localhost:3001 ...\n');
   await waitForPortFree();
 
@@ -143,10 +145,7 @@ async function main() {
     }
   );
 
-  startResetPoller(async () => {
-    await waitForPortFree();
-    main().catch(console.error);
-  });
+  startResetPoller();
 
   currentChild.on('error', (err) => {
     clearInterval(resetPoller);
@@ -156,18 +155,19 @@ async function main() {
 
   currentChild.on('exit', () => {
     clearInterval(resetPoller);
+    if (isRestarting) return; // Handled by poller
+    
     if (fs.existsSync(RESET_FLAG)) {
-      try { fs.unlinkSync(RESET_FLAG); }  catch {}
-      try { fs.unlinkSync(CONFIG_FILE); } catch {}
+      try { fs.unlinkSync(RESET_FLAG); } catch {}
       waitForPortFree().then(() => main().catch(console.error));
       return;
     }
+    
     const newConfig = loadConfig();
     if (newConfig?.role) {
       console.log('\n  ✅ Setup complete! Restarting as configured role...\n');
       waitForPortFree().then(() => launchRole(newConfig.role));
     } else {
-      // No role saved yet — re-show setup
       waitForPortFree().then(() => main().catch(console.error));
     }
   });

@@ -1,0 +1,59 @@
+# ─── Stage 1: Build ────────────────────────────────────────────────────────────
+FROM node:20-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy workspace manifests first for better layer caching
+COPY package.json package-lock.json turbo.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY apps/main/package.json         ./apps/main/
+COPY apps/web/package.json          ./apps/web/
+
+RUN npm ci --prefer-offline
+
+# Copy source
+COPY packages/ ./packages/
+COPY apps/main/ ./apps/main/
+COPY apps/web/  ./apps/web/
+
+# Build shared types first, then web + main
+RUN npx turbo build --filter=@transcodarr/shared
+RUN npx turbo build --filter=@transcodarr/web
+RUN npx turbo build --filter=@transcodarr/main
+
+# ─── Stage 2: Runtime ──────────────────────────────────────────────────────────
+FROM node:20-slim AS runtime
+
+# ffmpeg is required for transcoding
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy only what's needed to run
+COPY --from=builder /app/packages/shared/dist   ./packages/shared/dist
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/package.json
+
+COPY --from=builder /app/apps/main/dist         ./apps/main/dist
+COPY --from=builder /app/apps/main/package.json ./apps/main/package.json
+
+COPY --from=builder /app/apps/web/out           ./apps/web/out
+
+COPY --from=builder /app/node_modules           ./node_modules
+COPY --from=builder /app/package.json           ./package.json
+
+ENV NODE_ENV=production
+ENV MAIN_PORT=3001
+
+EXPOSE 3001
+
+# Point ffmpeg to system binary (not apps/bin)
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
+ENV FFPROBE_PATH=/usr/bin/ffprobe
+
+CMD ["node", "apps/main/dist/index.js"]

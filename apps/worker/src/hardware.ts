@@ -17,11 +17,20 @@ let resolvedFfprobe = 'ffprobe';
 
 /**
  * Resolves ffmpeg. Priority:
+ *   0. FFMPEG_PATH / FFPROBE_PATH env vars (Docker / CI override)
  *   1. System PATH
  *   2. ./bin/ffmpeg[.exe] (previously auto-downloaded)
- *   3. Silent auto-download (Windows only, ~75MB)
+ *   3. Silent auto-download
  */
 export async function ensureFfmpeg(): Promise<void> {
+  // 0. Explicit env override (Docker, CI, etc.)
+  if (process.env.FFMPEG_PATH) {
+    resolvedFfmpeg = process.env.FFMPEG_PATH;
+    resolvedFfprobe = process.env.FFPROBE_PATH ?? 'ffprobe';
+    console.log(`  ffmpeg: using FFMPEG_PATH env → ${resolvedFfmpeg}`);
+    return;
+  }
+
   // 1. Try system PATH
   if (isExecutable('ffmpeg')) {
     console.log('  ffmpeg: found in system PATH');

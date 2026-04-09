@@ -1,0 +1,14 @@
+.git
+.github
+node_modules
+apps/bin
+apps/web/.next
+apps/web/out
+apps/main/dist
+apps/worker/dist
+packages/shared/dist
+**/.turbo
+**/*.db
+**/*.bak
+*.md
+.env*

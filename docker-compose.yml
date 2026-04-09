@@ -1,13 +1,69 @@
-version: "3.8"
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║          TRANSCODARR — Portainer Stack (Main Node)              ║
+# ║                                                                  ║
+# ║  HOW TO DEPLOY:                                                  ║
+# ║  1. In Portainer → Stacks → Add Stack                           ║
+# ║  2. Paste this file OR point to your GitHub repo                 ║
+# ║  3. Set the environment variables below under "env"              ║
+# ║  4. Deploy the stack                                             ║
+# ║                                                                  ║
+# ║  IMPORTANT: Edit the `volumes` section under `transcodarr-main`  ║
+# ║  to point to your actual media folder on the host.               ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+version: "3.9"
+
 services:
   transcodarr-main:
-    build: .
+    image: ghcr.io/nicolaslahri/transcodarr-main:latest
+    # ── OR build locally from source: ──────────────────────────────
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.main
+    # ───────────────────────────────────────────────────────────────
     container_name: transcodarr-main
-    network_mode: "host" # Required for mDNS to work properly across your home network
     restart: unless-stopped
-    volumes:
-      - ./data:/app/data # Transcodarr Database
-      # NOTE: Map the same paths here as you do for Radarr/Sonarr!
-      - /mnt/media:/data/media 
+    ports:
+      - "3001:3001"
     environment:
-      - TZ=America/New_York
+      # Node identity shown in the UI header
+      - NODE_NAME=Transcodarr Main
+      # Port the server listens on inside the container
+      - MAIN_PORT=3001
+    volumes:
+      # ── Config & database (persists settings, workers, jobs) ─────
+      - transcodarr-config:/root/.transcodarr
+
+      # ── MEDIA PATHS (edit these to match YOUR DietPi layout) ─────
+      #
+      # Format:  /host/path:/container/path:ro
+      #          "ro" = read-only (safe default — app never deletes files)
+      #
+      # DietPi userdata (most common):
+      - /mnt/dietpi_userdata/data/media:/media:ro
+      #
+      # If your media is somewhere else, add more lines:
+      # - /mnt/usb_drive/movies:/mnt/usb_drive/movies:ro
+      # - /home/dietpi/NAS:/nas:ro
+      #
+      # To allow WRITING (needed for transcoded output):
+      # - /mnt/dietpi_userdata/data/media:/media:rw
+
+      # ── OPTIONAL: Expose the entire host filesystem (advanced) ────
+      # WARNING: Only do this if you trust your setup. Removes all
+      # isolation between the container and the Pi's filesystem.
+      # - /:/host:rw
+
+    # GPU passthrough (uncomment if using NVIDIA on this host):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  transcodarr-config:
+    # Named volume — Docker manages this. Data survives container restarts.
+    # To inspect: docker volume inspect transcodarr_transcodarr-config

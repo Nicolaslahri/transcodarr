@@ -115,6 +115,18 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // ─── Reset Setup ─────────────────────────────────────────────────────────────
+  // Deletes ~/.transcodarr/config.json and exits so the launcher re-runs onboarding
+  app.post('/reset', async (req, reply) => {
+    const configFile = path.join(os.homedir(), '.transcodarr', 'config.json');
+    try {
+      if (fs.existsSync(configFile)) fs.unlinkSync(configFile);
+    } catch { /* ignore */ }
+    reply.send({ ok: true });
+    // Short delay so response is sent before process exits
+    setTimeout(() => process.exit(0), 300);
+  });
+
   // ─── Smart Filters ───────────────────────────────────────────────────────────
   // Filters are stored as JSON in settings table under key 'smart_filters'
   app.get('/filters', async () => {

@@ -30,6 +30,7 @@ export function FileExplorerModal({
   const [data, setData] = useState<FSResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [manualPath, setManualPath] = useState('');
 
   const loadPath = async (path: string) => {
     setLoading(true);
@@ -73,10 +74,28 @@ export function FileExplorerModal({
         </div>
 
         {/* Path bar */}
-        <div className="bg-background/50 px-4 py-3 flex items-center gap-2 border-b border-border overflow-x-auto whitespace-nowrap scrollbar-hide">
-          <span className="text-textMuted text-sm font-mono truncate">
-            {data?.current || 'Loading...'}
-          </span>
+        <div className="bg-background/50 px-4 py-3 flex items-center gap-2 border-b border-border">
+          <span className="text-textMuted text-xs shrink-0 font-mono">PATH</span>
+          <input
+            value={manualPath || data?.current || ''}
+            onChange={e => setManualPath(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && manualPath) {
+                loadPath(manualPath);
+                setManualPath('');
+              }
+            }}
+            placeholder="Type a path and press Enter…"
+            className="flex-1 bg-transparent text-white text-xs font-mono focus:outline-none placeholder:text-textMuted/50"
+          />
+          {manualPath && (
+            <button
+              onClick={() => { loadPath(manualPath); setManualPath(''); }}
+              className="text-xs font-bold text-primary px-2 py-1 rounded-lg hover:bg-primary/10 transition-colors shrink-0"
+            >
+              Go
+            </button>
+          )}
         </div>
 
         {/* Browser */}

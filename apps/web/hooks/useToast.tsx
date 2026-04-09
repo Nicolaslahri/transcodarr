@@ -55,7 +55,10 @@ export function useToast() {
 
 function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: string) => void }) {
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none">
+    <div
+      style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 9999 }}
+      className="flex flex-col gap-3 pointer-events-none"
+    >
       {toasts.map(t => (
         <ToastCard key={t.id} toast={t} onDismiss={onDismiss} />
       ))}

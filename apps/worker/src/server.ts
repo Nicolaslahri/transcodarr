@@ -77,6 +77,23 @@ export async function createWorkerServer(port: number) {
     mainUrl,
   }));
 
+  // Settings stubs — Worker has only General settings (no DB)
+  app.get('/api/settings/general', async () => ({
+    nodeName: process.env.WORKER_NAME ?? workerId,
+  }));
+
+  app.put('/api/settings/general', async () => ({ ok: true }));
+
+  // Reset — deletes config and restarts the onboarding wizard
+  app.post('/api/settings/reset', async (req, reply) => {
+    const { default: fs } = await import('fs');
+    const { default: os } = await import('os');
+    const configFile = `${os.homedir()}/.transcodarr/config.json`;
+    try { fs.unlinkSync(configFile); } catch { /* ignore */ }
+    reply.send({ ok: true });
+    setTimeout(() => process.exit(0), 300);
+  });
+
   // GET /status — current job state for the Worker UI
   app.get('/status', async () => ({ workerId, hardware, currentJob: currentJob ?? null }));
 

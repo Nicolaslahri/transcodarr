@@ -137,7 +137,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
 
 export function getHwDecodeArgs(hw: HardwareProfile): string[] {
   if (hw.gpu === 'nvidia' && hw.hwaccels.includes('cuda')) {
-    return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'];
+    return ['-hwaccel', 'auto'];
   }
   if (hw.gpu === 'intel' && hw.hwaccels.includes('qsv')) {
     return ['-hwaccel', 'qsv'];

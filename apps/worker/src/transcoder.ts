@@ -81,12 +81,17 @@ export async function transcodeFile(
   await new Promise<void>((resolve, reject) => {
     const proc = spawn(resolvedFfmpeg, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     let leftover = '';
+    let errorLog = '';
 
     const handleData = (data: Buffer) => {
-      leftover += data.toString();
-      const parts = leftover.split('\r');
-      leftover = parts[parts.length - 1] ?? '';
-      for (const line of parts.slice(0, -1)) {
+      const chunk = data.toString();
+      errorLog += chunk;
+      if (errorLog.length > 5000) errorLog = errorLog.slice(-5000);
+
+      leftover += chunk;
+      const parts = leftover.split(/[\r\n]+/);
+      leftover = parts.pop() ?? '';
+      for (const line of parts) {
         const update = parseProgressLine(line, duration);
         if (update) onProgress(update);
       }
@@ -94,7 +99,15 @@ export async function transcodeFile(
 
     proc.stderr.on('data', handleData);
     proc.stdout.on('data', handleData);
-    proc.on('close', code => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`))));
+    proc.on('close', code => {
+      if (code === 0) {
+        resolve();
+      } else {
+        const lines = errorLog.split('\n').filter(l => l.trim().length > 0);
+        const lastLines = lines.slice(-5).join('; ');
+        reject(new Error(`ffmpeg exited ${code}: ${lastLines}`));
+      }
+    });
     proc.on('error', reject);
   });
 

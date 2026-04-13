@@ -33,6 +33,7 @@ export async function jobsRoutes(app: FastifyInstance) {
   app.delete('/', async () => {
     const count = clearQueue();
     broadcast('job:cleared', { count });
+    broadcast('stats:update', getStats());
     return { ok: true, deleted: count };
   });
 
@@ -45,6 +46,7 @@ export async function jobsRoutes(app: FastifyInstance) {
     }
     deleteJob(req.params.id);
     broadcast('job:removed', { id: req.params.id });
+    broadcast('stats:update', getStats());
     return { ok: true };
   });
 

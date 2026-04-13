@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --input-type=module --eval \"import\\('./apps/main/src/dispatcher.js'\\).catch\\(\\(\\) => {}\\)\")",
+      "Bash(gh pr create --title 'refactor: tech debt overhaul — bug fixes, unified ports, event dispatch, UX/a11y' --body ':*)",
+      "Read(//c/Users/Nicolas/Documents/Transcodarr/packages/shared/**)",
+      "Bash(npm run:*)"
+    ]
+  }
+}

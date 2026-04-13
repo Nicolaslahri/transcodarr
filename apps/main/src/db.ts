@@ -121,4 +121,6 @@ export function initDb(): void {
   migrate(`ALTER TABLE processed_files ADD COLUMN content_key TEXT`);
   migrate(`CREATE INDEX IF NOT EXISTS idx_processed_content ON processed_files(content_key)`);
   migrate(`ALTER TABLE jobs ADD COLUMN content_key TEXT`);
+  // v7 migrations — worker version tracking
+  migrate(`ALTER TABLE workers ADD COLUMN version TEXT`);
 }

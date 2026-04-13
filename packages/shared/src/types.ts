@@ -67,6 +67,10 @@ export interface WorkerInfo {
   /** How this worker connects to media files */
   connectionMode: ConnectionMode;
   lastSeen: number;
+  /** Semver version string reported by the worker on registration */
+  version?: string;
+  /** True when worker version differs from Main version */
+  versionMismatch?: boolean;
   currentJobId?: string;
   currentProgress?: number;
   currentFps?: number;

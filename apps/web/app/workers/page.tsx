@@ -4,7 +4,7 @@ import { useAppState } from '@/hooks/useTranscodarrSocket';
 import { useToast } from '@/hooks/useToast';
 import {
   CheckCircle2, Cpu, Server, ShieldAlert, X, Plus, Trash2,
-  Zap, Download, Upload, Settings2, Wifi, HardDrive,
+  Zap, Download, Upload, Settings2, Wifi, HardDrive, AlertTriangle,
 } from 'lucide-react';
 import type { WorkerInfo, ConnectionMode, TransferPhase } from '@transcodarr/shared';
 import { useState } from 'react';
@@ -261,6 +261,21 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
           <span className="px-2 py-1 bg-background text-white text-xs rounded-lg border border-border/50">
             {worker.hardware?.gpuName ?? 'Unknown GPU'}
           </span>
+          {worker.version && (
+            worker.versionMismatch ? (
+              <span
+                title={`Worker v${worker.version} ≠ Main (version mismatch)`}
+                className="px-2 py-1 bg-amber-500/10 text-amber-400 text-xs font-mono rounded-lg border border-amber-500/30 flex items-center gap-1"
+              >
+                <AlertTriangle className="w-3 h-3" />
+                v{worker.version}
+              </span>
+            ) : (
+              <span className="px-2 py-1 bg-background text-textMuted text-xs font-mono rounded-lg border border-border/50">
+                v{worker.version}
+              </span>
+            )
+          )}
           {worker.hardware?.encoders?.some((e: string) => e.includes('nvenc')) && (
             <span className="px-2 py-1 bg-green-900/30 text-green-400 text-xs font-bold rounded-lg border border-green-500/30">NVENC</span>
           )}

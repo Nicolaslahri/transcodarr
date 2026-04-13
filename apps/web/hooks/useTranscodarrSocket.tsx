@@ -24,6 +24,7 @@ interface AppState {
   connected: boolean;
   apiUrl: string;
   scanSummary: ScanSummary | null;
+  scanProgress: ScanProgress | null;
   acceptWorker: (id: string) => Promise<void>;
   rejectWorker: (id: string) => Promise<void>;
 }
@@ -39,6 +40,14 @@ export interface ScanSummary {
   error?: string;
 }
 
+export interface ScanProgress {
+  sessionId: string;
+  dir: string;
+  checked: number;
+  queued: number;
+  skipped: number;
+}
+
 // ─── Context ──────────────────────────────────────────────────────────────────
 
 const SocketContext = createContext<AppState | null>(null);
@@ -51,6 +60,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [scanSummary, setScanSummary] = useState<ScanSummary | null>(null);
+  const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
 
   // The URL we actually talk to (may switch from worker port → main port)
   const localUrl = typeof window !== 'undefined'
@@ -167,8 +177,12 @@ export function SocketProvider({ children }: { children: ReactNode }) {
               return next;
             });
             break;
+          case 'scan:progress':
+            setScanProgress(data);
+            break;
           case 'scan:summary':
             setScanSummary(data);
+            setScanProgress(null); // clear in-progress banner on completion
             break;
         }
       } catch { /* ignore */ }
@@ -225,7 +239,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   }, [localUrl]);
 
   return (
-    <SocketContext.Provider value={{ meta, connected, stats, workers, jobs, apiUrl, scanSummary, acceptWorker, rejectWorker }}>
+    <SocketContext.Provider value={{ meta, connected, stats, workers, jobs, apiUrl, scanSummary, scanProgress, acceptWorker, rejectWorker }}>
       {children}
     </SocketContext.Provider>
   );

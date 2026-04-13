@@ -97,6 +97,7 @@ export function manualScanDirectory(dir: string, recipe: string) {
   }
 
   const stats = { enqueued: 0, skipped: 0, alreadyActive: 0, total: 0 };
+  const sessionId = Math.random().toString(36).slice(2, 10);
 
   const scan = (current: string) => {
     try {
@@ -126,6 +127,11 @@ export function manualScanDirectory(dir: string, recipe: string) {
                 stats.skipped++;
               }
             }
+
+            // Emit progress every 10 files
+            if (stats.total % 10 === 0) {
+              broadcast('scan:progress', { sessionId, dir, checked: stats.total, queued: stats.enqueued, skipped: stats.skipped });
+            }
           }
         }
       }
@@ -138,5 +144,5 @@ export function manualScanDirectory(dir: string, recipe: string) {
 
   const msg = `Scan complete for "${path.basename(dir)}": ${stats.enqueued} queued, ${stats.skipped} already optimized, ${stats.alreadyActive} in progress (${stats.total} total files found)`;
   console.log(`  📊 ${msg}`);
-  broadcast('scan:summary', { dir, recipe, ...stats, message: msg });
+  broadcast('scan:summary', { sessionId, dir, recipe, ...stats, message: msg });
 }

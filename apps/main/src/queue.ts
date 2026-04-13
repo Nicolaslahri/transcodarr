@@ -8,7 +8,11 @@ import type { Job, JobStatus, FileAnalysis } from '@transcodarr/shared';
 
 // ─── ffprobe analysis ─────────────────────────────────────────────────────────
 
-export function analyzeFile(filePath: string): FileAnalysis | null {
+export interface ExtendedFileAnalysis extends FileAnalysis {
+  hasSubtitles: boolean;
+}
+
+export function analyzeFile(filePath: string): ExtendedFileAnalysis | null {
   try {
     const probeJson = execFileSync(
       getFfprobePath(),
@@ -16,8 +20,9 @@ export function analyzeFile(filePath: string): FileAnalysis | null {
       { encoding: 'utf8', timeout: 30_000 },
     );
     const probe = JSON.parse(probeJson);
-    const videoStream  = probe.streams?.find((s: any) => s.codec_type === 'video');
-    const audioStreams = probe.streams?.filter((s: any) => s.codec_type === 'audio') ?? [];
+    const videoStream     = probe.streams?.find((s: any) => s.codec_type === 'video');
+    const audioStreams     = probe.streams?.filter((s: any) => s.codec_type === 'audio') ?? [];
+    const subtitleStreams  = probe.streams?.filter((s: any) => s.codec_type === 'subtitle') ?? [];
 
     if (!videoStream) return null;
 
@@ -30,6 +35,7 @@ export function analyzeFile(filePath: string): FileAnalysis | null {
       audioLanguages: audioStreams.map((s: any) => s.tags?.language ?? 'und'),
       fileSize:       parseInt(probe.format?.size ?? '0', 10),
       container:      probe.format?.format_name ?? 'unknown',
+      hasSubtitles:   subtitleStreams.length > 0,
     };
   } catch {
     return null;
@@ -48,9 +54,17 @@ export function recordProcessedFile(filePath: string, fileSize: number, recipeId
   } catch { /* non-critical */ }
 }
 
-export function enqueueFile(filePath: string, recipeId: string, force = false): Job | null {
+export function enqueueFile(filePath: string, recipeId: string, force = false, pinnedWorkerId?: string): Job | null {
   const db = getDb();
-  const recipe = BUILT_IN_RECIPES.find(r => r.id === recipeId);
+
+  // Support custom recipes stored in settings
+  const allRecipes = (() => {
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'custom_recipes'").get() as any;
+      return [...BUILT_IN_RECIPES, ...(row ? JSON.parse(row.value) : [])];
+    } catch { return BUILT_IN_RECIPES; }
+  })();
+  const recipe = allRecipes.find((r: any) => r.id === recipeId);
   if (!recipe) return null;
 
   // Prevent duplicates natively.
@@ -80,11 +94,14 @@ export function enqueueFile(filePath: string, recipeId: string, force = false): 
 
   const id = nanoid();
   const now = Math.floor(Date.now() / 1000);
+  // Sort order: append to end of queue
+  const maxOrder = (db.prepare('SELECT MAX(sort_order) as m FROM jobs').get() as any)?.m ?? 0;
+  const sortOrder = (maxOrder ?? 0) + 1;
 
   db.prepare(`
-    INSERT INTO jobs (id, file_path, file_name, file_size, codec_in, resolution, recipe, status, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
-  `).run(id, filePath, path.basename(filePath), analysis.fileSize, analysis.codec, analysis.resolution, recipeId, 'queued', now, now);
+    INSERT INTO jobs (id, file_path, file_name, file_size, codec_in, resolution, recipe, status, has_subtitles, sort_order, pinned_worker_id, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(id, filePath, path.basename(filePath), analysis.fileSize, analysis.codec, analysis.resolution, recipeId, 'queued', analysis.hasSubtitles ? 1 : 0, sortOrder, pinnedWorkerId ?? null, now, now);
 
   return getJob(id);
 }
@@ -99,7 +116,7 @@ export function getJobs(limit = 100, offset = 0): Job[] {
 }
 
 export function getJobsByStatus(status: JobStatus): Job[] {
-  return (getDb().prepare('SELECT * FROM jobs WHERE status = ? ORDER BY created_at ASC').all(status) as any[]).map(rowToJob);
+  return (getDb().prepare('SELECT * FROM jobs WHERE status = ? ORDER BY COALESCE(sort_order, 999999) ASC, created_at ASC').all(status) as any[]).map(rowToJob);
 }
 
 export function updateJobStatus(id: string, status: JobStatus, extra: Record<string, unknown> = {}): void {
@@ -138,24 +155,29 @@ export function clearQueue(statuses: string[] = ['queued', 'skipped', 'failed', 
 
 function rowToJob(row: any): Job {
   return {
-    id:          row.id,
-    filePath:    row.file_path,
-    fileName:    row.file_name,
-    fileSize:    row.file_size,
-    codecIn:     row.codec_in,
-    resolution:  row.resolution,
-    recipe:      row.recipe,
-    status:      row.status,
-    workerId:    row.worker_id,
-    progress:    row.progress ?? 0,
-    fps:         row.fps,
-    eta:         row.eta,
-    phase:       row.phase ?? undefined,
-    error:       row.error,
-    sizeBefore:  row.size_before,
-    sizeAfter:   row.size_after,
-    createdAt:   row.created_at,
-    updatedAt:   row.updated_at,
-    completedAt: row.completed_at,
+    id:              row.id,
+    filePath:        row.file_path,
+    fileName:        row.file_name,
+    fileSize:        row.file_size,
+    codecIn:         row.codec_in,
+    resolution:      row.resolution,
+    recipe:          row.recipe,
+    status:          row.status,
+    workerId:        row.worker_id,
+    progress:        row.progress ?? 0,
+    fps:             row.fps,
+    eta:             row.eta,
+    phase:           row.phase ?? undefined,
+    error:           row.error,
+    sizeBefore:      row.size_before,
+    sizeAfter:       row.size_after,
+    sortOrder:       row.sort_order,
+    pinnedWorkerId:  row.pinned_worker_id ?? undefined,
+    hasSubtitles:    row.has_subtitles === 1,
+    avgFps:          row.avg_fps ?? undefined,
+    elapsedSeconds:  row.elapsed_seconds ?? undefined,
+    createdAt:       row.created_at,
+    updatedAt:       row.updated_at,
+    completedAt:     row.completed_at,
   };
 }

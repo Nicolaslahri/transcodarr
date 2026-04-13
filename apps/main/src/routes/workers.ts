@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { getDb } from '../db.js';
 import { broadcast } from '../server.js';
 import { dispatchNext } from '../dispatcher.js';
-import { getStats, recordProcessedFile } from '../queue.js';
+import { getStats, recordProcessedFile, getJob } from '../queue.js';
 import { fireWebhooks } from '../webhooks.js';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
 import fs from 'fs';
@@ -103,9 +103,25 @@ export async function workersRoutes(app: FastifyInstance) {
       if (existing) {
         const wasAccepted = ['idle', 'active', 'offline', 'online'].includes(existing.status);
         const newStatus = wasAccepted ? 'idle' : existing.status;
+        const now = Math.floor(Date.now() / 1000);
         db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ?, status = ?, version = ? WHERE id = ?')
-          .run(realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), newStatus, version ?? null, id);
+          .run(realHost, port, JSON.stringify(hardware), now, newStatus, version ?? null, id);
         if (wasAccepted) {
+          // Re-queue any jobs that were orphaned when this worker went offline/restarted.
+          // The worker lost its ffmpeg process so those jobs can never complete — put them back in queue.
+          const orphaned = db.prepare(
+            "SELECT id FROM jobs WHERE worker_id = ? AND status IN ('dispatched','transcoding','receiving','sending','swapping')"
+          ).all(id) as any[];
+          for (const row of orphaned) {
+            db.prepare(
+              "UPDATE jobs SET status = 'queued', worker_id = NULL, phase = NULL, progress = 0, fps = NULL, eta = NULL, error = 'Worker restarted', updated_at = ? WHERE id = ?"
+            ).run(now, row.id);
+            broadcast('job:queued', getJob(row.id));
+          }
+          if (orphaned.length > 0) {
+            console.log(`♻️  Re-queued ${orphaned.length} orphaned job(s) from ${name}`);
+            dispatchNext().catch(() => {});
+          }
           broadcast('worker:updated', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
           console.log(`🔄 Worker re-registered (HTTP): ${name} v${version ?? '?'} → ${newStatus}`);
           sanityCheck(id, name, version);
@@ -240,9 +256,9 @@ export async function workersRoutes(app: FastifyInstance) {
         return reply.status(401).send({ error: 'Unauthorized' });
       }
 
-      // If the job was already re-queued by a cancel, the failure callback is expected.
-      // Don't overwrite the 'queued' status — just release the worker so the next job can dispatch.
-      if (!success && jobRow?.status === 'queued') {
+      // If the job was paused (or somehow already re-queued) the failure callback is expected.
+      // Don't overwrite its status — just release the worker so the next job can dispatch.
+      if (!success && (jobRow?.status === 'queued' || jobRow?.status === 'paused')) {
         db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
         dispatchNext().catch(() => {});
         return { ok: true };

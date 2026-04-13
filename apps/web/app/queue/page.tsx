@@ -1,7 +1,7 @@
 'use client';
 
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
-import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle } from 'lucide-react';
+import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import gsap from 'gsap';
@@ -71,6 +71,7 @@ const PHASE_CONFIG: Record<string, {
   swapping:    { label: 'Finishing Up',      Icon: RefreshCw,       accent: 'text-orange-400',  border: 'border-l-orange-500/60',     barBg: 'bg-orange-400', chip: 'bg-orange-500/10 border-orange-500/30 text-orange-400', sortPriority: 3 },
   dispatched:  { label: 'Ready to Dispatch', Icon: Timer,           accent: 'text-yellow-400',  border: 'border-l-yellow-500/40',     barBg: 'bg-yellow-500', chip: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400', sortPriority: 4 },
   queued:      { label: 'Queued',            Icon: Clock,           accent: 'text-blue-400',    border: 'border-l-blue-500/40',       barBg: 'bg-blue-500',   chip: 'bg-blue-500/10 border-blue-500/30 text-blue-400',       sortPriority: 5 },
+  paused:      { label: 'Paused',            Icon: PauseCircle,     accent: 'text-textMuted',   border: 'border-l-white/10',          barBg: 'bg-white/20',   chip: 'bg-white/5 border-white/10 text-textMuted',             sortPriority: 6 },
 };
 
 // Derive the effective display phase from a job (status alone on initial load, phase when available)
@@ -206,7 +207,7 @@ export default function QueuePage() {
 
   // Phase-aware sort for active jobs
   const rawActiveJobs = jobs
-    .filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));
+    .filter(j => ['queued', 'paused', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));
 
   // Maintain drag order: use orderedActiveIds if they match current set, otherwise reset
   const activeJobIds = rawActiveJobs.map(j => j.id).sort().join(',');
@@ -243,6 +244,7 @@ export default function QueuePage() {
   const retryAll     = () => fetch(`${apiUrl}/api/jobs/retry-all`, { method: 'POST' });
   const removeJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}`, { method: 'DELETE' });
   const cancelJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}/cancel`, { method: 'POST' });
+  const resumeJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}/resume`, { method: 'POST' });
 
   const canClear = completedJobs.length > 0 || failedJobs.length > 0;
 
@@ -274,7 +276,7 @@ export default function QueuePage() {
   }, [apiUrl]);
 
   // Queued jobs that can be dragged = queued or dispatched only
-  const draggableIds = activeJobs.filter(j => ['queued', 'dispatched'].includes(j.status)).map(j => j.id);
+  const draggableIds = activeJobs.filter(j => ['queued', 'paused', 'dispatched'].includes(j.status)).map(j => j.id);
 
   const idleWorkers = workers.filter(w => ['idle', 'active'].includes(w.status));
 
@@ -317,6 +319,7 @@ export default function QueuePage() {
                   <JobRow
                     key={job.id}
                     job={job}
+                    onResume={() => resumeJob(job.id)}
                     onRemove={() => removeJob(job.id)}
                     onCancel={() => cancelJob(job.id)}
                     idleWorkers={idleWorkers}
@@ -389,6 +392,37 @@ function ConversionBadge({ job }: { job: Job }) {
   );
 }
 
+// ─── Resolution Badge ─────────────────────────────────────────────────────────
+
+function ResolutionBadge({ resolution }: { resolution: string }) {
+  const [w] = resolution.toLowerCase().split('x').map(Number);
+  let label: string;
+  let color: string;
+  if (w >= 3840)      { label = '4K';    color = 'bg-amber-500/10 border-amber-500/30 text-amber-400'; }
+  else if (w >= 2560) { label = '1440p'; color = 'bg-sky-500/10 border-sky-500/30 text-sky-400'; }
+  else if (w >= 1920) { label = '1080p'; color = 'bg-sky-500/10 border-sky-500/30 text-sky-400'; }
+  else if (w >= 1280) { label = '720p';  color = 'bg-white/5 border-white/10 text-textMuted'; }
+  else                { label = 'SD';    color = 'bg-white/5 border-white/10 text-textMuted'; }
+  return (
+    <span className={`inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border ${color}`}>
+      {label}
+    </span>
+  );
+}
+
+// ─── File Size Badge ──────────────────────────────────────────────────────────
+
+function FileSizeBadge({ bytes }: { bytes: number }) {
+  let label: string;
+  if (bytes >= 1e9) label = `${(bytes / 1e9).toFixed(1)} GB`;
+  else              label = `${Math.round(bytes / 1e6)} MB`;
+  return (
+    <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-textMuted font-mono">
+      {label}
+    </span>
+  );
+}
+
 // ─── Subtitle Warning Badge ───────────────────────────────────────────────────
 
 function SubtitleWarning({ job }: { job: Job }) {
@@ -443,11 +477,12 @@ function WorkerPicker({ job, workers, apiUrl }: { job: Job; workers: WorkerInfo[
 // ─── Job Row ──────────────────────────────────────────────────────────────────
 
 function JobRow({
-  job, onRemove, onCancel, idleWorkers, apiUrl, draggable,
+  job, onRemove, onCancel, onResume, idleWorkers, apiUrl, draggable,
 }: {
   job: Job;
   onRemove: () => void;
   onCancel: () => void;
+  onResume: () => void;
   idleWorkers: WorkerInfo[];
   apiUrl: string;
   draggable: boolean;
@@ -457,6 +492,7 @@ function JobRow({
   const { Icon } = cfg;
 
   const isProcessing = ['dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(phaseKey);
+  const isPaused = job.status === 'paused';
   const waveRef = useRef<HTMLDivElement>(null);
 
   // dnd-kit sortable hook — only active for draggable rows
@@ -527,7 +563,19 @@ function JobRow({
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <h3 className="text-white font-semibold truncate text-sm leading-tight mb-1.5">{job.fileName}</h3>
+          <h3 className="text-white font-semibold truncate text-sm leading-tight">{job.fileName}</h3>
+          {/* File metadata badges */}
+          {(job.resolution || job.fileSize != null || job.sizeBefore != null || job.codecIn) && (
+            <div className="flex items-center gap-1.5 mt-0.5 mb-1 flex-wrap">
+              {job.resolution && <ResolutionBadge resolution={job.resolution} />}
+              {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
+              {job.codecIn && (
+                <span className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-textMuted">
+                  {codecLabel(job.codecIn)}
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2 flex-wrap">
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
               <Icon className="w-2.5 h-2.5" />
@@ -580,11 +628,28 @@ function JobRow({
           {isProcessing ? (
             <button
               onClick={onCancel}
-              title="Pause — cancel and re-queue"
+              title="Pause — stops transcoding, keeps job in queue"
               className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-amber-400 transition-colors"
             >
               <PauseCircle className="w-4 h-4" />
             </button>
+          ) : isPaused ? (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={onResume}
+                title="Resume — put back in queue"
+                className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-green-400 transition-colors"
+              >
+                <PlayCircle className="w-4 h-4" />
+              </button>
+              <button
+                onClick={onRemove}
+                title="Remove"
+                className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors"
+              >
+                <XCircle className="w-4 h-4" />
+              </button>
+            </div>
           ) : (
             <button
               onClick={onRemove}

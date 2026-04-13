@@ -153,13 +153,23 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             setJobs(prev => {
               const idx = prev.findIndex(j => j.id === data.id);
               if (idx !== -1) {
-                // Job was re-queued (e.g. after cancel) — update in-place so the
-                // old "transcoding" ghost card is replaced rather than duplicated.
+                // Job was re-queued (e.g. after resume) — update in-place so the
+                // old card is replaced rather than duplicated.
                 const next = [...prev];
                 next[idx] = { ...next[idx], ...data };
                 return next;
               }
               return [data, ...prev];
+            });
+            break;
+          case 'job:paused':
+            // Job was paused — update in-place (was transcoding, now paused)
+            setJobs(prev => {
+              const idx = prev.findIndex(j => j.id === data.id);
+              if (idx === -1) return prev;
+              const next = [...prev];
+              next[idx] = { ...next[idx], ...data };
+              return next;
             });
             break;
           case 'job:removed':

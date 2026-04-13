@@ -29,9 +29,11 @@ if (!config.workerId) {
 
 async function main() {
   console.log('⚡ Transcodarr Worker starting...');
-  console.log(`   Name: ${WORKER_NAME}`);
-  console.log(`   ID:   ${WORKER_ID}`);
-  console.log(`   Main: ${MAIN_URL}\n`);
+  console.log(`   Name:      ${WORKER_NAME}`);
+  console.log(`   ID:        ${WORKER_ID}`);
+  console.log(`   Port:      ${WORKER_PORT}`);
+  console.log(`   Dashboard: http://${getLocalIp()}:${WORKER_PORT}`);
+  console.log(`   Main Node: ${MAIN_URL}\n`);
 
   // 0. Ensure ffmpeg is available (auto-downloads if missing)
   await ensureFfmpeg();

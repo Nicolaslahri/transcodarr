@@ -1,28 +1,43 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight, ChevronDown, Filter, Settings2, BookOpen, Info } from 'lucide-react';
-import { BUILT_IN_RECIPES } from '@transcodarr/shared';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import {
+  FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight,
+  Filter, Settings2, BookOpen, Info, ArrowLeftRight,
+  Wifi, HardDrive, X, ChevronUp, ChevronRight,
+} from 'lucide-react';
+import type { Recipe } from '@transcodarr/shared';
+import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
 import { useAppState } from '@/hooks/useTranscodarrSocket';
+import { FileExplorerModal } from '@/components/FileExplorerModal';
+import { RecipePickerModal } from '@/components/RecipePickerModal';
 
-type Tab = 'folders' | 'filters' | 'recipes' | 'general';
+type Tab = 'folders' | 'filters' | 'recipes' | 'transfer' | 'general';
 
 export default function SettingsPage() {
-  const { meta } = useAppState();
-  const [tab, setTab] = useState<Tab>(meta.mode === 'worker' ? 'general' : 'folders');
+  const { meta, apiUrl } = useAppState();
 
-  // Ensure tab is valid for current mode
+  // Support ?tab=transfer deep-link from Fleet page
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search).get('tab') as Tab | null;
+      if (p) return p;
+    }
+    return meta.mode === 'worker' ? 'general' : 'folders';
+  });
+
   const effectiveTab = meta.mode === 'worker' && tab !== 'general' ? 'general' : tab;
 
   const mainTabs: { id: Tab; icon: React.ElementType; label: string }[] = [
-    { id: 'folders',  icon: FolderOpen, label: 'Watched Folders' },
-    { id: 'filters',  icon: Filter,     label: 'Smart Filters'   },
-    { id: 'recipes',  icon: BookOpen,   label: 'Recipes'          },
-    { id: 'general',  icon: Settings2,  label: 'General'          },
+    { id: 'folders',  icon: FolderOpen,     label: 'Watched Folders' },
+    { id: 'filters',  icon: Filter,         label: 'Smart Filters'   },
+    { id: 'recipes',  icon: BookOpen,       label: 'Recipes'         },
+    { id: 'transfer', icon: ArrowLeftRight, label: 'Transfer'        },
+    { id: 'general',  icon: Settings2,      label: 'General'         },
   ];
 
-  const tabs = meta.mode === 'worker' 
-    ? [{ id: 'general', icon: Settings2, label: 'General' } as const]
+  const tabs = meta.mode === 'worker'
+    ? [{ id: 'general' as const, icon: Settings2, label: 'General' }]
     : mainTabs;
 
   return (
@@ -35,7 +50,7 @@ export default function SettingsPage() {
       </header>
 
       {/* Tab bar */}
-      <div className="flex gap-1 bg-surface p-1 rounded-xl border border-border w-fit">
+      <div className="flex gap-1 bg-surface p-1 rounded-xl border border-border w-fit flex-wrap">
         {tabs.map(({ id, icon: Icon, label }) => (
           <button
             key={id}
@@ -50,15 +65,111 @@ export default function SettingsPage() {
       </div>
 
       {/* Panels */}
-      {effectiveTab === 'folders' && meta.mode !== 'worker' && <WatchedFoldersPanel />}
-      {effectiveTab === 'filters' && meta.mode !== 'worker' && <SmartFiltersPanel />}
-      {effectiveTab === 'recipes' && meta.mode !== 'worker' && <RecipesPanel />}
-      {effectiveTab === 'general' && <GeneralPanel />}
+      {effectiveTab === 'folders'  && meta.mode !== 'worker' && <WatchedFoldersPanel apiUrl={apiUrl} />}
+      {effectiveTab === 'filters'  && meta.mode !== 'worker' && <SmartFiltersPanel />}
+      {effectiveTab === 'recipes'  && meta.mode !== 'worker' && <RecipesPanel apiUrl={apiUrl} />}
+      {effectiveTab === 'transfer' && meta.mode !== 'worker' && <TransferPanel apiUrl={apiUrl} />}
+      {effectiveTab === 'general'  && <GeneralPanel />}
     </div>
   );
 }
 
-import { FileExplorerModal } from '@/components/FileExplorerModal';
+// ─── Filesystem browser (shared) ──────────────────────────────────────────────
+
+interface FsEntry { name: string; path: string; }
+interface FsResult { current: string; parent: string; dirs: FsEntry[]; }
+
+function useFsBrowser(fetchFs: (p?: string) => Promise<FsResult>) {
+  const [open, setOpen]       = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult]   = useState<FsResult | null>(null);
+
+  const browse = useCallback(async (p?: string) => {
+    setLoading(true);
+    try {
+      const r = await fetchFs(p);
+      setResult(r);
+      setOpen(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchFs]);
+
+  return { open, setOpen, loading, result, browse };
+}
+
+function FsBrowser({
+  open, onClose, loading, result, onNavigate, onSelect, title, hint,
+}: {
+  open: boolean; onClose: () => void; loading: boolean;
+  result: FsResult | null; onNavigate: (p: string) => void;
+  onSelect: (p: string) => void; title: string; hint: string;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div role="dialog" aria-modal="true" aria-label={title} className="bg-surface border border-border w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
+          <FolderOpen className="w-4 h-4 text-primary shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-white font-semibold text-sm">{title}</p>
+            <p className="text-textMuted text-xs truncate">{result?.current || '/'}</p>
+          </div>
+          <button onClick={onClose} aria-label="Close dialog" className="text-textMuted hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex items-start gap-2 px-5 py-3 bg-primary/5 border-b border-primary/10">
+          <Info className="w-3.5 h-3.5 text-primary mt-0.5 shrink-0" />
+          <p className="text-xs text-primary/80">{hint}</p>
+        </div>
+        <div className="overflow-y-auto max-h-72 p-2">
+          {loading ? (
+            <div className="flex items-center justify-center py-8 text-textMuted text-sm">Loading…</div>
+          ) : (
+            <>
+              {result?.current && result.current !== result.parent && (
+                <button
+                  onClick={() => onNavigate(result.parent)}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/5 text-textMuted hover:text-white transition-colors text-sm"
+                >
+                  <ChevronUp className="w-4 h-4" /><span className="font-mono text-xs">.. (up)</span>
+                </button>
+              )}
+              {result?.dirs.length === 0 && (
+                <p className="text-center py-6 text-textMuted text-sm">No subdirectories</p>
+              )}
+              {result?.dirs.map(d => (
+                <button
+                  key={d.path}
+                  onClick={() => onNavigate(d.path)}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/5 text-white transition-colors text-sm group"
+                >
+                  <FolderOpen className="w-4 h-4 text-yellow-400/70 shrink-0" />
+                  <span className="flex-1 text-left font-mono text-xs truncate">{d.name}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-textMuted opacity-0 group-hover:opacity-100 transition-opacity" />
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+        <div className="flex items-center justify-between px-5 py-4 border-t border-border">
+          <p className="text-xs text-textMuted font-mono truncate max-w-[60%]">{result?.current || '—'}</p>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 text-sm text-textMuted hover:text-white transition-colors">Cancel</button>
+            <button
+              onClick={() => { if (result?.current) { onSelect(result.current); onClose(); } }}
+              disabled={!result?.current}
+              className="px-4 py-2 text-sm font-bold bg-primary text-background rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-40"
+            >
+              Select This Folder
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Watched Folders ─────────────────────────────────────────────────────────
 
@@ -68,14 +179,30 @@ interface WatchedPath {
   extensions: string; priority: string; min_size_mb: number;
 }
 
-function WatchedFoldersPanel() {
-  const [paths, setPaths] = useState<WatchedPath[]>([]);
+function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
+  const [paths, setPaths]   = useState<WatchedPath[]>([]);
   const [adding, setAdding] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(false);
-  const [form, setForm] = useState({ path: '', recipe: 'hevc-1080p', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100 });
+  const [recipePickerOpen, setRecipePickerOpen] = useState(false);
+  const [form, setForm] = useState({
+    path: '', recipe: 'space-saver', recurse: true,
+    extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100,
+  });
+  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
 
   const load = () => fetch('/api/settings/paths').then(r => r.json()).then(setPaths).catch(() => {});
   useEffect(() => { load(); }, []);
+
+  // Load initial recipe info
+  useEffect(() => {
+    fetch(`${apiUrl}/api/settings/recipes`)
+      .then(r => r.json())
+      .then((rs: Recipe[]) => {
+        const found = rs.find(r => r.id === form.recipe);
+        if (found) setSelectedRecipe(found);
+      })
+      .catch(() => {});
+  }, []);
 
   const save = async () => {
     await fetch('/api/settings/paths', {
@@ -84,7 +211,8 @@ function WatchedFoldersPanel() {
       body: JSON.stringify({ ...form }),
     });
     setAdding(false);
-    setForm({ path: '', recipe: 'hevc-1080p', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100 });
+    setForm({ path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100 });
+    setSelectedRecipe(null);
     load();
   };
 
@@ -102,26 +230,11 @@ function WatchedFoldersPanel() {
   };
 
   const scanNow = async (p: WatchedPath) => {
-    try {
-      await fetch(`/api/settings/paths/${p.id}/scan`, { method: 'POST' });
-    } catch (err) {
-      console.error('Manual scan failed to start', err);
-    }
+    await fetch(`/api/settings/paths/${p.id}/scan`, { method: 'POST' }).catch(() => {});
   };
 
   return (
     <div className="space-y-4">
-      {/* Callout: worker config lives in Fleet */}
-      <div className="flex items-start gap-3 p-4 bg-primary/5 border border-primary/15 rounded-xl">
-        <Info className="w-4 h-4 text-primary/70 mt-0.5 shrink-0" />
-        <p className="text-xs text-primary/80 leading-relaxed">
-          <strong className="text-white">Watched folders</strong> define what Main scans and indexes.
-          {' '}<strong className="text-white">Worker connection config</strong> (SMB share or Wireless transfer)
-          is set per-worker in the{' '}
-          <a href="/workers" className="underline underline-offset-2 hover:text-primary transition-colors">Fleet</a> tab.
-        </p>
-      </div>
-
       {paths.length === 0 && !adding && (
         <div className="bg-surface border border-dashed border-border rounded-2xl p-10 text-center">
           <FolderOpen className="w-8 h-8 text-textMuted mx-auto mb-3" />
@@ -183,17 +296,31 @@ function WatchedFoldersPanel() {
             </div>
           </div>
 
+          {/* Recipe picker */}
+          <div>
+            <label className="text-xs text-textMuted font-medium mb-1.5 block">Recipe</label>
+            <button
+              onClick={() => setRecipePickerOpen(true)}
+              className="w-full flex items-center justify-between bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white hover:border-primary/40 transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                {selectedRecipe ? (
+                  <>
+                    <span>{selectedRecipe.icon}</span>
+                    <span className="font-medium">{selectedRecipe.name}</span>
+                    {selectedRecipe.estimatedReduction !== undefined && selectedRecipe.estimatedReduction > 0 && (
+                      <span className="text-xs text-textMuted">~{selectedRecipe.estimatedReduction}% smaller</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-textMuted">Choose a recipe…</span>
+                )}
+              </span>
+              <ChevronRight className="w-4 h-4 text-textMuted" />
+            </button>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Recipe</label>
-              <select
-                value={form.recipe}
-                onChange={e => setForm(f => ({ ...f, recipe: e.target.value }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
-              >
-                {BUILT_IN_RECIPES.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-            </div>
             <div>
               <label className="text-xs text-textMuted font-medium mb-1.5 block">Priority</label>
               <select
@@ -206,17 +333,6 @@ function WatchedFoldersPanel() {
                 <option value="low">Low</option>
               </select>
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Extensions</label>
-              <input
-                value={form.extensions}
-                onChange={e => setForm(f => ({ ...f, extensions: e.target.value }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono"
-              />
-            </div>
             <div>
               <label className="text-xs text-textMuted font-medium mb-1.5 block">Min File Size (MB)</label>
               <input
@@ -226,6 +342,15 @@ function WatchedFoldersPanel() {
                 className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-textMuted font-medium mb-1.5 block">Extensions</label>
+            <input
+              value={form.extensions}
+              onChange={e => setForm(f => ({ ...f, extensions: e.target.value }))}
+              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono"
+            />
           </div>
 
           <div className="flex items-center gap-3">
@@ -241,7 +366,11 @@ function WatchedFoldersPanel() {
           </div>
 
           <div className="flex gap-2 pt-2">
-            <button onClick={save} className="px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">
+            <button
+              onClick={save}
+              disabled={!form.path || !form.recipe}
+              className="px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
+            >
               Add Folder
             </button>
             <button onClick={() => setAdding(false)} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
@@ -260,15 +389,19 @@ function WatchedFoldersPanel() {
         </button>
       )}
 
-      {/* File Explorer Modal */}
       <FileExplorerModal
         open={explorerOpen}
         onClose={() => setExplorerOpen(false)}
         initialPath={form.path}
-        onSelect={(path) => {
-          setForm(f => ({ ...f, path }));
-          setExplorerOpen(false);
-        }}
+        onSelect={(p) => { setForm(f => ({ ...f, path: p })); setExplorerOpen(false); }}
+      />
+
+      <RecipePickerModal
+        open={recipePickerOpen}
+        onClose={() => setRecipePickerOpen(false)}
+        selectedId={form.recipe}
+        apiUrl={apiUrl}
+        onSelect={(r) => { setSelectedRecipe(r); setForm(f => ({ ...f, recipe: r.id })); }}
       />
     </div>
   );
@@ -316,54 +449,18 @@ function SmartFiltersPanel() {
       <p className="text-textMuted text-sm">These rules are evaluated <strong className="text-white">before</strong> any job is created. Files that match are skipped and marked in the Library.</p>
 
       <div className="bg-surface border border-border rounded-2xl divide-y divide-border overflow-hidden">
-        <FilterRow
-          title="Skip already in target codec"
-          description="If the file is already in the recipe's target codec, skip it entirely."
-          enabled={filters.skipAlreadyTargetCodec}
-          onToggle={v => set('skipAlreadyTargetCodec', v)}
-        />
-        <FilterRow
-          title="Skip low-bitrate files"
-          description="Files already heavily compressed at this bitrate probably won't benefit from re-encoding."
-          enabled={filters.skipBelowBitrateKbps !== null}
-          onToggle={v => set('skipBelowBitrateKbps', v ? 500 : null)}
-        >
-          {filters.skipBelowBitrateKbps !== null && (
-            <NumberInput label="Below (kbps)" value={filters.skipBelowBitrateKbps} onChange={v => set('skipBelowBitrateKbps', v)} />
-          )}
+        <FilterRow title="Skip already in target codec" description="If the file is already in the recipe's target codec, skip it entirely." enabled={filters.skipAlreadyTargetCodec} onToggle={v => set('skipAlreadyTargetCodec', v)} />
+        <FilterRow title="Skip low-bitrate files" description="Files already heavily compressed at this bitrate probably won't benefit from re-encoding." enabled={filters.skipBelowBitrateKbps !== null} onToggle={v => set('skipBelowBitrateKbps', v ? 500 : null)}>
+          {filters.skipBelowBitrateKbps !== null && <NumberInput label="Below (kbps)" value={filters.skipBelowBitrateKbps} onChange={v => set('skipBelowBitrateKbps', v)} />}
         </FilterRow>
-        <FilterRow
-          title="Skip low-resolution files"
-          description="Don't waste GPU time on content below a certain height."
-          enabled={filters.skipBelowHeightPx !== null}
-          onToggle={v => set('skipBelowHeightPx', v ? 480 : null)}
-        >
-          {filters.skipBelowHeightPx !== null && (
-            <NumberInput label="Below (px height)" value={filters.skipBelowHeightPx} onChange={v => set('skipBelowHeightPx', v)} />
-          )}
+        <FilterRow title="Skip low-resolution files" description="Don't waste GPU time on content below a certain height." enabled={filters.skipBelowHeightPx !== null} onToggle={v => set('skipBelowHeightPx', v ? 480 : null)}>
+          {filters.skipBelowHeightPx !== null && <NumberInput label="Below (px height)" value={filters.skipBelowHeightPx} onChange={v => set('skipBelowHeightPx', v)} />}
         </FilterRow>
-        <FilterRow
-          title="Skip small files"
-          description="Skip files under a minimum size — likely already compact."
-          enabled={filters.skipBelowSizeMb !== null}
-          onToggle={v => set('skipBelowSizeMb', v ? 50 : null)}
-        >
-          {filters.skipBelowSizeMb !== null && (
-            <NumberInput label="Below (MB)" value={filters.skipBelowSizeMb} onChange={v => set('skipBelowSizeMb', v)} />
-          )}
+        <FilterRow title="Skip small files" description="Skip files under a minimum size — likely already compact." enabled={filters.skipBelowSizeMb !== null} onToggle={v => set('skipBelowSizeMb', v ? 50 : null)}>
+          {filters.skipBelowSizeMb !== null && <NumberInput label="Below (MB)" value={filters.skipBelowSizeMb} onChange={v => set('skipBelowSizeMb', v)} />}
         </FilterRow>
-        <FilterRow
-          title="Skip Dolby Atmos / lossless audio"
-          description="Preserve lossless audio tracks by skipping files containing them."
-          enabled={filters.skipDolbyAtmos}
-          onToggle={v => set('skipDolbyAtmos', v)}
-        />
-        <FilterRow
-          title="Skip by filename keywords"
-          description="Skip files whose name contains any of these words (comma-separated)."
-          enabled={filters.skipKeywords.length > 0}
-          onToggle={v => set('skipKeywords', v ? ['REMUX'] : [])}
-        >
+        <FilterRow title="Skip Dolby Atmos / lossless audio" description="Preserve lossless audio tracks by skipping files containing them." enabled={filters.skipDolbyAtmos} onToggle={v => set('skipDolbyAtmos', v)} />
+        <FilterRow title="Skip by filename keywords" description="Skip files whose name contains any of these words (comma-separated)." enabled={filters.skipKeywords.length > 0} onToggle={v => set('skipKeywords', v ? ['REMUX'] : [])}>
           {filters.skipKeywords.length > 0 && (
             <input
               className="mt-3 w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-primary/50"
@@ -375,10 +472,7 @@ function SmartFiltersPanel() {
         </FilterRow>
       </div>
 
-      <button
-        onClick={save}
-        className="px-5 py-2.5 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors"
-      >
+      <button onClick={save} className="px-5 py-2.5 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">
         {saved ? '✓ Saved!' : 'Save Filters'}
       </button>
     </div>
@@ -423,26 +517,330 @@ function NumberInput({ label, value, onChange }: { label: string; value: number;
 
 // ─── Recipes ──────────────────────────────────────────────────────────────────
 
-function RecipesPanel() {
-  const recipes = BUILT_IN_RECIPES;
+function RecipesPanel({ apiUrl }: { apiUrl: string }) {
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const load = () => fetch(`${apiUrl}/api/settings/recipes`).then(r => r.json()).then(setRecipes).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  const builtIn   = recipes.filter(r => !r.sourceUrl);
+  const community = recipes.filter(r =>  r.sourceUrl);
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {recipes.map(r => (
-        <div key={r.id} className="bg-surface border border-border rounded-2xl p-5 hover:border-border/60 transition-colors">
-          <div className="flex items-start gap-3 mb-3">
-            <span className="text-2xl">{r.icon}</span>
-            <div>
-              <h3 className="text-white font-bold text-sm">{r.name}</h3>
-              <p className="text-textMuted text-xs">{r.description}</p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Badge label={r.targetCodec} color="primary" />
-            <Badge label={`.${r.targetContainer}`} color="neutral" />
+    <div className="space-y-6">
+      {/* Built-in */}
+      <div>
+        <h3 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-4">Built-in Recipes ({builtIn.length})</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {builtIn.map(r => <RecipeCard key={r.id} recipe={r} />)}
+        </div>
+      </div>
+
+      {/* Community */}
+      {community.length > 0 && (
+        <div>
+          <h3 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-4">Community Recipes ({community.length})</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {community.map(r => <RecipeCard key={r.id} recipe={r} community />)}
           </div>
         </div>
+      )}
+
+      <button
+        onClick={() => setPickerOpen(true)}
+        className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors px-4 py-2.5 border border-dashed border-border rounded-xl"
+      >
+        <Plus className="w-4 h-4" /> Import Community Recipe…
+      </button>
+
+      <RecipePickerModal
+        open={pickerOpen}
+        onClose={() => { setPickerOpen(false); load(); }}
+        selectedId={undefined}
+        apiUrl={apiUrl}
+        onSelect={() => { setPickerOpen(false); load(); }}
+      />
+    </div>
+  );
+}
+
+function RecipeCard({ recipe, community }: { recipe: Recipe; community?: boolean }) {
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-5 hover:border-border/60 transition-colors">
+      <div className="flex items-start gap-3 mb-3">
+        <span className="text-2xl">{recipe.icon}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-white font-bold text-sm">{recipe.name}</h3>
+            {community && <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-purple-900/30 text-purple-400 border border-purple-500/20">Community</span>}
+          </div>
+          <p className="text-textMuted text-xs mt-0.5">{recipe.description}</p>
+        </div>
+      </div>
+      <div className="flex gap-2 flex-wrap">
+        <Badge label={recipe.targetCodec.toUpperCase()} color="primary" />
+        <Badge label={`.${recipe.targetContainer}`} color="neutral" />
+        {recipe.estimatedReduction !== undefined && recipe.estimatedReduction > 0 && (
+          <Badge label={`~${recipe.estimatedReduction}% smaller`} color="green" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Transfer ─────────────────────────────────────────────────────────────────
+
+function TransferPanel({ apiUrl }: { apiUrl: string }) {
+  const [workers, setWorkers] = useState<WorkerInfo[]>([]);
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/workers`)
+      .then(r => r.json())
+      .then((ws: WorkerInfo[]) => setWorkers(ws.filter(w => w.status !== 'pending')))
+      .catch(() => {});
+  }, [apiUrl]);
+
+  if (workers.length === 0) {
+    return (
+      <div className="bg-surface border border-dashed border-border rounded-2xl p-10 text-center">
+        <p className="text-white font-medium mb-1">No accepted workers</p>
+        <p className="text-textMuted text-sm">Accept a worker in the Fleet tab first, then configure its transfer mode here.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start gap-3 p-4 bg-primary/5 border border-primary/15 rounded-xl">
+        <Info className="w-4 h-4 text-primary/70 mt-0.5 shrink-0" />
+        <p className="text-xs text-primary/80 leading-relaxed">
+          <strong className="text-white">SMB / Network Share</strong> — the worker accesses your media directly via a mounted network share. Set up the base path mapping once; all subfolders are resolved automatically.
+          <br />
+          <strong className="text-white">Wireless Transfer</strong> — no shared filesystem needed. Files are transferred to the worker before transcoding and sent back when done.
+        </p>
+      </div>
+
+      {workers.map(w => (
+        <WorkerTransferCard key={w.id} worker={w} apiUrl={apiUrl} />
       ))}
     </div>
+  );
+}
+
+function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: string }) {
+  const [mode, setMode]         = useState<ConnectionMode>(worker.connectionMode ?? 'smb');
+  const [mappings, setMappings] = useState<SmbMapping[]>(worker.smbMappings ?? []);
+  const [saving, setSaving]     = useState(false);
+  const [saveOk, setSaveOk]     = useState(false);
+
+  const fetchMainFs = useCallback(async (p?: string): Promise<FsResult> => {
+    const url = `${apiUrl}/api/settings/fs${p ? `?path=${encodeURIComponent(p)}` : ''}`;
+    return fetch(url).then(r => r.json());
+  }, [apiUrl]);
+
+  const fetchWorkerFs = useCallback(async (p?: string): Promise<FsResult> => {
+    const proxyUrl = `${apiUrl}/api/workers/${worker.id}/fs${p ? `?path=${encodeURIComponent(p)}` : ''}`;
+    try {
+      const r = await fetch(proxyUrl);
+      if (r.ok) return r.json();
+    } catch { /**/ }
+    return fetch(`http://${worker.host}:${worker.port}/fs${p ? `?path=${encodeURIComponent(p)}` : ''}`).then(r => r.json());
+  }, [apiUrl, worker.host, worker.port, worker.id]);
+
+  const mainBrowser   = useFsBrowser(fetchMainFs);
+  const workerBrowser = useFsBrowser(fetchWorkerFs);
+  const activeIdx   = useRef(-1);
+  const activeField = useRef<'networkBasePath' | 'localBasePath'>('networkBasePath');
+
+  const openBrowser = (idx: number, field: 'networkBasePath' | 'localBasePath') => {
+    activeIdx.current   = idx;
+    activeField.current = field;
+    const val = field === 'networkBasePath' ? mappings[idx]?.networkBasePath : mappings[idx]?.localBasePath;
+    if (field === 'networkBasePath') mainBrowser.browse(val || undefined);
+    else workerBrowser.browse(val || undefined);
+  };
+
+  const handleSelect = (p: string) => {
+    const i = activeIdx.current;
+    const f = activeField.current;
+    setMappings(m => m.map((mp, idx) => idx === i ? { ...mp, [f]: p } : mp));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await fetch(`${apiUrl}/api/workers/${worker.id}/connection`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionMode: mode, mappings }),
+      });
+      setSaveOk(true);
+      setTimeout(() => setSaveOk(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <FsBrowser
+        open={mainBrowser.open} onClose={() => mainBrowser.setOpen(false)}
+        loading={mainBrowser.loading} result={mainBrowser.result}
+        onNavigate={mainBrowser.browse} onSelect={handleSelect}
+        title="Main Node — Select Base Folder"
+        hint="Select the root path on the Main node (e.g. /media or /mnt/data). All subfolders will be resolved automatically."
+      />
+      <FsBrowser
+        open={workerBrowser.open} onClose={() => workerBrowser.setOpen(false)}
+        loading={workerBrowser.loading} result={workerBrowser.result}
+        onNavigate={workerBrowser.browse} onSelect={handleSelect}
+        title="Worker Node — Select Base Folder"
+        hint="Select the same folder as seen by this Worker via the network share (e.g. Z:\ on Windows, /mnt/media on Linux)."
+      />
+
+      <div className="bg-surface border border-border rounded-2xl p-6 space-y-5">
+        {/* Worker header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-white font-bold">{worker.name}</h3>
+            <p className="text-xs text-textMuted font-mono">{worker.host}:{worker.port}</p>
+          </div>
+          {mode === 'wireless' ? (
+            <span className="px-2 py-1 text-xs font-medium rounded-lg border bg-blue-500/10 text-blue-400 border-blue-500/20 flex items-center gap-1">
+              <Wifi className="w-3 h-3" /> Wireless Transfer
+            </span>
+          ) : (
+            <span className="px-2 py-1 text-xs font-medium rounded-lg border bg-green-500/10 text-green-400 border-green-500/20 flex items-center gap-1">
+              <HardDrive className="w-3 h-3" /> Network Share (SMB)
+            </span>
+          )}
+        </div>
+
+        {/* Mode toggle */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setMode('smb')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all
+              ${mode === 'smb' ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-background border-border text-textMuted hover:text-white'}`}
+          >
+            <HardDrive className="w-4 h-4" /> SMB / Network Share
+          </button>
+          <button
+            onClick={() => setMode('wireless')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all
+              ${mode === 'wireless' ? 'bg-blue-500/10 border-blue-500/40 text-blue-400' : 'bg-background border-border text-textMuted hover:text-white'}`}
+          >
+            <Wifi className="w-4 h-4" /> Wireless Transfer
+          </button>
+        </div>
+
+        {/* SMB path mappings — base-path model */}
+        {mode === 'smb' && (
+          <div className="space-y-4">
+            <div className="flex items-start gap-2 p-3 bg-primary/5 border border-primary/10 rounded-xl">
+              <Info className="w-3.5 h-3.5 text-primary/70 mt-0.5 shrink-0" />
+              <p className="text-xs text-primary/80 leading-relaxed">
+                Add one mapping per network share root. All subfolders are resolved automatically — you only need to set this up once.
+                <br />
+                <span className="text-textMuted">Example: Main <code className="text-primary/70">/mnt/nas</code> → Worker <code className="text-primary/70">Z:\</code></span>
+              </p>
+            </div>
+
+            {mappings.length === 0 && (
+              <p className="text-xs text-yellow-400/70 px-1">No path mappings yet. Add at least one so this worker can find your media files.</p>
+            )}
+
+            {mappings.map((m, i) => (
+              <div key={i} className="bg-background border border-border rounded-xl p-4 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
+                      Main Node root path
+                    </label>
+                    <div className="flex gap-1.5">
+                      <input
+                        value={m.networkBasePath}
+                        onChange={e => setMappings(ms => ms.map((mp, idx) => idx === i ? { ...mp, networkBasePath: e.target.value } : mp))}
+                        placeholder="/mnt/nas or /media"
+                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 font-mono"
+                      />
+                      <button
+                        onClick={() => openBrowser(i, 'networkBasePath')}
+                        className="px-2.5 py-2 bg-surface border border-border rounded-lg text-textMuted hover:text-primary hover:border-primary/30 transition-colors"
+                        title="Browse Main filesystem"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
+                      Worker sees it as
+                    </label>
+                    <div className="flex gap-1.5">
+                      <input
+                        value={m.localBasePath}
+                        onChange={e => setMappings(ms => ms.map((mp, idx) => idx === i ? { ...mp, localBasePath: e.target.value } : mp))}
+                        placeholder="Z:\ or /mnt/pi-media"
+                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 font-mono"
+                      />
+                      <button
+                        onClick={() => openBrowser(i, 'localBasePath')}
+                        className="px-2.5 py-2 bg-surface border border-border rounded-lg text-textMuted hover:text-primary hover:border-primary/30 transition-colors"
+                        title="Browse Worker filesystem"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setMappings(ms => ms.filter((_, idx) => idx !== i))}
+                        className="px-2.5 py-2 text-textMuted hover:text-red-400 transition-colors"
+                        title="Remove mapping"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            <button
+              onClick={() => setMappings(m => [...m, { networkBasePath: '', localBasePath: '' }])}
+              className="flex items-center gap-1.5 text-xs text-textMuted hover:text-white transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add share root mapping
+            </button>
+          </div>
+        )}
+
+        {/* Wireless callout */}
+        {mode === 'wireless' && (
+          <div className="flex items-start gap-3 p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl">
+            <Wifi className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm text-white font-medium mb-1">No path configuration needed</p>
+              <p className="text-xs text-textMuted leading-relaxed">
+                Files are transferred automatically over your local network — no shared filesystem required.
+                The pipeline runs in three stages: <span className="text-blue-400">Receive → Transcode → Send back</span>.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Save */}
+        <div className="flex justify-end pt-1 border-t border-border">
+          <button
+            onClick={save}
+            disabled={saving}
+            className={`mt-4 px-5 py-2.5 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 flex items-center gap-1.5
+              ${saveOk ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-primary text-background hover:bg-primary/90'}`}
+          >
+            {saving ? 'Saving…' : saveOk ? '✓ Saved' : 'Save Transfer Config'}
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -456,11 +854,11 @@ function GeneralPanel() {
   useEffect(() => {
     fetch(`${apiUrl}/api/settings/general`).then(r => r.json()).then(data => {
       setSettings(s => ({
-        nodeName: data.nodeName ?? s.nodeName,
+        nodeName:          data.nodeName          ?? s.nodeName,
         maxConcurrentJobs: data.maxConcurrentJobs ?? s.maxConcurrentJobs,
-        queueStrategy: data.queueStrategy ?? s.queueStrategy,
+        queueStrategy:     data.queueStrategy     ?? s.queueStrategy,
         autoAcceptWorkers: data.autoAcceptWorkers ?? s.autoAcceptWorkers,
-        mainUrl: data.mainUrl ?? s.mainUrl,
+        mainUrl:           data.mainUrl           ?? s.mainUrl,
       }));
     }).catch(() => {});
   }, [apiUrl]);
@@ -477,11 +875,8 @@ function GeneralPanel() {
   const resetSetup = async () => {
     if (!confirm('Are you sure you want to completely reset Transcodarr? This will wipe your node role and restart the setup wizard.')) return;
     try {
-      // Always call the LOCAL server — apiUrl may point to Main when in Worker mode
-      const localOrigin = window.location.origin;
-      await fetch(`${localOrigin}/api/settings/reset`, { method: 'POST' });
-    } catch { /* server exits → fetch throws, that's expected */ }
-    // Wait for the server to restart in setup mode, then reload
+      await fetch(`${window.location.origin}/api/settings/reset`, { method: 'POST' });
+    } catch { /* server exits — expected */ }
     setTimeout(() => window.location.reload(), 1500);
   };
 
@@ -551,7 +946,6 @@ function GeneralPanel() {
         </button>
       </div>
 
-      {/* Danger zone */}
       <div className="bg-surface border border-red-500/20 rounded-2xl p-6">
         <h3 className="text-red-400 font-bold text-sm mb-1">Reset Setup</h3>
         <p className="text-textMuted text-xs mb-4">Wipe this node's role configuration and restart the onboarding wizard. The server will restart automatically.</p>
@@ -575,11 +969,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Badge({ label, color }: { label: string; color: 'primary' | 'neutral' }) {
+function Badge({ label, color }: { label: string; color: 'primary' | 'neutral' | 'green' }) {
+  const styles = {
+    primary: 'bg-primary/10 text-primary border-primary/20',
+    neutral: 'bg-background text-textMuted border-border/50',
+    green:   'bg-green-900/30 text-green-400 border-green-500/20',
+  };
   return (
-    <span className={`px-2 py-1 text-xs font-medium rounded-lg border ${
-      color === 'primary' ? 'bg-primary/10 text-primary border-primary/20' : 'bg-background text-textMuted border-border/50'
-    }`}>
+    <span className={`px-2 py-1 text-xs font-medium rounded-lg border ${styles[color]}`}>
       {label}
     </span>
   );

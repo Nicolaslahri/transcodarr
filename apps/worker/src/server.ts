@@ -22,7 +22,7 @@ export function initWorkerServer(hw: HardwareProfile, wid: string, mUrl: string)
 }
 
 export async function createWorkerServer(port: number) {
-  const app = Fastify({ logger: { level: 'warn' }, bodyLimit: 1 }); // bodyLimit 1 byte — we only use req.raw for large uploads
+  const app = Fastify({ logger: { level: 'warn' }, bodyLimit: 10 * 1024 * 1024 }); // 10MB — enough for any JSON dispatch payload
   await app.register(fastifyCors, { origin: true });
 
   // Serve built web UI

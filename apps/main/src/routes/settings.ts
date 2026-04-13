@@ -9,7 +9,50 @@ import { addWatchedPath, manualScanDirectory } from '../watcher.js';
 
 export async function settingsRoutes(app: FastifyInstance) {
   // ─── Recipes ────────────────────────────────────────────────────────────────
-  app.get('/recipes', async () => BUILT_IN_RECIPES);
+  const getCustomRecipes = () => {
+    const row = getDb().prepare("SELECT value FROM settings WHERE key = 'custom_recipes'").get() as any;
+    if (!row) return [];
+    try { return JSON.parse(row.value); } catch { return []; }
+  };
+
+  app.get('/recipes', async () => [...BUILT_IN_RECIPES, ...getCustomRecipes()]);
+
+  // POST /api/settings/recipes/import — import community recipes from a URL
+  app.post<{ Body: { url: string } }>('/recipes/import', async (req, reply) => {
+    const { url } = req.body;
+    if (!url) return reply.status(400).send({ error: 'url is required' });
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) return reply.status(400).send({ error: `Fetch failed: ${res.status}` });
+      const data = await res.json() as any[];
+      if (!Array.isArray(data)) return reply.status(400).send({ error: 'Expected a JSON array of recipes' });
+
+      // Basic schema validation — each item must have id, name, targetCodec
+      const valid = data.filter(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.targetCodec === 'string');
+      if (valid.length === 0) return reply.status(400).send({ error: 'No valid recipes found in the response' });
+
+      // Tag with sourceUrl, merge with existing custom recipes (deduplicate by id)
+      const existing: any[] = getCustomRecipes();
+      const tagged = valid.map(r => ({ ...r, sourceUrl: url, icon: r.icon ?? '🔧', color: r.color ?? '#6b7280' }));
+      const merged = [...existing.filter(e => !tagged.find((t: any) => t.id === e.id)), ...tagged];
+
+      getDb().prepare("INSERT INTO settings (key, value) VALUES ('custom_recipes', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run(JSON.stringify(merged));
+
+      return { ok: true, imported: tagged.length };
+    } catch (err: any) {
+      return reply.status(400).send({ error: err.message ?? 'Import failed' });
+    }
+  });
+
+  // DELETE /api/settings/recipes/custom/:id — remove a custom recipe
+  app.delete<{ Params: { id: string } }>('/recipes/custom/:id', async (req) => {
+    const existing: any[] = getCustomRecipes();
+    const filtered = existing.filter(r => r.id !== req.params.id);
+    getDb().prepare("INSERT INTO settings (key, value) VALUES ('custom_recipes', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(JSON.stringify(filtered));
+    return { ok: true };
+  });
 
   app.get('/fs', async (req) => {
     const q = req.query as { path?: string };

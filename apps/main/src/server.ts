@@ -41,32 +41,51 @@ function rowToWorker(row: any) {
 
 export function startWorkerHealthPoller() {
   const INTERVAL_MS = 20_000; // ping every 20 seconds
+  const OFFLINE_THRESHOLD = 3; // consecutive failures before marking offline
+
+  // Track consecutive failures per worker
+  const failCounts = new Map<string, number>();
 
   const tick = async () => {
     const db = getDb();
     const workers = db.prepare("SELECT * FROM workers WHERE status != 'pending'").all() as any[];
-    
+
     await Promise.all(workers.map(async (row) => {
       const url = `http://${row.host}:${row.port}/health`;
-      let newStatus: string;
+      let reachable = false;
       try {
         const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        if (res.ok) {
-          // If it was offline, bring it back to idle. Otherwise preserve current active/idle state.
-          newStatus = row.status === 'offline' ? 'idle' : row.status;
-        } else {
-          newStatus = 'offline';
-        }
+        reachable = res.ok;
       } catch {
-        newStatus = 'offline';
+        reachable = false;
       }
 
-      if (newStatus !== row.status) {
-        db.prepare('UPDATE workers SET status = ?, last_seen = ? WHERE id = ?')
-          .run(newStatus, Math.floor(Date.now() / 1000), row.id);
-        broadcast('worker:updated', rowToWorker(
-          db.prepare('SELECT * FROM workers WHERE id = ?').get(row.id)
-        ));
+      if (reachable) {
+        failCounts.set(row.id, 0);
+        // Only update status if the worker was previously offline — preserve active/idle as-is
+        if (row.status === 'offline') {
+          db.prepare('UPDATE workers SET status = ?, last_seen = ? WHERE id = ?')
+            .run('idle', Math.floor(Date.now() / 1000), row.id);
+          broadcast('worker:updated', rowToWorker(
+            db.prepare('SELECT * FROM workers WHERE id = ?').get(row.id)
+          ));
+        } else {
+          // Still update last_seen so we know it's alive
+          db.prepare('UPDATE workers SET last_seen = ? WHERE id = ?')
+            .run(Math.floor(Date.now() / 1000), row.id);
+        }
+      } else {
+        const failures = (failCounts.get(row.id) ?? 0) + 1;
+        failCounts.set(row.id, failures);
+        // Only mark offline after sustained failures — avoids flipping active workers on a blip
+        if (failures >= OFFLINE_THRESHOLD && row.status !== 'offline') {
+          db.prepare('UPDATE workers SET status = ?, last_seen = ? WHERE id = ?')
+            .run('offline', Math.floor(Date.now() / 1000), row.id);
+          broadcast('worker:updated', rowToWorker(
+            db.prepare('SELECT * FROM workers WHERE id = ?').get(row.id)
+          ));
+          failCounts.set(row.id, 0); // Reset so next recovery cycle works cleanly
+        }
       }
     }));
   };

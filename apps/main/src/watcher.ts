@@ -3,6 +3,7 @@ import path from 'path';
 import { getDb } from './db.js';
 import { enqueueFile } from './queue.js';
 import { broadcast } from './server.js';
+import { dispatchNext } from './dispatcher.js';
 import * as fs from 'fs';
 
 const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.ts', '.m2ts', '.wmv'];
@@ -58,6 +59,7 @@ function initWatcher() {
       if (job) {
         console.log(`📥 Queued: ${path.basename(filePath)}`);
         broadcast('job:queued', job);
+        dispatchNext().catch(() => {});
       }
     }, 3000));
   });

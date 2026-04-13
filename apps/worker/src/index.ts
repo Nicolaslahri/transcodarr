@@ -12,7 +12,7 @@ try {
 } catch { /**/ }
 
 const WORKER_NAME = config.nodeName || process.env.WORKER_NAME || os.hostname();
-const WORKER_PORT = Number(process.env.WORKER_PORT ?? 3001);
+const WORKER_PORT = Number(process.env.PORT ?? process.env.WORKER_PORT ?? 3002);
 const MAIN_URL    = config.mainUrl || process.env.MAIN_URL || 'http://localhost:3001';
 
 const WORKER_ID = config.workerId || process.env.WORKER_ID || `worker-${nanoid(8)}`;

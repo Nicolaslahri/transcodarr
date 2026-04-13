@@ -93,7 +93,7 @@ export function SetupWizard({ onComplete }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-background flex items-center justify-center p-6">
+    <div role="dialog" aria-modal="true" aria-label="Setup wizard" className="fixed inset-0 z-[100] bg-background flex items-center justify-center p-6">
       {/* Background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-primary/5 rounded-full blur-3xl" />
@@ -113,7 +113,7 @@ export function SetupWizard({ onComplete }: Props) {
         {step === 'choose' && (
           <div className="space-y-4">
             <p className="text-xs font-bold uppercase tracking-widest text-textMuted text-center mb-6">
-              What is this machine?
+              Choose this node's role
             </p>
 
             <button
@@ -162,19 +162,19 @@ export function SetupWizard({ onComplete }: Props) {
         {step === 'worker-ip' && (
           <div className="bg-surface border border-border rounded-2xl p-8 space-y-6">
             <div>
-              <h2 className="text-xl font-bold text-white mb-1">Connect to Main Node</h2>
-              <p className="text-textMuted text-sm">Enter the IP address of the machine running the Main node.</p>
+              <h2 className="text-xl font-bold text-white mb-1">Connect to an existing Main Node</h2>
+              <p className="text-textMuted text-sm">Enter the address of the machine running the Main node.</p>
             </div>
 
             <div>
               <div className="flex justify-between items-end mb-2">
                 <label className="text-xs font-bold uppercase tracking-wider text-textMuted block">
-                  Main Node IP Address
+                  Main Node address (IP or hostname)
                 </label>
                 {scanning && (
                   <span className="text-xs text-primary flex items-center gap-1.5 animate-pulse">
                     <Loader2 className="w-3 h-3 animate-spin border-0" />
-                    Scanning network
+                    Scanning your local network…
                   </span>
                 )}
                 {!scanning && scanResult === 'found' && (
@@ -186,7 +186,7 @@ export function SetupWizard({ onComplete }: Props) {
                 {!scanning && scanResult === 'not-found' && (
                   <div className="flex items-center gap-2 animate-in fade-in">
                     <span className="text-xs text-yellow-500/70 flex items-center gap-1.5">
-                      No nodes found automatically
+                      No Main Node found on this network
                     </span>
                     <button
                       onClick={scanForMainNode}
@@ -244,7 +244,7 @@ export function SetupWizard({ onComplete }: Props) {
         {step === 'done' && (
           <div className="bg-surface border border-green-500/20 rounded-2xl p-12 text-center">
             <CheckCircle2 className="w-12 h-12 text-green-400 mx-auto mb-4" />
-            <h2 className="text-white font-bold text-xl">You're all set!</h2>
+            <h2 className="text-white font-bold text-xl">Setup complete — loading your dashboard</h2>
             <p className="text-textMuted text-sm mt-2">Reloading the interface…</p>
           </div>
         )}

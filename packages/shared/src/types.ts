@@ -76,6 +76,8 @@ export interface WorkerInfo {
   currentFps?: number;
   /** Current transfer phase shown in the UI */
   currentPhase?: TransferPhase;
+  /** Live GPU metrics (NVIDIA only, may be absent) */
+  gpuStats?: GpuStats;
 }
 
 // ─── Recipe ──────────────────────────────────────────────────────────────────
@@ -216,6 +218,19 @@ export interface WatchedPath {
   createdAt: number;
 }
 
+// ─── GPU Stats (NVIDIA only, best-effort) ────────────────────────────────────
+
+export interface GpuStats {
+  /** GPU utilisation 0–100% */
+  utilPct: number;
+  /** GPU temperature in °C */
+  tempC: number;
+  /** VRAM used in MB */
+  vramUsedMB: number;
+  /** VRAM total in MB */
+  vramTotalMB: number;
+}
+
 // ─── WebSocket Events (Main → Browser) ───────────────────────────────────────
 
 export type WsEventType =
@@ -224,6 +239,7 @@ export type WsEventType =
   | 'worker:updated'
   | 'worker:offline'
   | 'worker:progress'
+  | 'worker:stats'
   | 'job:queued'
   | 'job:progress'
   | 'job:complete'

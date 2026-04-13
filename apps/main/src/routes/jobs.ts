@@ -169,22 +169,19 @@ export async function jobsRoutes(app: FastifyInstance) {
       }
     }
 
-    // Re-queue at same sort_order
+    // Re-queue at same sort_order.
+    // NOTE: do NOT mark worker idle here — the worker's cleanup callback (complete route)
+    // is the single source of truth for releasing the worker. Marking idle + dispatching
+    // here would race with the callback, potentially sending two jobs to the same worker.
     const db = getDb();
     const now = Math.floor(Date.now() / 1000);
     db.prepare(
       'UPDATE jobs SET status = ?, worker_id = NULL, phase = NULL, progress = 0, callback_token = NULL, dispatched_at = NULL, fps = NULL, eta = NULL, error = NULL, updated_at = ? WHERE id = ?'
     ).run('queued', now, req.params.id);
 
-    // Mark worker idle
-    if (job.workerId) {
-      db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.workerId);
-    }
-
     const updated = getJob(req.params.id);
     broadcast('job:queued', updated);
     broadcast('stats:update', getStats());
-    dispatchNext().catch(() => {});
     return updated;
   });
 

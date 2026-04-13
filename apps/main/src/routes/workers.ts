@@ -163,12 +163,20 @@ export async function workersRoutes(app: FastifyInstance) {
     },
   );
 
-  // POST /api/workers/:id/heartbeat — worker keepalive
-  app.post<{ Params: { id: string } }>('/:id/heartbeat', async (req) => {
-    getDb().prepare('UPDATE workers SET last_seen = ? WHERE id = ?')
-      .run(Math.floor(Date.now() / 1000), req.params.id);
-    return { ok: true };
-  });
+  // POST /api/workers/:id/heartbeat — worker keepalive (optionally carries GPU stats)
+  app.post<{ Params: { id: string }; Body: { gpuStats?: { utilPct: number; tempC: number; vramUsedMB: number; vramTotalMB: number } } }>(
+    '/:id/heartbeat',
+    async (req) => {
+      getDb().prepare('UPDATE workers SET last_seen = ? WHERE id = ?')
+        .run(Math.floor(Date.now() / 1000), req.params.id);
+
+      // Broadcast GPU stats to the browser (best-effort; no DB persistence needed)
+      if (req.body?.gpuStats) {
+        broadcast('worker:stats', { workerId: req.params.id, gpuStats: req.body.gpuStats });
+      }
+      return { ok: true };
+    },
+  );
 
   // GET /api/workers/:id/fs — proxy worker filesystem browser (avoids browser CORS)
   app.get<{ Params: { id: string }; Querystring: { path?: string } }>('/:id/fs', async (req, reply) => {
@@ -227,10 +235,19 @@ export async function workersRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const { workerId, callbackToken, success, outputPath, sizeBefore, sizeAfter, error } = req.body;
       const db = getDb();
-      const jobRow = db.prepare('SELECT file_path, callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+      const jobRow = db.prepare('SELECT file_path, callback_token, status FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       if (jobRow?.callback_token && callbackToken !== jobRow.callback_token) {
         return reply.status(401).send({ error: 'Unauthorized' });
       }
+
+      // If the job was already re-queued by a cancel, the failure callback is expected.
+      // Don't overwrite the 'queued' status — just release the worker so the next job can dispatch.
+      if (!success && jobRow?.status === 'queued') {
+        db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
+        dispatchNext().catch(() => {});
+        return { ok: true };
+      }
+
       const now = Math.floor(Date.now() / 1000);
       const jobFull = db.prepare('SELECT file_path, recipe, fps, dispatched_at, content_key FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       const elapsed = jobFull?.dispatched_at ? now - jobFull.dispatched_at : null;

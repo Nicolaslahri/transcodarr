@@ -3,8 +3,9 @@ import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import path from 'path';
 import fs from 'fs';
+import { execFile } from 'child_process';
 import { fileURLToPath } from 'url';
-import type { JobPayload, HardwareProfile } from '@transcodarr/shared';
+import type { JobPayload, HardwareProfile, GpuStats } from '@transcodarr/shared';
 import { transcodeFile } from './transcoder.js';
 import { downloadFile, uploadFile } from './transfer.js';
 
@@ -15,6 +16,36 @@ let workerId: string;
 let mainUrl: string;
 export let currentJob: { jobId: string; fileName: string; progress: number; fps?: number; phase?: string } | null = null;
 let cancelController: AbortController | null = null;
+
+// ─── GPU Stats ────────────────────────────────────────────────────────────────
+// Polled every 3 s via nvidia-smi (NVIDIA only); null on non-NVIDIA workers.
+export let latestGpuStats: GpuStats | null = null;
+
+export function startGpuStatsPoller(): void {
+  const poll = () => {
+    execFile(
+      'nvidia-smi',
+      ['--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total', '--format=csv,noheader,nounits'],
+      { timeout: 5000 },
+      (err, stdout) => {
+        if (err) { latestGpuStats = null; return; }
+        const parts = stdout.trim().split(',').map(s => parseFloat(s.trim()));
+        if (parts.length === 4 && parts.every(n => !isNaN(n))) {
+          latestGpuStats = {
+            utilPct:    parts[0],
+            tempC:      parts[1],
+            vramUsedMB: parts[2],
+            vramTotalMB: parts[3],
+          };
+        } else {
+          latestGpuStats = null;
+        }
+      },
+    );
+  };
+  poll();
+  setInterval(poll, 3_000);
+}
 
 export function initWorkerServer(hw: HardwareProfile, wid: string, mUrl: string) {
   hardware = hw;

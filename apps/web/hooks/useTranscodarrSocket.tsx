@@ -139,11 +139,28 @@ export function SocketProvider({ children }: { children: ReactNode }) {
                 : w,
             ));
             break;
+          case 'worker:stats':
+            setWorkers(prev => prev.map(w =>
+              w.id === data.workerId
+                ? { ...w, gpuStats: data.gpuStats }
+                : w,
+            ));
+            break;
           case 'worker:offline':
             setWorkers(prev => prev.filter(w => w.id !== data.id));
             break;
           case 'job:queued':
-            setJobs(prev => [data, ...prev]);
+            setJobs(prev => {
+              const idx = prev.findIndex(j => j.id === data.id);
+              if (idx !== -1) {
+                // Job was re-queued (e.g. after cancel) — update in-place so the
+                // old "transcoding" ghost card is replaced rather than duplicated.
+                const next = [...prev];
+                next[idx] = { ...next[idx], ...data };
+                return next;
+              }
+              return [data, ...prev];
+            });
             break;
           case 'job:removed':
             setJobs(prev => prev.filter(j => j.id !== data.id));

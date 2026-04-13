@@ -137,6 +137,7 @@ function rowToJob(row: any): Job {
     progress:    row.progress ?? 0,
     fps:         row.fps,
     eta:         row.eta,
+    phase:       row.phase ?? undefined,
     error:       row.error,
     sizeBefore:  row.size_before,
     sizeAfter:   row.size_after,

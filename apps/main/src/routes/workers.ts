@@ -1,18 +1,21 @@
 import type { FastifyInstance } from 'fastify';
 import { getDb } from '../db.js';
 import { broadcast } from '../server.js';
-import type { WorkerInfo, SmbMapping } from '@transcodarr/shared';
+import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
+import fs from 'fs';
+import path from 'path';
 
 function rowToWorker(row: any): WorkerInfo {
   return {
-    id:          row.id,
-    name:        row.name,
-    host:        row.host,
-    port:        row.port,
-    status:      row.status,
-    hardware:    JSON.parse(row.hardware ?? '{}'),
-    smbMappings: JSON.parse(row.smb_mappings ?? '[]'),
-    lastSeen:    row.last_seen,
+    id:             row.id,
+    name:           row.name,
+    host:           row.host,
+    port:           row.port,
+    status:         row.status,
+    hardware:       JSON.parse(row.hardware ?? '{}'),
+    smbMappings:    JSON.parse(row.smb_mappings ?? '[]'),
+    connectionMode: (row.connection_mode ?? 'smb') as ConnectionMode,
+    lastSeen:       row.last_seen,
   };
 }
 
@@ -101,17 +104,29 @@ export async function workersRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // PUT /api/workers/:id/mappings — update SMB mappings for a worker
+  // PUT /api/workers/:id/connection — update connection mode and SMB mappings for a worker
+  app.put<{ Params: { id: string }; Body: { connectionMode: ConnectionMode; mappings?: SmbMapping[] } }>(
+    '/:id/connection',
+    async (req) => {
+      const db = getDb();
+      const { connectionMode, mappings } = req.body;
+      db.prepare('UPDATE workers SET connection_mode = ?, smb_mappings = ? WHERE id = ?')
+        .run(connectionMode, JSON.stringify(mappings ?? []), req.params.id);
+      const worker = rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(req.params.id) as any);
+      broadcast('worker:updated', worker);
+      return { ok: true };
+    },
+  );
+
+  // PUT /api/workers/:id/mappings — legacy alias kept for backward compat
   app.put<{ Params: { id: string }; Body: { mappings: SmbMapping[] } }>(
     '/:id/mappings',
     async (req) => {
       const db = getDb();
       db.prepare('UPDATE workers SET smb_mappings = ? WHERE id = ?')
         .run(JSON.stringify(req.body.mappings), req.params.id);
-      
       const worker = rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(req.params.id) as any);
       broadcast('worker:updated', worker);
-      
       return { ok: true };
     },
   );
@@ -143,14 +158,18 @@ export async function workersRoutes(app: FastifyInstance) {
     async (req) => {
       const { workerId, progress, fps, eta, phase } = req.body;
       const db = getDb();
-      db.prepare('UPDATE jobs SET progress = ?, fps = ?, eta = ?, status = ?, updated_at = ? WHERE id = ?')
-        .run(progress, fps ?? null, eta ?? null, phase === 'transcoding' ? 'transcoding' : 'dispatched', Math.floor(Date.now() / 1000), req.params.jobId);
+      const activeStatus = ['receiving', 'transcoding', 'swapping'].includes(phase) ? phase
+        : phase === 'sending' ? 'sending'
+        : 'dispatched';
+      db.prepare('UPDATE jobs SET progress = ?, fps = ?, eta = ?, phase = ?, status = ?, updated_at = ? WHERE id = ?')
+        .run(progress, fps ?? null, eta ?? null, phase, activeStatus === 'transcoding' ? 'transcoding' : 'dispatched', Math.floor(Date.now() / 1000), req.params.jobId);
       broadcast('job:progress', { jobId: req.params.jobId, workerId, progress, fps, eta, phase });
+      broadcast('worker:progress', { workerId, progress, fps, eta, phase });
       return { ok: true };
     },
   );
 
-  // POST /api/workers/jobs/:jobId/complete — job done callback from Worker
+  // POST /api/workers/jobs/:jobId/complete — job done callback from Worker (SMB mode)
   app.post<{ Params: { jobId: string }; Body: { workerId: string; callbackToken: string; success: boolean; outputPath?: string; sizeBefore?: number; sizeAfter?: number; error?: string } }>(
     '/jobs/:jobId/complete',
     async (req) => {
@@ -159,9 +178,7 @@ export async function workersRoutes(app: FastifyInstance) {
       const now = Math.floor(Date.now() / 1000);
 
       if (success) {
-        // Retrieve the current file_path exactly as it was when queued
         const job = db.prepare('SELECT file_path FROM jobs WHERE id = ?').get(req.params.jobId) as any;
-        
         let targetDbPath = job?.file_path;
         if (targetDbPath && outputPath) {
             import('path').then(pathMod => {
@@ -175,18 +192,109 @@ export async function workersRoutes(app: FastifyInstance) {
                 }
             });
         }
-
-        db.prepare('UPDATE jobs SET status = ?, progress = 100, size_before = ?, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?')
+        db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?')
           .run('complete', sizeBefore ?? null, sizeAfter ?? null, now, now, req.params.jobId);
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });
       } else {
-        db.prepare('UPDATE jobs SET status = ?, error = ?, updated_at = ? WHERE id = ?')
+        db.prepare('UPDATE jobs SET status = ?, phase = NULL, error = ?, updated_at = ? WHERE id = ?')
           .run('failed', error ?? 'Unknown error', now, req.params.jobId);
         broadcast('job:failed', { jobId: req.params.jobId, error });
       }
 
       db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
       return { ok: true };
+    },
+  );
+
+  // GET /api/workers/jobs/:jobId/download — worker streams source file (wireless mode)
+  app.get<{ Params: { jobId: string }; Headers: { authorization?: string } }>(
+    '/jobs/:jobId/download',
+    async (req, reply) => {
+      const db = getDb();
+      const job = db.prepare('SELECT file_path, worker_id FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+      if (!job) return reply.status(404).send({ error: 'Job not found' });
+
+      const filePath = job.file_path;
+      if (!fs.existsSync(filePath)) return reply.status(404).send({ error: 'File not found on Main' });
+
+      const stat = fs.statSync(filePath);
+      reply.header('Content-Type', 'application/octet-stream');
+      reply.header('Content-Length', stat.size);
+      reply.header('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+      reply.header('X-File-Size', stat.size);
+
+      // Update job phase to 'receiving' (from worker's perspective)
+      db.prepare("UPDATE jobs SET phase = 'receiving', status = 'dispatched', updated_at = ? WHERE id = ?")
+        .run(Math.floor(Date.now() / 1000), req.params.jobId);
+      broadcast('job:progress', { jobId: req.params.jobId, progress: 0, phase: 'receiving' });
+
+      const stream = fs.createReadStream(filePath);
+      return reply.send(stream);
+    },
+  );
+
+  // PUT /api/workers/jobs/:jobId/upload — worker uploads transcoded result (wireless mode)
+  app.put<{ Params: { jobId: string }; Headers: { authorization?: string; 'x-size-before'?: string; 'x-output-filename'?: string } }>(
+    '/jobs/:jobId/upload',
+    async (req, reply) => {
+      const db = getDb();
+      const job = db.prepare('SELECT file_path, worker_id FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+      if (!job) return reply.status(404).send({ error: 'Job not found' });
+
+      const origPath   = job.file_path;
+      const sizeBefore = parseInt(req.headers['x-size-before'] ?? '0') || fs.existsSync(origPath) ? fs.statSync(origPath).size : 0;
+      const outFilename = req.headers['x-output-filename'] as string | undefined;
+      const ext         = outFilename ? path.extname(outFilename) : path.extname(origPath);
+      const base        = path.basename(origPath, path.extname(origPath));
+      const dir         = path.dirname(origPath);
+      const tmpPath     = path.join(dir, `${base}.wireless_tmp${ext}`);
+      const finalPath   = path.join(dir, `${base}${ext}`);
+
+      // Update phase to 'sending' while receiving the upload
+      db.prepare("UPDATE jobs SET phase = 'sending', updated_at = ? WHERE id = ?")
+        .run(Math.floor(Date.now() / 1000), req.params.jobId);
+
+      try {
+        // Stream the upload body to a temp file
+        const writeStream = fs.createWriteStream(tmpPath);
+        await new Promise<void>((resolve, reject) => {
+          req.raw.pipe(writeStream);
+          writeStream.on('finish', resolve);
+          writeStream.on('error', reject);
+          req.raw.on('error', reject);
+        });
+
+        const sizeAfter = fs.statSync(tmpPath).size;
+        const now = Math.floor(Date.now() / 1000);
+
+        // Atomic swap: original → .bak → tmp → final → delete .bak
+        const bakPath = origPath + '.bak';
+        if (fs.existsSync(origPath)) fs.renameSync(origPath, bakPath);
+        fs.renameSync(tmpPath, finalPath);
+        if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
+
+        // Update extension in DB if changed
+        if (finalPath !== origPath) {
+          db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
+            .run(finalPath, path.basename(finalPath), req.params.jobId);
+        }
+
+        db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?')
+          .run('complete', sizeBefore, sizeAfter, now, now, req.params.jobId);
+        db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
+        broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });
+
+        return { ok: true };
+      } catch (err: any) {
+        // Clean up tmp if it exists
+        try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /**/ }
+        const now = Math.floor(Date.now() / 1000);
+        db.prepare('UPDATE jobs SET status = ?, phase = NULL, error = ?, updated_at = ? WHERE id = ?')
+          .run('failed', err.message, now, req.params.jobId);
+        db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
+        broadcast('job:failed', { jobId: req.params.jobId, error: err.message });
+        return reply.status(500).send({ error: err.message });
+      }
     },
   );
 }

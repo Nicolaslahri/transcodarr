@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight, ChevronDown, Filter, Settings2, BookOpen } from 'lucide-react';
+import { FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight, ChevronDown, Filter, Settings2, BookOpen, Info } from 'lucide-react';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 import { useAppState } from '@/hooks/useTranscodarrSocket';
 
@@ -111,6 +111,17 @@ function WatchedFoldersPanel() {
 
   return (
     <div className="space-y-4">
+      {/* Callout: worker config lives in Fleet */}
+      <div className="flex items-start gap-3 p-4 bg-primary/5 border border-primary/15 rounded-xl">
+        <Info className="w-4 h-4 text-primary/70 mt-0.5 shrink-0" />
+        <p className="text-xs text-primary/80 leading-relaxed">
+          <strong className="text-white">Watched folders</strong> define what Main scans and indexes.
+          {' '}<strong className="text-white">Worker connection config</strong> (SMB share or Wireless transfer)
+          is set per-worker in the{' '}
+          <a href="/workers" className="underline underline-offset-2 hover:text-primary transition-colors">Fleet</a> tab.
+        </p>
+      </div>
+
       {paths.length === 0 && !adding && (
         <div className="bg-surface border border-dashed border-border rounded-2xl p-10 text-center">
           <FolderOpen className="w-8 h-8 text-textMuted mx-auto mb-3" />

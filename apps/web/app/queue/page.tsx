@@ -90,7 +90,7 @@ export default function QueuePage() {
     if (scanSummary) setLocalScan(scanSummary);
   }, [scanSummary]);
 
-  const activeJobs    = jobs.filter(j => ['queued', 'dispatched', 'transcoding', 'swapping'].includes(j.status));
+  const activeJobs    = jobs.filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));
   const completedJobs = jobs.filter(j => j.status === 'complete');
   const failedJobs    = jobs.filter(j => j.status === 'failed');
 
@@ -216,12 +216,22 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
   }, [isTranscoding]);
 
   const statusColor: Record<string, string> = {
-    queued: 'text-blue-400 border-blue-400/30 bg-blue-400/10',
-    dispatched: 'text-yellow-400 border-yellow-400/30 bg-yellow-400/10',
+    queued:      'text-blue-400 border-blue-400/30 bg-blue-400/10',
+    dispatched:  'text-yellow-400 border-yellow-400/30 bg-yellow-400/10',
+    receiving:   'text-sky-400 border-sky-400/30 bg-sky-400/10',
     transcoding: 'text-primary border-primary/30 bg-primary/10',
-    swapping: 'text-orange-400 border-orange-400/30 bg-orange-400/10',
+    sending:     'text-violet-400 border-violet-400/30 bg-violet-400/10',
+    swapping:    'text-orange-400 border-orange-400/30 bg-orange-400/10',
   };
   const statusClass = statusColor[job.status] ?? 'text-textMuted border-border bg-background';
+
+  const phaseEmoji: Record<string, string> = {
+    receiving:   '📡',
+    transcoding: '🎬',
+    sending:     '📤',
+    swapping:    '🔄',
+  };
+  const currentPhase = (job as any).phase as string | undefined;
 
   return (
     <div className="bg-surface border border-border rounded-xl p-4 flex items-center gap-4">
@@ -233,7 +243,7 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
         <h3 className="text-white font-medium truncate text-sm">{job.fileName}</h3>
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
           <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded border ${statusClass}`}>
-            {job.status.toUpperCase()}
+            {currentPhase ? `${phaseEmoji[currentPhase] ?? ''} ${currentPhase.toUpperCase()}` : job.status.toUpperCase()}
           </span>
           <ConversionBadge job={job} />
           {job.fps && <span className="text-xs text-textMuted">{job.fps} fps</span>}

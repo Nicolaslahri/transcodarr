@@ -122,6 +122,13 @@ export function SocketProvider({ children }: { children: ReactNode }) {
           case 'worker:updated':
             setWorkers(prev => prev.map(w => w.id === data.id ? { ...w, ...data } : w));
             break;
+          case 'worker:progress':
+            setWorkers(prev => prev.map(w =>
+              w.id === data.workerId
+                ? { ...w, currentProgress: data.progress, currentFps: data.fps, currentPhase: data.phase }
+                : w,
+            ));
+            break;
           case 'worker:offline':
             setWorkers(prev => prev.filter(w => w.id !== data.id));
             break;
@@ -132,16 +139,31 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             setJobs(prev => prev.filter(j => j.id !== data.id));
             break;
           case 'job:cleared':
-            setJobs(prev => prev.filter(j => ['transcoding', 'dispatched', 'swapping'].includes(j.status)));
+            setJobs(prev => prev.filter(j => ['transcoding', 'dispatched', 'receiving', 'sending', 'swapping'].includes(j.status)));
             break;
           case 'job:progress':
           case 'job:complete':
           case 'job:failed':
             setJobs(prev => {
-              const idx = prev.findIndex(j => j.id === data.jobId);
+              const idx = prev.findIndex(j => j.id === (data.jobId ?? data.id));
               if (idx === -1) return prev;
               const next = [...prev];
-              next[idx] = { ...next[idx], ...data };
+              // Map snake_case progress-event fields → Job fields
+              next[idx] = {
+                ...next[idx],
+                ...(data.progress !== undefined  ? { progress: data.progress }  : {}),
+                ...(data.fps      !== undefined  ? { fps: data.fps }             : {}),
+                ...(data.eta      !== undefined  ? { eta: data.eta }             : {}),
+                ...(data.phase    !== undefined  ? { phase: data.phase }         : {}),
+                ...(data.status   !== undefined  ? { status: data.status }       : {}),
+                ...(data.workerName !== undefined ? { workerName: data.workerName } : {}),
+                ...(data.sizeBefore !== undefined ? { sizeBefore: data.sizeBefore } : {}),
+                ...(data.sizeAfter  !== undefined ? { sizeAfter: data.sizeAfter }   : {}),
+                ...(data.error      !== undefined ? { error: data.error }           : {}),
+                // job:complete resets phase
+                ...(event === 'job:complete' ? { phase: undefined, progress: 100, status: 'complete' } : {}),
+                ...(event === 'job:failed'   ? { phase: undefined, status: 'failed' }                  : {}),
+              };
               return next;
             });
             break;

@@ -6,13 +6,14 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import type { JobPayload, HardwareProfile } from '@transcodarr/shared';
 import { transcodeFile } from './transcoder.js';
+import { downloadFile, uploadFile } from './transfer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let hardware: HardwareProfile;
 let workerId: string;
 let mainUrl: string;
-export let currentJob: { jobId: string; fileName: string; progress: number; fps?: number } | null = null;
+export let currentJob: { jobId: string; fileName: string; progress: number; fps?: number; phase?: string } | null = null;
 
 export function initWorkerServer(hw: HardwareProfile, wid: string, mUrl: string) {
   hardware = hw;
@@ -21,7 +22,7 @@ export function initWorkerServer(hw: HardwareProfile, wid: string, mUrl: string)
 }
 
 export async function createWorkerServer(port: number) {
-  const app = Fastify({ logger: { level: 'warn' } });
+  const app = Fastify({ logger: { level: 'warn' }, bodyLimit: 1 }); // bodyLimit 1 byte — we only use req.raw for large uploads
   await app.register(fastifyCors, { origin: true });
 
   // Serve built web UI
@@ -34,7 +35,6 @@ export async function createWorkerServer(port: number) {
     });
     
     app.setNotFoundHandler((req, reply) => {
-      // API or other specific routes fallback to raw index or standard 404
       if (req.url.startsWith('/api/') || req.url.startsWith('/job') || req.url.startsWith('/status') || req.url.startsWith('/health')) {
          reply.code(404).send({ error: 'Not Found', path: req.url });
          return;
@@ -55,17 +55,18 @@ export async function createWorkerServer(port: number) {
   // POST /job — receive a job from Main
   app.post<{ Body: JobPayload }>('/job', async (req, reply) => {
     const payload = req.body;
+    const mode = payload.transferMode ?? (payload.smbPath ? 'smb' : 'wireless');
     console.log(`\n📥 Job received: ${payload.jobId}`);
     console.log(`   File: ${payload.smbPath ?? payload.filePath}`);
     console.log(`   Recipe: ${payload.recipe.name}`);
-    console.log(`   SMB bypass: ${payload.smbPath ? '✅ yes' : '❌ no (will use network path)'}`);
+    console.log(`   Mode: ${mode === 'wireless' ? '📡 Wireless transfer' : '📂 SMB share'}`);
 
     // Respond immediately so Main doesn't time out
     reply.send({ ok: true, jobId: payload.jobId });
 
-    // Run transcoding in background
-    transcodeInBackground(payload).catch(err => {
-      console.error('Transcoder error:', err);
+    // Run pipeline in background
+    transcodeInBackground(payload, mode as 'smb' | 'wireless').catch(err => {
+      console.error('Pipeline error:', err);
     });
   });
 
@@ -177,20 +178,20 @@ export async function createWorkerServer(port: number) {
   return app;
 }
 
-async function transcodeInBackground(payload: JobPayload): Promise<void> {
-  // Use the verified, user-configured Main IP instead of the potentially unroutable Docker IP sent by dispatcher
+// ─── Background pipeline ──────────────────────────────────────────────────────
+
+async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireless'): Promise<void> {
   const callbackBase = mainUrl.replace(/\/$/, '');
   const progressUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/progress`;
   const completeUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/complete`;
-  const fileName = (payload.smbPath ?? payload.filePath).split(/[\\/]/).pop() ?? payload.filePath;
+  const fileName = (payload.smbPath ?? payload.filePath).split(/[\\\/]/).pop() ?? payload.filePath;
 
   console.log(`   Callback base: ${callbackBase}`);
 
-  // Track current job for /status endpoint
-  currentJob = { jobId: payload.jobId, fileName, progress: 0 };
+  currentJob = { jobId: payload.jobId, fileName, progress: 0, phase: mode === 'wireless' ? 'receiving' : 'transcoding' };
 
   const sendProgress = async (progress: number, fps?: number, eta?: number, phase = 'transcoding') => {
-    currentJob = { jobId: payload.jobId, fileName, progress, fps };
+    currentJob = { jobId: payload.jobId, fileName, progress, fps, phase };
     try {
       await fetch(progressUrl, {
         method:  'POST',
@@ -199,6 +200,84 @@ async function transcodeInBackground(payload: JobPayload): Promise<void> {
       });
     } catch { /* best-effort */ }
   };
+
+  // ─── Wireless pipeline ────────────────────────────────────────────────────
+
+  if (mode === 'wireless') {
+    const downloadUrl = payload.downloadUrl!;
+    const uploadUrl   = payload.uploadUrl!;
+    let localInput: string | undefined;
+
+    try {
+      // Phase 1: Receive the file from Main
+      console.log(`📡 [Wireless] Downloading from Main…`);
+      await sendProgress(0, undefined, undefined, 'receiving');
+
+      localInput = await downloadFile(
+        downloadUrl,
+        payload.callbackToken,
+        path.basename(payload.filePath),
+        async ({ progress }) => {
+          await sendProgress(progress, undefined, undefined, 'receiving');
+        },
+      );
+
+      console.log(`✅ File received → ${localInput}`);
+      const sizeBefore = fs.statSync(localInput).size;
+
+      // Phase 2: Transcode the local copy
+      console.log(`🎬 [Wireless] Transcoding…`);
+      await sendProgress(0, undefined, undefined, 'transcoding');
+
+      const result = await transcodeFile(
+        { ...payload, smbPath: localInput, filePath: localInput },
+        hardware,
+        async (update) => {
+          await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding');
+        },
+      );
+
+      // Phase 3: Upload the result back to Main
+      console.log(`📤 [Wireless] Uploading result → Main…`);
+      await sendProgress(0, undefined, undefined, 'sending');
+
+      await uploadFile(
+        uploadUrl,
+        payload.callbackToken,
+        result.outputPath,
+        sizeBefore,
+        async ({ progress }) => {
+          await sendProgress(progress, undefined, undefined, 'sending');
+        },
+      );
+
+      const saved = Math.round((result.sizeBefore - result.sizeAfter) / 1e6);
+      console.log(`✅ [Wireless] Done! Saved ${saved} MB`);
+
+      // Main's /upload endpoint handles job completion & atomic swap
+      // Clean up local temp files
+      try {
+        if (fs.existsSync(localInput)) fs.unlinkSync(localInput);
+        if (fs.existsSync(result.outputPath)) fs.unlinkSync(result.outputPath);
+      } catch { /**/ }
+
+    } catch (err: any) {
+      // Clean up temp file if download succeeded
+      try { if (localInput && fs.existsSync(localInput)) fs.unlinkSync(localInput); } catch { /**/ }
+
+      await fetch(completeUrl, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ workerId, callbackToken: payload.callbackToken, success: false, error: err.message }),
+      }).catch(() => {});
+      console.error(`❌ [Wireless] Pipeline failed: ${err.message}`);
+    } finally {
+      currentJob = null;
+    }
+    return;
+  }
+
+  // ─── SMB pipeline (original) ──────────────────────────────────────────────
 
   try {
     const result = await transcodeFile(payload, hardware, async (update) => {
@@ -219,14 +298,14 @@ async function transcodeInBackground(payload: JobPayload): Promise<void> {
     });
 
     const saved = Math.round((result.sizeBefore - result.sizeAfter) / 1e6);
-    console.log(`✅ Done! Saved ${saved} MB (${result.sizeBefore} → ${result.sizeAfter} bytes)`);
+    console.log(`✅ [SMB] Done! Saved ${saved} MB (${result.sizeBefore} → ${result.sizeAfter} bytes)`);
   } catch (err: any) {
     await fetch(completeUrl, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ workerId, callbackToken: payload.callbackToken, success: false, error: err.message }),
     });
-    console.error(`❌ Transcoding failed: ${err.message}`);
+    console.error(`❌ [SMB] Transcoding failed: ${err.message}`);
   } finally {
     currentJob = null;
   }

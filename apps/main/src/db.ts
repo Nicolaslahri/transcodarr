@@ -18,36 +18,39 @@ export function initDb(): void {
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS workers (
-      id           TEXT PRIMARY KEY,
-      name         TEXT NOT NULL,
-      host         TEXT NOT NULL,
-      port         INTEGER NOT NULL,
-      status       TEXT DEFAULT 'pending',
-      hardware     TEXT DEFAULT '{}',
-      smb_mappings TEXT DEFAULT '[]',
-      last_seen    INTEGER,
-      accepted_at  INTEGER
+      id               TEXT PRIMARY KEY,
+      name             TEXT NOT NULL,
+      host             TEXT NOT NULL,
+      port             INTEGER NOT NULL,
+      status           TEXT DEFAULT 'pending',
+      hardware         TEXT DEFAULT '{}',
+      smb_mappings     TEXT DEFAULT '[]',
+      connection_mode  TEXT DEFAULT 'smb',
+      last_seen        INTEGER,
+      accepted_at      INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS jobs (
-      id           TEXT PRIMARY KEY,
-      file_path    TEXT NOT NULL,
-      file_name    TEXT NOT NULL,
-      file_size    INTEGER,
-      codec_in     TEXT,
-      resolution   TEXT,
-      recipe       TEXT NOT NULL,
-      status       TEXT DEFAULT 'pending',
-      worker_id    TEXT,
-      progress     INTEGER DEFAULT 0,
-      fps          REAL,
-      eta          INTEGER,
-      error        TEXT,
-      size_before  INTEGER,
-      size_after   INTEGER,
-      created_at   INTEGER DEFAULT (unixepoch()),
-      updated_at   INTEGER DEFAULT (unixepoch()),
-      completed_at INTEGER,
+      id              TEXT PRIMARY KEY,
+      file_path       TEXT NOT NULL,
+      file_name       TEXT NOT NULL,
+      file_size       INTEGER,
+      codec_in        TEXT,
+      resolution      TEXT,
+      recipe          TEXT NOT NULL,
+      status          TEXT DEFAULT 'pending',
+      worker_id       TEXT,
+      progress        INTEGER DEFAULT 0,
+      fps             REAL,
+      eta             INTEGER,
+      phase           TEXT,
+      error           TEXT,
+      size_before     INTEGER,
+      size_after      INTEGER,
+      transfer_mode   TEXT DEFAULT 'smb',
+      created_at      INTEGER DEFAULT (unixepoch()),
+      updated_at      INTEGER DEFAULT (unixepoch()),
+      completed_at    INTEGER,
       FOREIGN KEY (worker_id) REFERENCES workers(id)
     );
 
@@ -78,4 +81,8 @@ export function initDb(): void {
   migrate(`ALTER TABLE watched_paths ADD COLUMN extensions TEXT DEFAULT '.mkv,.mp4,.avi,.ts,.mov'`);
   migrate(`ALTER TABLE watched_paths ADD COLUMN priority TEXT DEFAULT 'normal'`);
   migrate(`ALTER TABLE watched_paths ADD COLUMN min_size_mb INTEGER DEFAULT 100`);
+  // v2 migrations
+  migrate(`ALTER TABLE workers ADD COLUMN connection_mode TEXT DEFAULT 'smb'`);
+  migrate(`ALTER TABLE jobs ADD COLUMN phase TEXT`);
+  migrate(`ALTER TABLE jobs ADD COLUMN transfer_mode TEXT DEFAULT 'smb'`);
 }

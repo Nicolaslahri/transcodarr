@@ -1,7 +1,7 @@
 import { getDb } from './db.js';
 import { getJobsByStatus, updateJobStatus, getJob } from './queue.js';
 import { broadcast } from './server.js';
-import type { WorkerInfo, JobPayload, SmbMapping } from '@transcodarr/shared';
+import type { WorkerInfo, JobPayload, SmbMapping, ConnectionMode } from '@transcodarr/shared';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 import { nanoid } from 'nanoid';
 import path from 'path';
@@ -65,27 +65,52 @@ async function dispatchNext(): Promise<void> {
   const recipe = BUILT_IN_RECIPES.find(r => r.id === job.recipe);
   if (!recipe) return;
 
-  const workerMappings: SmbMapping[] = JSON.parse(
-    (getDb().prepare('SELECT smb_mappings FROM workers WHERE id = ?').get(worker.id) as any)?.smb_mappings ?? '[]'
-  );
+  const workerRow = getDb().prepare('SELECT smb_mappings, connection_mode FROM workers WHERE id = ?').get(worker.id) as any;
+  const connectionMode: ConnectionMode = (workerRow?.connection_mode ?? 'smb') as ConnectionMode;
+  const workerMappings: SmbMapping[] = JSON.parse(workerRow?.smb_mappings ?? '[]');
 
-  const smbPath = translatePath(job.filePath, workerMappings);
+  const mainHost  = process.env.MAIN_HOST ?? '0.0.0.0';
+  const mainPort  = Number(process.env.MAIN_PORT ?? 3001);
   const callbackToken = nanoid(32);
 
-  const payload: JobPayload = {
-    jobId:         job.id,
-    filePath:      job.filePath,
-    smbPath,
-    recipe,
-    mainHost:      process.env.MAIN_HOST ?? '0.0.0.0',
-    mainPort:      Number(process.env.MAIN_PORT ?? 3001),
-    callbackToken,
-  };
+  let payload: JobPayload;
+
+  if (connectionMode === 'wireless') {
+    const baseUrl = `http://${mainHost}:${mainPort}`;
+    payload = {
+      jobId:         job.id,
+      filePath:      job.filePath,
+      recipe,
+      mainHost,
+      mainPort,
+      callbackToken,
+      transferMode:  'wireless',
+      downloadUrl:   `${baseUrl}/api/workers/jobs/${job.id}/download`,
+      uploadUrl:     `${baseUrl}/api/workers/jobs/${job.id}/upload`,
+    };
+    console.log(`📡 Wireless mode: worker will download/upload via ${baseUrl}`);
+  } else {
+    const smbPath = translatePath(job.filePath, workerMappings);
+    payload = {
+      jobId:        job.id,
+      filePath:     job.filePath,
+      smbPath,
+      recipe,
+      mainHost,
+      mainPort,
+      callbackToken,
+      transferMode: 'smb',
+    };
+    if (smbPath) {
+      console.log(`📂 SMB mode: ${job.filePath} → ${smbPath}`);
+    } else {
+      console.log(`⚠️  SMB mode but no path mapping for ${job.filePath} — worker will use filePath directly`);
+    }
+  }
 
   try {
     const workerUrl = `http://${worker.host}:${worker.port}/job`;
-    console.log(`📤 Dispatching "${job.fileName}" → ${worker.name} (${workerUrl})`);
-    console.log(`   Callback: ${payload.mainHost}:${payload.mainPort}`);
+    console.log(`📤 Dispatching "${job.fileName}" → ${worker.name} (${workerUrl}) [${connectionMode}]`);
 
     const res = await fetch(workerUrl, {
       method:  'POST',
@@ -110,13 +135,14 @@ async function dispatchNext(): Promise<void> {
 
 function rowToWorker(row: any): WorkerInfo {
   return {
-    id:          row.id,
-    name:        row.name,
-    host:        row.host,
-    port:        row.port,
-    status:      row.status,
-    hardware:    JSON.parse(row.hardware ?? '{}'),
-    smbMappings: JSON.parse(row.smb_mappings ?? '[]'),
-    lastSeen:    row.last_seen,
+    id:             row.id,
+    name:           row.name,
+    host:           row.host,
+    port:           row.port,
+    status:         row.status,
+    hardware:       JSON.parse(row.hardware ?? '{}'),
+    smbMappings:    JSON.parse(row.smb_mappings ?? '[]'),
+    connectionMode: (row.connection_mode ?? 'smb') as ConnectionMode,
+    lastSeen:       row.last_seen,
   };
 }

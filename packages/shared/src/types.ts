@@ -34,6 +34,26 @@ export interface SmbMapping {
   localBasePath: string;
 }
 
+// ─── Worker Connection Mode ───────────────────────────────────────────────────
+
+/**
+ * How the Worker accesses media files:
+ *   'smb'      — Worker has a network share mounted; files are accessed directly
+ *   'wireless' — No shared filesystem; files are transferred over HTTP before/after transcoding
+ */
+export type ConnectionMode = 'smb' | 'wireless';
+
+// ─── Transfer Phase ──────────────────────────────────────────────────────────
+
+/**
+ * Granular phase of the transfer/transcode pipeline.
+ *   'receiving'   — worker is downloading the source file from Main (wireless only)
+ *   'transcoding' — ffmpeg is running
+ *   'sending'     — worker is uploading the result back to Main (wireless only)
+ *   'swapping'    — Main is atomically replacing the original file
+ */
+export type TransferPhase = 'receiving' | 'transcoding' | 'sending' | 'swapping';
+
 // ─── Worker ──────────────────────────────────────────────────────────────────
 
 export interface WorkerInfo {
@@ -44,10 +64,14 @@ export interface WorkerInfo {
   status: WorkerStatus;
   hardware: HardwareProfile;
   smbMappings: SmbMapping[];
+  /** How this worker connects to media files */
+  connectionMode: ConnectionMode;
   lastSeen: number;
   currentJobId?: string;
   currentProgress?: number;
   currentFps?: number;
+  /** Current transfer phase shown in the UI */
+  currentPhase?: TransferPhase;
 }
 
 // ─── Recipe ──────────────────────────────────────────────────────────────────
@@ -81,6 +105,8 @@ export interface Job {
   progress: number;
   fps?: number;
   eta?: number;
+  /** Current transfer phase (receiving / transcoding / sending) */
+  phase?: TransferPhase;
   error?: string;
   sizeBefore?: number;
   sizeAfter?: number;
@@ -95,13 +121,19 @@ export interface JobPayload {
   jobId: string;
   /** Canonical path on Main (Pi) */
   filePath: string;
-  /** Translated path if Worker has an SMB mapping covering filePath */
+  /** Translated path if Worker has an SMB mapping covering filePath (SMB mode only) */
   smbPath?: string;
   recipe: Recipe;
   mainHost: string;
   mainPort: number;
   /** Random token for callback auth */
   callbackToken: string;
+  /** How the worker should access files */
+  transferMode: ConnectionMode;
+  /** URL for worker to stream-download the source file (wireless mode only) */
+  downloadUrl?: string;
+  /** URL for worker to stream-upload the transcoded result (wireless mode only) */
+  uploadUrl?: string;
 }
 
 // ─── File Analysis (from ffprobe) ─────────────────────────────────────────────
@@ -125,7 +157,7 @@ export interface ProgressUpdate {
   progress: number;
   fps?: number;
   eta?: number;
-  phase: 'analyzing' | 'transcoding' | 'swapping';
+  phase: TransferPhase;
 }
 
 // ─── Job Complete (Worker → Main) ────────────────────────────────────────────

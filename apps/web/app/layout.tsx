@@ -8,8 +8,16 @@ import { SocketProvider } from '@/hooks/useTranscodarrSocket';
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
 export const metadata: Metadata = {
-  title: 'Transcodarr',
+  title: {
+    default:  'Transcodarr',
+    template: '%s | Transcodarr',
+  },
   description: 'Zero-config intelligent media transcoding platform',
+  icons: {
+    icon:    '/favicon.svg',
+    shortcut: '/favicon.svg',
+    apple:   '/favicon.svg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

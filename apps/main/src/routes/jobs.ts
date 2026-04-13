@@ -1,8 +1,105 @@
 import type { FastifyInstance } from 'fastify';
-import { getJobs, getJob, enqueueFile, updateJobStatus, getStats, deleteJob, clearQueue } from '../queue.js';
+import { getJobs, getJob, enqueueFile, updateJobStatus, getStats, deleteJob, clearQueue, analyzeFile } from '../queue.js';
 import { broadcast } from '../server.js';
 import { dispatchNext } from '../dispatcher.js';
 import { getDb } from '../db.js';
+import fs from 'fs';
+import path from 'path';
+
+// ─── Smart retry helpers ──────────────────────────────────────────────────────
+
+/** Recursively search a directory tree for a file matching the given basename. */
+function searchDirForFile(dir: string, fileName: string): string | undefined {
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isFile() && entry.name === fileName) return full;
+      if (entry.isDirectory()) {
+        const found = searchDirForFile(full, fileName);
+        if (found) return found;
+      }
+    }
+  } catch { /* skip unreadable dirs */ }
+  return undefined;
+}
+
+/** Search all enabled watched paths for the first file whose name matches. */
+function findFileInWatchedPaths(fileName: string): string | undefined {
+  const dirs = (getDb().prepare('SELECT path FROM watched_paths WHERE enabled = 1').all() as any[])
+    .map((r: any) => r.path as string);
+  for (const dir of dirs) {
+    const found = searchDirForFile(dir, fileName);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Smart-retry a single failed job.
+ *
+ * Checkpoint logic:
+ *  • "file not found" errors  → search watched paths by filename, re-probe,
+ *    update file_path + analysis columns before re-queuing.
+ *  • All other errors         → clean state reset (phase cleared, progress reset).
+ *
+ * The job is left in 'queued' status ready for the next dispatchNext() call.
+ */
+function smartRetryJob(jobId: string): void {
+  const job = getJob(jobId);
+  if (!job) return;
+
+  const db  = getDb();
+  const now = Math.floor(Date.now() / 1000);
+
+  // Detect file-not-found class of errors (ENOENT, ffprobe crash, worker "not found" msg, etc.)
+  const isFileNotFound = /enoent|no such file|file not found|cannot open|ffprobe|not found/i.test(job.error ?? '');
+
+  if (isFileNotFound) {
+    let resolvedPath = job.filePath;
+
+    // If the file is missing from its recorded path, hunt for it by name in watched folders
+    if (!fs.existsSync(job.filePath)) {
+      const located = findFileInWatchedPaths(job.fileName);
+      if (located) {
+        resolvedPath = located;
+        console.log(`🔍 Retry: re-located "${job.fileName}" → ${resolvedPath}`);
+      } else {
+        console.log(`🔍 Retry: "${job.fileName}" still not found in any watched path — will retry at original path`);
+      }
+    }
+
+    // Re-run ffprobe on the (potentially relocated) file to refresh all metadata
+    const analysis = analyzeFile(resolvedPath);
+    if (analysis) {
+      const contentKey = `${Math.round(analysis.duration)}:${analysis.fileSize}`;
+      db.prepare(`
+        UPDATE jobs
+        SET file_path = ?, file_size = ?, codec_in = ?, resolution = ?,
+            has_subtitles = ?, content_key = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        resolvedPath, analysis.fileSize, analysis.codec, analysis.resolution,
+        analysis.hasSubtitles ? 1 : 0, contentKey, now, jobId,
+      );
+      console.log(`🔍 Retry: re-analyzed "${job.fileName}" — ${analysis.codec} @ ${analysis.resolution}`);
+    } else if (resolvedPath !== job.filePath) {
+      // File located but analysis failed — at least update the path
+      db.prepare('UPDATE jobs SET file_path = ?, updated_at = ? WHERE id = ?')
+        .run(resolvedPath, now, jobId);
+    }
+  }
+
+  // Common clean-state reset
+  updateJobStatus(jobId, 'queued', {
+    error:     null,
+    progress:  0,
+    worker_id: null,
+    phase:     null,
+    fps:       null,
+    eta:       null,
+  });
+}
 
 export async function jobsRoutes(app: FastifyInstance) {
   // GET /api/jobs
@@ -91,21 +188,25 @@ export async function jobsRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  // POST /api/jobs/:id/retry — retry a single failed job
+  // POST /api/jobs/:id/retry — smart-retry a single failed job
+  // • File-not-found errors: searches watched paths by filename and re-probes
+  // • All errors:            resets phase/progress/error before re-queuing
   app.post<{ Params: { id: string } }>('/:id/retry', async (req, reply) => {
     const job = getJob(req.params.id);
     if (!job) return reply.status(404).send({ error: 'Not found' });
     if (job.status !== 'failed') return reply.status(400).send({ error: 'Only failed jobs can be retried' });
-    updateJobStatus(req.params.id, 'queued', { error: null, progress: 0, worker_id: null });
+    smartRetryJob(req.params.id);
+    broadcast('job:queued', getJob(req.params.id));
+    broadcast('stats:update', getStats());
     dispatchNext().catch(() => {});
     return getJob(req.params.id);
   });
 
-  // POST /api/jobs/retry-all — retry all failed jobs at once
+  // POST /api/jobs/retry-all — smart-retry all failed jobs at once
   app.post('/retry-all', async () => {
     const failedIds = (getDb().prepare("SELECT id FROM jobs WHERE status = 'failed'").all() as any[]).map(r => r.id);
     for (const id of failedIds) {
-      updateJobStatus(id, 'queued', { error: null, progress: 0, worker_id: null });
+      smartRetryJob(id);
     }
     dispatchNext().catch(() => {});
     broadcast('stats:update', getStats());

@@ -82,7 +82,8 @@ export function RecipePickerModal({ open, onClose, onSelect, selectedId, apiUrl 
         role="dialog"
         aria-modal="true"
         aria-label="Choose a recipe"
-        className="bg-surface border border-border w-full max-w-4xl h-[80vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        className="bg-surface border border-border w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        style={{ maxHeight: 'min(85vh, 720px)', minHeight: '400px' }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">

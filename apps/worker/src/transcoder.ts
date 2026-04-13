@@ -11,6 +11,24 @@ export interface TranscodeResult {
   outputPath: string;
 }
 
+/** Recursively search for a file by name under a base directory. Returns the first match or null. */
+function findFileRecursively(dir: string, filename: string, depth = 0): string | null {
+  if (depth > 12) return null;
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name === filename) return path.join(dir, entry.name);
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const found = findFileRecursively(path.join(dir, entry.name), filename, depth + 1);
+        if (found) return found;
+      }
+    }
+  } catch { /* permission errors, skip */ }
+  return null;
+}
+
 function getFileDuration(inputPath: string): number {
   try {
     const out = execSync(
@@ -49,8 +67,20 @@ export async function transcodeFile(
   hardware: HardwareProfile,
   onProgress: (update: Partial<ProgressUpdate>) => void,
 ): Promise<TranscodeResult> {
-  const inputPath = payload.smbPath ?? payload.filePath;
+  let inputPath = payload.smbPath ?? payload.filePath;
   const ext       = payload.recipe.targetContainer === 'mp4' ? '.mp4' : '.mkv';
+
+  // If the translated SMB path doesn't exist, try to find the file by name under the base path
+  if (!fs.existsSync(inputPath) && payload.smbPath && payload.smbBasePath) {
+    const filename = path.basename(payload.smbPath);
+    console.log(`⚠️  SMB path not found: ${inputPath} — searching under ${payload.smbBasePath} for "${filename}"`);
+    const found = findFileRecursively(payload.smbBasePath, filename);
+    if (found) {
+      console.log(`✅ Found via recursive search: ${found}`);
+      inputPath = found;
+    }
+  }
+
   const dir       = path.dirname(inputPath);
   const base      = path.basename(inputPath, path.extname(inputPath));
   const tmpPath   = path.join(dir, `${base}.transcodarr_tmp${ext}`);

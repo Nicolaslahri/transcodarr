@@ -91,6 +91,20 @@ export default function WorkersPage() {
   const pendingWorkers = workers.filter(w => w.status === 'pending');
   const activeWorkers  = workers.filter(w => w.status !== 'pending');
 
+  const handleAccept = async (id: string, worker: WorkerInfo) => {
+    await acceptWorker(id);
+    // If the worker is in SMB mode and has no path mappings, warn the user
+    const isSmbUnconfigured = (worker.connectionMode ?? 'smb') === 'smb'
+      && (!worker.smbMappings || worker.smbMappings.length === 0);
+    if (isSmbUnconfigured) {
+      addToast({
+        type: 'warning',
+        title: 'SMB path mapping required',
+        message: `${worker.name} is in Network Share (SMB) mode but has no path mappings. Jobs will fail until you configure a path mapping — or switch to Wireless in Connection Settings.`,
+      });
+    }
+  };
+
   return (
     <div className="p-10 max-w-7xl mx-auto space-y-10">
       <header className="flex items-center justify-between">
@@ -122,7 +136,7 @@ export default function WorkersPage() {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {pendingWorkers.map(w => (
-              <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={acceptWorker} onReject={rejectWorker} />
+              <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={handleAccept} onReject={rejectWorker} />
             ))}
           </div>
         </section>
@@ -144,7 +158,7 @@ export default function WorkersPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {activeWorkers.map(w => (
-              <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={acceptWorker} onReject={rejectWorker} />
+              <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={handleAccept} onReject={rejectWorker} />
             ))}
           </div>
         )}
@@ -206,7 +220,7 @@ export default function WorkersPage() {
 function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
   worker: WorkerInfo;
   apiUrl: string;
-  onAccept: (id: string) => void;
+  onAccept: (id: string, worker: WorkerInfo) => void;
   onReject: (id: string) => void;
 }) {
   const isPending  = worker.status === 'pending';
@@ -270,7 +284,7 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
         {/* Pending approval actions */}
         {isPending && (
           <div className="flex gap-2 mt-4">
-            <button onClick={() => onAccept(worker.id)}
+            <button onClick={() => onAccept(worker.id, worker)}
               className="flex-1 py-2.5 bg-yellow-500 hover:bg-yellow-400 text-black text-sm font-bold rounded-xl transition-colors">
               Accept
             </button>

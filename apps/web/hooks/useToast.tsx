@@ -8,7 +8,7 @@ import gsap from 'gsap';
 
 export interface Toast {
   id: string;
-  type: 'worker-discovered' | 'success' | 'error' | 'info';
+  type: 'worker-discovered' | 'success' | 'error' | 'info' | 'warning';
   title: string;
   message: string;
   workerId?: string;
@@ -29,7 +29,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const addToast = useCallback((toast: Omit<Toast, 'id'>) => {
     const id = Math.random().toString(36).slice(2);
-    const duration = toast.duration ?? (toast.type === 'worker-discovered' ? 30000 : 5000);
+    const duration = toast.duration ?? (toast.type === 'worker-discovered' ? 30000 : toast.type === 'warning' ? 12000 : 5000);
     setToasts(prev => [...prev, { ...toast, id }]);
     setTimeout(() => removeToast(id), duration);
   }, []);
@@ -90,19 +90,21 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
 
   const isWorker = toast.type === 'worker-discovered';
 
-  const iconMap = {
+  const iconMap: Record<string, React.ReactNode> = {
     'worker-discovered': <Cpu className="w-4 h-4 text-yellow-400" />,
     'success':           <CheckCircle2 className="w-4 h-4 text-green-400" />,
     'error':             <AlertCircle className="w-4 h-4 text-red-400" />,
     'info':              <Info className="w-4 h-4 text-primary" />,
+    'warning':           <AlertCircle className="w-4 h-4 text-amber-400" />,
   };
 
-  const accentColor = {
+  const accentColor: Record<string, string> = {
     'worker-discovered': 'border-yellow-500/30',
     'success':           'border-green-500/30',
     'error':             'border-red-500/30',
     'info':              'border-primary/30',
-  }[toast.type];
+    'warning':           'border-amber-500/30',
+  };
 
   return (
     <div
@@ -116,7 +118,7 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
       <div className="p-4">
         <div className="flex items-start gap-3">
           <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0
-            ${isWorker ? 'bg-yellow-500/10' : toast.type === 'success' ? 'bg-green-500/10' : toast.type === 'error' ? 'bg-red-500/10' : 'bg-primary/10'}`}>
+            ${isWorker ? 'bg-yellow-500/10' : toast.type === 'success' ? 'bg-green-500/10' : toast.type === 'error' ? 'bg-red-500/10' : toast.type === 'warning' ? 'bg-amber-500/10' : 'bg-primary/10'}`}>
             {iconMap[toast.type]}
           </div>
           <div className="flex-1 min-w-0 pt-0.5">

@@ -242,6 +242,7 @@ export default function QueuePage() {
   const clearHistory = () => fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
   const retryAll     = () => fetch(`${apiUrl}/api/jobs/retry-all`, { method: 'POST' });
   const removeJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}`, { method: 'DELETE' });
+  const cancelJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}/cancel`, { method: 'POST' });
 
   const canClear = completedJobs.length > 0 || failedJobs.length > 0;
 
@@ -318,6 +319,7 @@ export default function QueuePage() {
                     key={job.id}
                     job={job}
                     onRemove={() => removeJob(job.id)}
+                    onCancel={() => cancelJob(job.id)}
                     idleWorkers={idleWorkers}
                     apiUrl={apiUrl}
                     draggable={draggableIds.includes(job.id)}
@@ -442,10 +444,11 @@ function WorkerPicker({ job, workers, apiUrl }: { job: Job; workers: WorkerInfo[
 // ─── Job Row ──────────────────────────────────────────────────────────────────
 
 function JobRow({
-  job, onRemove, idleWorkers, apiUrl, draggable,
+  job, onRemove, onCancel, idleWorkers, apiUrl, draggable,
 }: {
   job: Job;
   onRemove: () => void;
+  onCancel: () => void;
   idleWorkers: WorkerInfo[];
   apiUrl: string;
   draggable: boolean;
@@ -575,13 +578,23 @@ function JobRow({
             </div>
           </div>
 
-          <button
-            onClick={onRemove}
-            disabled={!canRemove}
-            className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
-          >
-            <XCircle className="w-4 h-4" />
-          </button>
+          {isProcessing ? (
+            <button
+              onClick={onCancel}
+              title="Cancel and re-queue"
+              className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-amber-400 transition-colors"
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              onClick={onRemove}
+              disabled={!canRemove}
+              className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     </div>

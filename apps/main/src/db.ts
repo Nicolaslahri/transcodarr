@@ -112,4 +112,13 @@ export function initDb(): void {
   migrate(`ALTER TABLE jobs ADD COLUMN avg_fps REAL`);
   migrate(`ALTER TABLE jobs ADD COLUMN elapsed_seconds INTEGER`);
   migrate(`ALTER TABLE jobs ADD COLUMN dispatched_at INTEGER`);
+  // v5 migrations
+  migrate(`ALTER TABLE watched_paths ADD COLUMN preferred_audio_lang TEXT`);
+  migrate(`ALTER TABLE watched_paths ADD COLUMN preferred_subtitle_lang TEXT`);
+  migrate(`ALTER TABLE watched_paths ADD COLUMN scan_interval_hours INTEGER DEFAULT 0`);
+  migrate(`ALTER TABLE watched_paths ADD COLUMN last_scan_at INTEGER`);
+  // v6 migrations — enhanced fingerprinting
+  migrate(`ALTER TABLE processed_files ADD COLUMN content_key TEXT`);
+  migrate(`CREATE INDEX IF NOT EXISTS idx_processed_content ON processed_files(content_key)`);
+  migrate(`ALTER TABLE jobs ADD COLUMN content_key TEXT`);
 }

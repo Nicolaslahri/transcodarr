@@ -14,6 +14,7 @@ let hardware: HardwareProfile;
 let workerId: string;
 let mainUrl: string;
 export let currentJob: { jobId: string; fileName: string; progress: number; fps?: number; phase?: string } | null = null;
+let cancelController: AbortController | null = null;
 
 export function initWorkerServer(hw: HardwareProfile, wid: string, mUrl: string) {
   hardware = hw;
@@ -131,6 +132,16 @@ export async function createWorkerServer(port: number) {
   // GET /status — current job state for the Worker UI
   app.get('/status', async () => ({ workerId, hardware, currentJob: currentJob ?? null }));
 
+  // DELETE /job — cancel the currently running job
+  app.delete('/job', async (req, reply) => {
+    if (!currentJob) return reply.status(404).send({ error: 'No active job' });
+    if (cancelController) {
+      cancelController.abort();
+      return { ok: true, cancelled: currentJob.jobId };
+    }
+    return reply.status(409).send({ error: 'Job is not cancellable at this stage' });
+  });
+
   // GET /health
   app.get('/health', async () => ({ ok: true, workerId, hardware }));
 
@@ -189,6 +200,7 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
   console.log(`   Callback base: ${callbackBase}`);
 
   currentJob = { jobId: payload.jobId, fileName, progress: 0, phase: mode === 'wireless' ? 'receiving' : 'transcoding' };
+  cancelController = new AbortController();
 
   // Progress throttle — don't spam Main more than once every 500ms
   let lastProgressSent = 0;
@@ -254,6 +266,7 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
         async (update) => {
           await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding');
         },
+        cancelController?.signal,
       );
       localOutput = result.outputPath;
 
@@ -293,6 +306,7 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
       console.error(`❌ [Wireless] Pipeline failed: ${err.message}`);
     } finally {
       currentJob = null;
+      cancelController = null;
     }
     return;
   }
@@ -302,7 +316,7 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
   try {
     const result = await transcodeFile(payload, hardware, async (update) => {
       await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding');
-    });
+    }, cancelController?.signal);
 
     await sendProgress(100, undefined, undefined, 'swapping', true);
 
@@ -331,5 +345,6 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
     console.error(`❌ [SMB] Transcoding failed: ${err.message}`);
   } finally {
     currentJob = null;
+    cancelController = null;
   }
 }

@@ -6,6 +6,11 @@ import { getFfprobePath } from './ffmpeg.js';
 import path from 'path';
 import type { Job, JobStatus, FileAnalysis } from '@transcodarr/shared';
 
+/** Content-based fingerprint: encodes duration (rounded to nearest second) + file size. Survives renames and path changes. */
+function computeContentKey(durationSecs: number, fileSizeBytes: number): string {
+  return `${Math.round(durationSecs)}:${fileSizeBytes}`;
+}
+
 // ─── ffprobe analysis ─────────────────────────────────────────────────────────
 
 export interface ExtendedFileAnalysis extends FileAnalysis {
@@ -45,12 +50,12 @@ export function analyzeFile(filePath: string): ExtendedFileAnalysis | null {
 // ─── Queue CRUD ───────────────────────────────────────────────────────────────
 
 /** Record a file as processed so it won't be re-queued even after "Clear All". */
-export function recordProcessedFile(filePath: string, fileSize: number, recipeId: string): void {
+export function recordProcessedFile(filePath: string, fileSize: number, recipeId: string, contentKey?: string): void {
   try {
     getDb().prepare(`
-      INSERT OR REPLACE INTO processed_files (file_path, recipe, file_size, processed_at)
-      VALUES (?, ?, ?, ?)
-    `).run(filePath, recipeId, fileSize, Math.floor(Date.now() / 1000));
+      INSERT OR REPLACE INTO processed_files (file_path, recipe, file_size, content_key, processed_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(filePath, recipeId, fileSize, contentKey ?? null, Math.floor(Date.now() / 1000));
   } catch { /* non-critical */ }
 }
 
@@ -67,23 +72,34 @@ export function enqueueFile(filePath: string, recipeId: string, force = false, p
   const recipe = allRecipes.find((r: any) => r.id === recipeId);
   if (!recipe) return null;
 
+  // Analyze with ffprobe first so we have the content_key for duplicate detection
+  const analysis = analyzeFile(filePath);
+  if (!analysis) return null;
+
+  const contentKey = computeContentKey(analysis.duration, analysis.fileSize);
+
   // Prevent duplicates natively.
   // If not forced (auto-scanned by Watcher), reject if ANY record of the file exists.
   // If forced (manual click via UI), only reject if it's currently actively processing.
   if (!force) {
-    // Check persistent fingerprint first (survives "Clear All")
-    const processed = db.prepare('SELECT file_path FROM processed_files WHERE file_path = ? AND recipe = ?').get(filePath, recipeId);
-    if (processed) return null;
+    // Check persistent fingerprint by path OR by content_key (survives renames)
+    const processedByPath = db.prepare('SELECT file_path FROM processed_files WHERE file_path = ? AND recipe = ?').get(filePath, recipeId);
+    if (processedByPath) return null;
+    const processedByContent = contentKey
+      ? db.prepare('SELECT file_path FROM processed_files WHERE content_key = ? AND recipe = ?').get(contentKey, recipeId)
+      : null;
+    if (processedByContent) return null;
     const existing = db.prepare('SELECT id FROM jobs WHERE file_path = ?').get(filePath);
     if (existing) return null;
+    // Also check by content_key in jobs table
+    if (contentKey) {
+      const existingByContent = db.prepare("SELECT id FROM jobs WHERE content_key = ? AND status NOT IN ('failed')").get(contentKey);
+      if (existingByContent) return null;
+    }
   } else {
     const existing = db.prepare('SELECT id FROM jobs WHERE file_path = ? AND status NOT IN (?,?,?)').get(filePath, 'complete', 'skipped', 'failed');
     if (existing) return null;
   }
-
-  // Analyze with ffprobe
-  const analysis = analyzeFile(filePath);
-  if (!analysis) return null;
 
   // Smart-filter: skip if already target codec
   if (shouldSkipFile(analysis.codec, recipe)) {
@@ -99,9 +115,9 @@ export function enqueueFile(filePath: string, recipeId: string, force = false, p
   const sortOrder = (maxOrder ?? 0) + 1;
 
   db.prepare(`
-    INSERT INTO jobs (id, file_path, file_name, file_size, codec_in, resolution, recipe, status, has_subtitles, sort_order, pinned_worker_id, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(id, filePath, path.basename(filePath), analysis.fileSize, analysis.codec, analysis.resolution, recipeId, 'queued', analysis.hasSubtitles ? 1 : 0, sortOrder, pinnedWorkerId ?? null, now, now);
+    INSERT INTO jobs (id, file_path, file_name, file_size, codec_in, resolution, recipe, status, has_subtitles, sort_order, pinned_worker_id, content_key, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(id, filePath, path.basename(filePath), analysis.fileSize, analysis.codec, analysis.resolution, recipeId, 'queued', analysis.hasSubtitles ? 1 : 0, sortOrder, pinnedWorkerId ?? null, contentKey, now, now);
 
   return getJob(id);
 }

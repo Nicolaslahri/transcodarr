@@ -85,6 +85,12 @@ export interface Recipe {
   targetContainer: 'mkv' | 'mp4';
   icon: string;
   color: string;
+  /** Estimated size reduction percentage shown in the recipe picker */
+  estimatedReduction?: number;
+  /** Raw ffmpeg args — if present, used directly instead of the built-in switch. Enables community recipes. */
+  ffmpegArgs?: string[];
+  /** URL the recipe was imported from (community recipes only) */
+  sourceUrl?: string;
 }
 
 // ─── Job ─────────────────────────────────────────────────────────────────────

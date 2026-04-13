@@ -3,6 +3,7 @@ import type { GpuVendor, HardwareProfile, Recipe } from './types.js';
 // ─── Built-in Recipes ─────────────────────────────────────────────────────────
 
 export const BUILT_IN_RECIPES: Recipe[] = [
+  // ── Core compression ───────────────────────────────────────────────────────
   {
     id: 'space-saver',
     name: 'Space Saver',
@@ -11,6 +12,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
     targetContainer: 'mkv',
     icon: '🗜️',
     color: '#00d9ff',
+    estimatedReduction: 40,
   },
   {
     id: 'universal-player',
@@ -20,16 +22,39 @@ export const BUILT_IN_RECIPES: Recipe[] = [
     targetContainer: 'mp4',
     icon: '▶️',
     color: '#00ff88',
+    estimatedReduction: 20,
   },
   {
-    id: 'anime-cleaner',
-    name: 'Anime Cleaner',
-    description: 'Strip all audio except Japanese and English tracks. Remove bloat from standard anime releases.',
-    targetCodec: 'hevc',
+    id: 'av1-balanced',
+    name: 'AV1 Balanced',
+    description: 'AV1 encode at quality 32. 40–60% smaller than H.264 at similar quality. Slower to encode.',
+    targetCodec: 'av1',
     targetContainer: 'mkv',
-    icon: '🌸',
-    color: '#ff6eb4',
+    icon: '⚡',
+    color: '#a78bfa',
+    estimatedReduction: 55,
   },
+  {
+    id: 'remux-to-mkv',
+    name: 'Remux to MKV',
+    description: 'Copy all streams into an MKV container with no re-encoding. Fastest possible — zero quality loss.',
+    targetCodec: 'copy',
+    targetContainer: 'mkv',
+    icon: '📦',
+    color: '#6b7280',
+    estimatedReduction: 0,
+  },
+  {
+    id: 'web-optimized',
+    name: 'Web Optimised',
+    description: 'H.264 + AAC, capped at 1080p, with faststart flag for instant browser playback.',
+    targetCodec: 'h264',
+    targetContainer: 'mp4',
+    icon: '🌐',
+    color: '#38bdf8',
+    estimatedReduction: 25,
+  },
+  // ── Downscaling ───────────────────────────────────────────────────────────
   {
     id: 'downscale-1080p',
     name: '4K → 1080p',
@@ -38,6 +63,28 @@ export const BUILT_IN_RECIPES: Recipe[] = [
     targetContainer: 'mkv',
     icon: '📐',
     color: '#ffb300',
+    estimatedReduction: 60,
+  },
+  {
+    id: 'downscale-720p',
+    name: '4K/1080p → 720p',
+    description: 'Downscale to 720p H.265. Good for mobile and tablet viewing with minimal storage.',
+    targetCodec: 'hevc',
+    targetContainer: 'mp4',
+    icon: '📱',
+    color: '#fb923c',
+    estimatedReduction: 70,
+  },
+  // ── Specialty ─────────────────────────────────────────────────────────────
+  {
+    id: 'anime-cleaner',
+    name: 'Anime Cleaner',
+    description: 'Strip all audio except Japanese and English tracks. Remove bloat from standard anime releases.',
+    targetCodec: 'hevc',
+    targetContainer: 'mkv',
+    icon: '🌸',
+    color: '#ff6eb4',
+    estimatedReduction: 45,
   },
   {
     id: 'audio-normalizer',
@@ -47,6 +94,17 @@ export const BUILT_IN_RECIPES: Recipe[] = [
     targetContainer: 'mkv',
     icon: '🔊',
     color: '#a78bfa',
+    estimatedReduction: 35,
+  },
+  {
+    id: 'hdr-to-sdr',
+    name: 'HDR → SDR Tonemap',
+    description: 'Tonemap HDR10 content to SDR with zscale. Fixes washed-out HDR on non-HDR screens.',
+    targetCodec: 'hevc',
+    targetContainer: 'mkv',
+    icon: '🌅',
+    color: '#f59e0b',
+    estimatedReduction: 30,
   },
 ];
 
@@ -77,6 +135,11 @@ function getVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | 'av1'): s
 // ─── FFmpeg Args Builder ──────────────────────────────────────────────────────
 
 export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
+  // Community/custom recipes supply their own args
+  if (recipe.ffmpegArgs && recipe.ffmpegArgs.length > 0) {
+    return recipe.ffmpegArgs;
+  }
+
   const args: string[] = [];
 
   switch (recipe.id) {
@@ -93,6 +156,28 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       args.push('-c:v', enc);
       if (enc === 'libx264') args.push('-crf', '23', '-preset', 'fast');
       else args.push('-qp', '23', '-preset', 'p2');
+      args.push('-c:a', 'aac', '-b:a', '192k');
+      break;
+    }
+    case 'av1-balanced': {
+      const enc = getVideoEncoder(hw, 'av1');
+      args.push('-c:v', enc);
+      if (enc === 'libsvtav1') args.push('-crf', '32', '-preset', '6');
+      else if (enc === 'av1_nvenc') args.push('-qp', '32', '-preset', 'p4');
+      else args.push('-qp', '32');
+      args.push('-c:a', 'copy');
+      break;
+    }
+    case 'remux-to-mkv': {
+      args.push('-c:v', 'copy', '-c:a', 'copy', '-c:s', 'copy');
+      break;
+    }
+    case 'web-optimized': {
+      const enc = getVideoEncoder(hw, 'h264');
+      args.push('-vf', 'scale=\'min(1920,iw)\':\'min(1080,ih)\':force_original_aspect_ratio=decrease');
+      args.push('-c:v', enc);
+      if (enc === 'libx264') args.push('-crf', '23', '-preset', 'fast', '-movflags', '+faststart');
+      else args.push('-qp', '23', '-preset', 'p2', '-movflags', '+faststart');
       args.push('-c:a', 'aac', '-b:a', '192k');
       break;
     }
@@ -118,12 +203,31 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       args.push('-c:a', 'copy');
       break;
     }
+    case 'downscale-720p': {
+      const enc = getVideoEncoder(hw, 'h265');
+      args.push('-vf', 'scale=1280:720:flags=lanczos', '-c:v', enc);
+      if (enc === 'libx265') args.push('-crf', '24', '-preset', 'fast');
+      else args.push('-qp', '24', '-preset', 'p3');
+      args.push('-c:a', 'aac', '-b:a', '128k');
+      break;
+    }
     case 'audio-normalizer': {
       const enc = getVideoEncoder(hw, 'h265');
       args.push('-c:v', enc);
       if (enc === 'libx265') args.push('-crf', '20', '-preset', 'slow');
       else args.push('-qp', '20', '-preset', 'p4');
       args.push('-af', 'loudnorm=I=-23:LRA=7:TP=-2', '-c:a', 'aac', '-b:a', '256k');
+      break;
+    }
+    case 'hdr-to-sdr': {
+      const enc = getVideoEncoder(hw, 'h265');
+      args.push(
+        '-vf', 'zscale=transfer=linear,tonemap=hable,zscale=transfer=bt709,format=yuv420p',
+        '-c:v', enc,
+      );
+      if (enc === 'libx265') args.push('-crf', '22', '-preset', 'slow');
+      else args.push('-qp', '22', '-preset', 'p4');
+      args.push('-c:a', 'copy');
       break;
     }
     default:
@@ -150,25 +254,30 @@ export function getHwDecodeArgs(hw: HardwareProfile): string[] {
 /**
  * Determines if a file should be skipped for a given recipe.
  *
- * For codec-only recipes (space-saver, universal-player, downscale), 
+ * For codec-only recipes (space-saver, universal-player, downscale),
  * skip if the file is already in the target codec.
  *
- * For intent-driven recipes (anime-cleaner, audio-normalizer), 
- * never skip — the recipe's value is in audio/subtitle processing, 
+ * For intent-driven recipes (anime-cleaner, audio-normalizer),
+ * never skip — the recipe's value is in audio/subtitle processing,
  * not just codec conversion.
  */
 export function shouldSkipFile(currentCodec: string, recipe: Recipe): boolean {
   // These recipes do more than just transcode video — always run them
-  const noSkipRecipes = ['anime-cleaner', 'audio-normalizer'];
+  const noSkipRecipes = ['anime-cleaner', 'audio-normalizer', 'hdr-to-sdr', 'remux-to-mkv'];
   if (noSkipRecipes.includes(recipe.id)) return false;
 
   const normalized = currentCodec.toLowerCase();
   const target      = recipe.targetCodec.toLowerCase();
 
+  // Custom recipes with ffmpegArgs — never auto-skip
+  if (target === 'copy') return false;
+
   const hevcAliases = ['hevc', 'h265', 'h.265'];
   const h264Aliases = ['h264', 'h.264', 'avc'];
+  const av1Aliases  = ['av1'];
 
   if (target === 'hevc') return hevcAliases.some(a => normalized.includes(a));
   if (target === 'h264') return h264Aliases.some(a => normalized.includes(a));
+  if (target === 'av1')  return av1Aliases.some(a => normalized.includes(a));
   return normalized.includes(target);
 }

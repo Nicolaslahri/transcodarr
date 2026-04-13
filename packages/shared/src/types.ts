@@ -232,7 +232,8 @@ export type WsEventType =
   | 'job:cleared'
   | 'scan:summary'
   | 'scan:progress'
-  | 'stats:update';
+  | 'stats:update'
+  | 'system:warning';
 
 export interface WsEvent<T = unknown> {
   event: WsEventType;

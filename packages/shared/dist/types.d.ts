@@ -163,7 +163,7 @@ export interface WatchedPath {
     enabled: boolean;
     createdAt: number;
 }
-export type WsEventType = 'worker:discovered' | 'worker:accepted' | 'worker:updated' | 'worker:offline' | 'worker:progress' | 'job:queued' | 'job:progress' | 'job:complete' | 'job:failed' | 'job:removed' | 'job:cleared' | 'scan:summary' | 'scan:progress' | 'stats:update';
+export type WsEventType = 'worker:discovered' | 'worker:accepted' | 'worker:updated' | 'worker:offline' | 'worker:progress' | 'job:queued' | 'job:progress' | 'job:complete' | 'job:failed' | 'job:removed' | 'job:cleared' | 'scan:summary' | 'scan:progress' | 'stats:update' | 'system:warning';
 export interface WsEvent<T = unknown> {
     event: WsEventType;
     data: T;

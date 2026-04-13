@@ -61,9 +61,30 @@ export async function dispatchNext(): Promise<void> {
     return;
   }
 
-  const job = queuedJobs[0];
-  const worker = idleWorkers[0];
-  const recipe = BUILT_IN_RECIPES.find(r => r.id === job.recipe);
+  // Find first dispatchable job+worker pair (respecting pinned_worker_id)
+  let job = queuedJobs[0];
+  let worker = idleWorkers[0];
+  // If first job has a pin, find the matching idle worker
+  const pinned = queuedJobs.find(j => j.pinnedWorkerId && idleWorkers.some(w => w.id === j.pinnedWorkerId));
+  const unpinned = queuedJobs.find(j => !j.pinnedWorkerId);
+  if (pinned) {
+    job = pinned;
+    worker = idleWorkers.find(w => w.id === pinned.pinnedWorkerId)!;
+  } else if (unpinned) {
+    job = unpinned;
+    worker = idleWorkers[0];
+  } else {
+    // All queued jobs are pinned to workers that aren't idle yet
+    console.log(`⏳ ${queuedJobs.length} job(s) queued — pinned workers not idle yet`);
+    return;
+  }
+
+  const recipe = [...BUILT_IN_RECIPES, ...(() => {
+    try {
+      const row = getDb().prepare("SELECT value FROM settings WHERE key = 'custom_recipes'").get() as any;
+      return row ? JSON.parse(row.value) : [];
+    } catch { return []; }
+  })()].find((r: any) => r.id === job.recipe);
   if (!recipe) return;
 
   const workerRow = getDb().prepare('SELECT smb_mappings, connection_mode FROM workers WHERE id = ?').get(worker.id) as any;
@@ -126,7 +147,7 @@ export async function dispatchNext(): Promise<void> {
       throw new Error(`Worker returned ${res.status}: ${text}`);
     }
 
-    updateJobStatus(job.id, 'dispatched', { worker_id: worker.id, callback_token: callbackToken });
+    updateJobStatus(job.id, 'dispatched', { worker_id: worker.id, callback_token: callbackToken, dispatched_at: Math.floor(Date.now() / 1000) });
     getDb().prepare('UPDATE workers SET status = ? WHERE id = ?').run('active', worker.id);
     broadcast('job:progress', { ...getJob(job.id), workerName: worker.name });
     console.log(`✅ Dispatched successfully → ${worker.name}`);

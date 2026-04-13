@@ -1,11 +1,27 @@
 'use client';
 
-import { useAppState, type ScanSummary } from '@/hooks/useTranscodarrSocket';
-import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer } from 'lucide-react';
-import type { Job } from '@transcodarr/shared';
-import { useEffect, useRef, useState } from 'react';
+import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
+import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User } from 'lucide-react';
+import type { Job, WorkerInfo } from '@transcodarr/shared';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import gsap from 'gsap';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 // ─── Codec helper ─────────────────────────────────────────────────────────────
 
@@ -19,10 +35,14 @@ function codecLabel(raw?: string): string {
   return CODEC_LABELS[raw.toLowerCase()] ?? raw.toUpperCase();
 }
 
-function targetCodecLabel(recipe: string): string {
-  const r = BUILT_IN_RECIPES.find(x => x.id === recipe);
+function targetCodecLabel(recipeId: string): string {
+  const r = BUILT_IN_RECIPES.find(x => x.id === recipeId);
   if (!r) return '?';
   return CODEC_LABELS[r.targetCodec] ?? r.targetCodec.toUpperCase();
+}
+
+function targetContainer(recipeId: string): string {
+  return BUILT_IN_RECIPES.find(x => x.id === recipeId)?.targetContainer ?? 'mkv';
 }
 
 function formatEta(etaMs: number): string {
@@ -43,7 +63,7 @@ const PHASE_CONFIG: Record<string, {
   border: string;
   barBg: string;
   chip: string;
-  sortPriority: number; // lower = shown first
+  sortPriority: number;
 }> = {
   transcoding: { label: 'Transcoding',       Icon: Zap,             accent: 'text-primary',     border: 'border-l-primary/70',        barBg: 'bg-primary',    chip: 'bg-primary/10 border-primary/30 text-primary',          sortPriority: 0 },
   receiving:   { label: 'Downloading File',  Icon: ArrowDownToLine, accent: 'text-sky-400',     border: 'border-l-sky-500/60',        barBg: 'bg-sky-400',    chip: 'bg-sky-500/10 border-sky-500/30 text-sky-400',          sortPriority: 1 },
@@ -53,7 +73,40 @@ const PHASE_CONFIG: Record<string, {
   queued:      { label: 'Queued',            Icon: Clock,           accent: 'text-blue-400',    border: 'border-l-blue-500/40',       barBg: 'bg-blue-500',   chip: 'bg-blue-500/10 border-blue-500/30 text-blue-400',       sortPriority: 5 },
 };
 
-// ─── Scan Summary Banner ───────────────────────────────────────────────────────
+// Derive the effective display phase from a job (status alone on initial load, phase when available)
+function effectivePhase(j: Job): string {
+  if (j.phase) return j.phase;
+  if (j.status === 'transcoding') return 'transcoding';
+  if (j.status === 'swapping')    return 'swapping';
+  if (j.status === 'dispatched')  return 'dispatched';
+  return j.status;
+}
+
+// ─── Scan Progress Banner (live) ─────────────────────────────────────────────
+
+function ScanProgressBanner({ progress }: { progress: ScanProgress }) {
+  return (
+    <div className="flex items-center gap-4 p-4 rounded-xl border bg-surface border-border">
+      <div className="p-2 rounded-lg shrink-0 bg-primary/10">
+        <Film className="w-5 h-5 text-primary animate-pulse" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-white font-semibold text-sm">
+          Scanning <span className="font-mono text-xs text-textMuted">{progress.dir.split(/[\\/]/).pop()}</span>
+        </p>
+        <p className="text-textMuted text-xs mt-0.5">
+          {progress.checked} files checked — <span className="text-primary">{progress.queued} queued</span>, {progress.skipped} skipped
+        </p>
+      </div>
+      <div className="text-textMuted text-xs flex items-center gap-1.5">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary animate-ping" />
+        Scanning…
+      </div>
+    </div>
+  );
+}
+
+// ─── Scan Summary Banner ──────────────────────────────────────────────────────
 
 function ScanBanner({ summary, onDismiss }: { summary: ScanSummary; onDismiss: () => void }) {
   const isError = !!summary.error;
@@ -107,6 +160,12 @@ function LiveStrip({ jobs }: { jobs: Job[] }) {
   const savedBytes = completed.reduce((acc, j) => acc + ((j.sizeBefore ?? 0) - (j.sizeAfter ?? 0)), 0);
   const savedGb = (savedBytes / 1e9).toFixed(2);
 
+  // Avg fps from jobs that have it
+  const fpsJobs = jobs.filter(j => j.fps && j.fps > 0);
+  const avgFps = fpsJobs.length > 0
+    ? Math.round(fpsJobs.reduce((a, j) => a + (j.fps ?? 0), 0) / fpsJobs.length)
+    : null;
+
   if (jobs.length === 0) return null;
 
   return (
@@ -123,6 +182,12 @@ function LiveStrip({ jobs }: { jobs: Job[] }) {
         <span className="w-2 h-2 rounded-full bg-green-500/60" />
         {completed.length} done
       </span>
+      {avgFps != null && (
+        <span className="flex items-center gap-1 text-textMuted">
+          <Zap className="w-3 h-3 text-primary" />
+          {avgFps} fps avg
+        </span>
+      )}
       {parseFloat(savedGb) > 0 && (
         <span className="ml-auto text-green-400 font-semibold">{savedGb} GB saved</span>
       )}
@@ -133,18 +198,44 @@ function LiveStrip({ jobs }: { jobs: Job[] }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function QueuePage() {
-  const { jobs, scanSummary, apiUrl } = useAppState();
+  const { jobs, workers, scanSummary, scanProgress, apiUrl } = useAppState();
   const [localScan, setLocalScan] = useState<ScanSummary | null>(null);
+  const [orderedActiveIds, setOrderedActiveIds] = useState<string[]>([]);
 
   useEffect(() => { if (scanSummary) setLocalScan(scanSummary); }, [scanSummary]);
 
-  const activeJobs = jobs
-    .filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status))
+  // Phase-aware sort for active jobs
+  const rawActiveJobs = jobs
+    .filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));
+
+  // Maintain drag order: use orderedActiveIds if they match current set, otherwise reset
+  const activeJobIds = rawActiveJobs.map(j => j.id).sort().join(',');
+  const orderedIds   = orderedActiveIds.filter(id => rawActiveJobs.some(j => j.id === id));
+  const missingIds   = rawActiveJobs.filter(j => !orderedIds.includes(j.id)).map(j => j.id);
+  const mergedIds    = [...orderedIds, ...missingIds];
+
+  const activeJobs = mergedIds
+    .map(id => rawActiveJobs.find(j => j.id === id)!)
+    .filter(Boolean)
     .sort((a, b) => {
-      const pa = PHASE_CONFIG[a.phase ?? a.status]?.sortPriority ?? 99;
-      const pb = PHASE_CONFIG[b.phase ?? b.status]?.sortPriority ?? 99;
-      return pa - pb;
+      const pa = PHASE_CONFIG[effectivePhase(a)]?.sortPriority ?? 99;
+      const pb = PHASE_CONFIG[effectivePhase(b)]?.sortPriority ?? 99;
+      if (pa !== pb) return pa - pb; // active (transcoding etc) always top
+      // Same phase: preserve drag order
+      return mergedIds.indexOf(a.id) - mergedIds.indexOf(b.id);
     });
+
+  // Keep orderedActiveIds in sync when jobs change (avoids stale IDs)
+  useEffect(() => {
+    setOrderedActiveIds(prev => {
+      const current = rawActiveJobs.map(j => j.id);
+      const kept = prev.filter(id => current.includes(id));
+      const added = current.filter(id => !kept.includes(id));
+      return [...kept, ...added];
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeJobIds]);
+
   const completedJobs = jobs.filter(j => j.status === 'complete');
   const failedJobs    = jobs.filter(j => j.status === 'failed');
 
@@ -153,6 +244,38 @@ export default function QueuePage() {
   const removeJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}`, { method: 'DELETE' });
 
   const canClear = completedJobs.length > 0 || failedJobs.length > 0;
+
+  // dnd-kit sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    setOrderedActiveIds(prev => {
+      const oldIndex = prev.indexOf(active.id as string);
+      const newIndex = prev.indexOf(over.id as string);
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      const next = [...prev];
+      next.splice(oldIndex, 1);
+      next.splice(newIndex, 0, active.id as string);
+      // Persist new order
+      fetch(`${apiUrl}/api/jobs/reorder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedIds: next }),
+      }).catch(() => {});
+      return next;
+    });
+  }, [apiUrl]);
+
+  // Queued jobs that can be dragged = queued or dispatched only
+  const draggableIds = activeJobs.filter(j => ['queued', 'dispatched'].includes(j.status)).map(j => j.id);
+
+  const idleWorkers = workers.filter(w => ['idle', 'active'].includes(w.status));
 
   return (
     <div className="p-10 max-w-7xl mx-auto space-y-6">
@@ -174,22 +297,36 @@ export default function QueuePage() {
 
       <LiveStrip jobs={jobs} />
 
-      {localScan && <ScanBanner summary={localScan} onDismiss={() => setLocalScan(null)} />}
+      {scanProgress && <ScanProgressBanner progress={scanProgress} />}
+      {localScan && !scanProgress && <ScanBanner summary={localScan} onDismiss={() => setLocalScan(null)} />}
 
       {/* Active & Queued */}
       <section>
         <h2 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-3">
           Active Processing ({activeJobs.length})
         </h2>
-        <div className="space-y-2">
-          {activeJobs.length === 0 ? (
-            <div className="p-6 bg-surface border border-border border-dashed rounded-xl text-center text-textMuted text-sm">
-              No active jobs. Add a folder in Settings to get started.
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={draggableIds} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2">
+              {activeJobs.length === 0 ? (
+                <div className="p-6 bg-surface border border-border border-dashed rounded-xl text-center text-textMuted text-sm">
+                  No active jobs. Add a folder in Settings to get started.
+                </div>
+              ) : (
+                activeJobs.map(job => (
+                  <JobRow
+                    key={job.id}
+                    job={job}
+                    onRemove={() => removeJob(job.id)}
+                    idleWorkers={idleWorkers}
+                    apiUrl={apiUrl}
+                    draggable={draggableIds.includes(job.id)}
+                  />
+                ))
+              )}
             </div>
-          ) : (
-            activeJobs.map(job => <JobRow key={job.id} job={job} onRemove={() => removeJob(job.id)} />)
-          )}
-        </div>
+          </SortableContext>
+        </DndContext>
       </section>
 
       {failedJobs.length > 0 && (
@@ -207,7 +344,14 @@ export default function QueuePage() {
             </button>
           </div>
           <div className="space-y-2">
-            {failedJobs.map(job => <FailedJobRow key={job.id} job={job} onRemove={() => removeJob(job.id)} onRetry={() => fetch(`${apiUrl}/api/jobs/${job.id}/retry`, { method: 'POST' })} />)}
+            {failedJobs.map(job => (
+              <FailedJobRow
+                key={job.id}
+                job={job}
+                onRemove={() => removeJob(job.id)}
+                onRetry={() => fetch(`${apiUrl}/api/jobs/${job.id}/retry`, { method: 'POST' })}
+              />
+            ))}
           </div>
         </section>
       )}
@@ -218,7 +362,9 @@ export default function QueuePage() {
             Completed ({completedJobs.length})
           </h2>
           <div className="space-y-1.5">
-            {completedJobs.slice(0, 10).map(job => <CompletedJobRow key={job.id} job={job} onRemove={() => removeJob(job.id)} />)}
+            {completedJobs.slice(0, 10).map(job => (
+              <CompletedJobRow key={job.id} job={job} onRemove={() => removeJob(job.id)} />
+            ))}
           </div>
         </section>
       )}
@@ -226,13 +372,13 @@ export default function QueuePage() {
   );
 }
 
-// ─── Job Row ──────────────────────────────────────────────────────────────────
+// ─── Conversion Badge ─────────────────────────────────────────────────────────
 
 function ConversionBadge({ job }: { job: Job }) {
   const from = codecLabel(job.codecIn);
   const to   = targetCodecLabel(job.recipe);
   const same = from.toLowerCase() === to.toLowerCase();
-  if (same) return null; // suppress confusing same-codec badge on active jobs
+  if (same) return null;
   return (
     <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
       <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
@@ -242,13 +388,81 @@ function ConversionBadge({ job }: { job: Job }) {
   );
 }
 
-function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
-  const phaseKey = job.phase ?? job.status;
+// ─── Subtitle Warning Badge ───────────────────────────────────────────────────
+
+function SubtitleWarning({ job }: { job: Job }) {
+  if (!job.hasSubtitles) return null;
+  const container = targetContainer(job.recipe);
+  if (container !== 'mp4') return null; // MKV preserves subs fine
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-400"
+      title="This file has subtitle tracks. MP4 has limited subtitle support — some tracks may be dropped. Use an MKV recipe to preserve all subtitles."
+    >
+      <AlertTriangle className="w-2.5 h-2.5" />
+      Subtitles may be dropped
+    </span>
+  );
+}
+
+// ─── Worker Picker ────────────────────────────────────────────────────────────
+
+function WorkerPicker({ job, workers, apiUrl }: { job: Job; workers: WorkerInfo[]; apiUrl: string }) {
+  const [value, setValue] = useState(job.pinnedWorkerId ?? '');
+
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const pinnedWorkerId = e.target.value || null;
+    setValue(e.target.value);
+    fetch(`${apiUrl}/api/jobs/${job.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinnedWorkerId }),
+    }).catch(() => {});
+  };
+
+  if (workers.length === 0) return null;
+
+  return (
+    <div className="flex items-center gap-1.5 text-[10px]">
+      <User className="w-3 h-3 text-textMuted" />
+      <select
+        value={value}
+        onChange={handleChange}
+        className="bg-background border border-border text-textMuted rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:border-primary/40 focus:outline-none focus:border-primary/60 transition-colors"
+      >
+        <option value="">Any Worker</option>
+        {workers.map(w => (
+          <option key={w.id} value={w.id}>{w.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// ─── Job Row ──────────────────────────────────────────────────────────────────
+
+function JobRow({
+  job, onRemove, idleWorkers, apiUrl, draggable,
+}: {
+  job: Job;
+  onRemove: () => void;
+  idleWorkers: WorkerInfo[];
+  apiUrl: string;
+  draggable: boolean;
+}) {
+  const phaseKey = effectivePhase(job);
   const cfg = PHASE_CONFIG[phaseKey] ?? PHASE_CONFIG['dispatched'];
   const { Icon } = cfg;
 
   const isProcessing = ['receiving', 'transcoding', 'sending', 'swapping'].includes(phaseKey);
   const waveRef = useRef<HTMLDivElement>(null);
+
+  // dnd-kit sortable hook — only active for draggable rows
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: job.id,
+    disabled: !draggable,
+  });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
 
   useEffect(() => {
     if (!isProcessing || !waveRef.current) return;
@@ -267,19 +481,21 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
   }, [job.eta]);
 
   const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'swapping'].includes(job.status);
+  const showWorkerPicker = ['queued', 'dispatched'].includes(job.status) && idleWorkers.length > 0;
 
   return (
-    <div className={`bg-surface border border-border border-l-2 ${cfg.border} rounded-xl overflow-hidden transition-all duration-300 ${isProcessing ? 'shadow-lg' : ''}`}
-      style={isProcessing ? { boxShadow: undefined } : undefined}
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`bg-surface border border-border border-l-2 ${cfg.border} rounded-xl overflow-hidden transition-all duration-300 ${isProcessing ? 'shadow-lg' : ''} ${isDragging ? 'z-50' : ''}`}
     >
-      {/* Progress bar — full width, top of card when active */}
+      {/* Progress bar — top of card when active */}
       {isProcessing && job.progress > 0 && (
         <div className="h-0.5 w-full bg-background relative overflow-hidden">
           <div
             className={`absolute inset-y-0 left-0 ${cfg.barBg} transition-all duration-700 ease-out`}
             style={{ width: `${job.progress}%` }}
           />
-          {/* Shimmer sweep */}
           <div
             className="absolute inset-y-0 w-24 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"
             style={{ left: `calc(${job.progress}% - 48px)` }}
@@ -287,7 +503,18 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
         </div>
       )}
 
-      <div className="p-4 flex items-center gap-4">
+      <div className="p-4 flex items-center gap-3">
+        {/* Drag handle */}
+        {draggable && (
+          <div
+            {...attributes}
+            {...listeners}
+            className="p-1 text-textMuted/40 hover:text-textMuted cursor-grab active:cursor-grabbing shrink-0 touch-none"
+          >
+            <GripVertical className="w-4 h-4" />
+          </div>
+        )}
+
         {/* Icon */}
         <div className={`p-2.5 rounded-xl shrink-0 ${isProcessing ? cfg.chip : 'bg-background border border-border'}`}>
           {isProcessing
@@ -305,10 +532,14 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
               {cfg.label}
             </span>
             <ConversionBadge job={job} />
+            <SubtitleWarning job={job} />
             {job.fps != null && job.fps > 0 && (
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
                 {job.fps.toFixed(1)} fps
               </span>
+            )}
+            {showWorkerPicker && (
+              <WorkerPicker job={job} workers={idleWorkers} apiUrl={apiUrl} />
             )}
           </div>
         </div>
@@ -398,6 +629,9 @@ function CompletedJobRow({ job, onRemove }: { job: Job; onRemove: () => void }) 
       <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-white text-sm font-medium truncate">{job.fileName}</p>
+        {job.avgFps && job.avgFps > 0 && (
+          <p className="text-textMuted text-xs mt-0.5">{Math.round(job.avgFps)} fps avg{job.elapsedSeconds ? ` · ${Math.round(job.elapsedSeconds / 60)}m` : ''}</p>
+        )}
       </div>
       <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
         <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>

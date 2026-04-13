@@ -116,6 +116,16 @@ export interface Job {
   error?: string;
   sizeBefore?: number;
   sizeAfter?: number;
+  /** Manual sort position (drag-to-reorder) */
+  sortOrder?: number;
+  /** Pinned worker — dispatch only to this worker */
+  pinnedWorkerId?: string;
+  /** Whether the source file has subtitle tracks */
+  hasSubtitles?: boolean;
+  /** Average fps over the transcoding run */
+  avgFps?: number;
+  /** Total elapsed seconds for the transcode */
+  elapsedSeconds?: number;
   createdAt: number;
   updatedAt: number;
   completedAt?: number;
@@ -206,6 +216,7 @@ export type WsEventType =
   | 'job:removed'
   | 'job:cleared'
   | 'scan:summary'
+  | 'scan:progress'
   | 'stats:update';
 
 export interface WsEvent<T = unknown> {

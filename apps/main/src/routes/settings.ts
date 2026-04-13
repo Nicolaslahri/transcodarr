@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { addWatchedPath, manualScanDirectory } from '../watcher.js';
+import { fireWebhooks } from '../webhooks.js';
 
 export async function settingsRoutes(app: FastifyInstance) {
   // ─── Recipes ────────────────────────────────────────────────────────────────
@@ -184,6 +185,45 @@ export async function settingsRoutes(app: FastifyInstance) {
     try { fs.writeFileSync(resetFlag, '1'); } catch {}
     try { if (fs.existsSync(configFile)) fs.unlinkSync(configFile); } catch {}
     return reply.send({ ok: true });
+  });
+
+  // ─── Webhooks ────────────────────────────────────────────────────────────────
+  app.get('/webhooks', async () => {
+    return getDb().prepare('SELECT * FROM webhooks ORDER BY created_at DESC').all();
+  });
+
+  app.post<{ Body: { url: string; events?: string[]; secret?: string } }>('/webhooks', async (req, reply) => {
+    const { url, events = ['job:complete', 'job:failed'], secret } = req.body;
+    if (!url) return reply.status(400).send({ error: 'url is required' });
+    const id = nanoid();
+    getDb().prepare('INSERT INTO webhooks (id, url, events, secret) VALUES (?,?,?,?)').run(id, url, JSON.stringify(events), secret ?? null);
+    return getDb().prepare('SELECT * FROM webhooks WHERE id = ?').get(id);
+  });
+
+  app.put<{ Params: { id: string }; Body: { url?: string; events?: string[]; secret?: string; enabled?: boolean } }>('/webhooks/:id', async (req, reply) => {
+    const { url, events, secret, enabled } = req.body;
+    const fields: string[] = [];
+    const vals: any[] = [];
+    if (url !== undefined) { fields.push('url = ?'); vals.push(url); }
+    if (events !== undefined) { fields.push('events = ?'); vals.push(JSON.stringify(events)); }
+    if (secret !== undefined) { fields.push('secret = ?'); vals.push(secret); }
+    if (enabled !== undefined) { fields.push('enabled = ?'); vals.push(enabled ? 1 : 0); }
+    if (!fields.length) return reply.status(400).send({ error: 'No fields to update' });
+    vals.push(req.params.id);
+    getDb().prepare(`UPDATE webhooks SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
+    return { ok: true };
+  });
+
+  app.delete<{ Params: { id: string } }>('/webhooks/:id', async (req) => {
+    getDb().prepare('DELETE FROM webhooks WHERE id = ?').run(req.params.id);
+    return { ok: true };
+  });
+
+  app.post<{ Params: { id: string } }>('/webhooks/:id/test', async (req, reply) => {
+    const hook = getDb().prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id) as any;
+    if (!hook) return reply.status(404).send({ error: 'Not found' });
+    await fireWebhooks('test', { message: 'Test webhook from Transcodarr', timestamp: Date.now() });
+    return { ok: true };
   });
 
   // ─── Smart Filters ───────────────────────────────────────────────────────────

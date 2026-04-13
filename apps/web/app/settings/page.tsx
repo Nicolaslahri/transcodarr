@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import {
   FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight,
   Filter, Settings2, BookOpen, Info, ArrowLeftRight,
-  Wifi, HardDrive, X, ChevronUp, ChevronRight,
+  Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell,
 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
@@ -13,7 +13,7 @@ import { useAppState } from '@/hooks/useTranscodarrSocket';
 import { FileExplorerModal } from '@/components/FileExplorerModal';
 import { RecipePickerModal } from '@/components/RecipePickerModal';
 
-type Tab = 'folders' | 'filters' | 'recipes' | 'transfer' | 'general';
+type Tab = 'folders' | 'filters' | 'recipes' | 'transfer' | 'notifications' | 'general';
 
 export default function SettingsPage() {
   const { meta, apiUrl } = useAppState();
@@ -36,11 +36,12 @@ export default function SettingsPage() {
   const effectiveTab = meta.mode === 'worker' && tab !== 'general' ? 'general' : tab;
 
   const mainTabs: { id: Tab; icon: React.ElementType; label: string }[] = [
-    { id: 'folders',  icon: FolderOpen,     label: 'Watched Folders' },
-    { id: 'filters',  icon: Filter,         label: 'Smart Filters'   },
-    { id: 'recipes',  icon: BookOpen,       label: 'Recipes'         },
-    { id: 'transfer', icon: ArrowLeftRight, label: 'Transfer'        },
-    { id: 'general',  icon: Settings2,      label: 'General'         },
+    { id: 'folders',       icon: FolderOpen,     label: 'Watched Folders' },
+    { id: 'filters',       icon: Filter,         label: 'Smart Filters'   },
+    { id: 'recipes',       icon: BookOpen,       label: 'Recipes'         },
+    { id: 'transfer',      icon: ArrowLeftRight, label: 'Transfer'        },
+    { id: 'notifications', icon: Bell,           label: 'Notifications'   },
+    { id: 'general',       icon: Settings2,      label: 'General'         },
   ];
 
   const tabs = meta.mode === 'worker'
@@ -75,8 +76,9 @@ export default function SettingsPage() {
       {effectiveTab === 'folders'  && meta.mode !== 'worker' && <WatchedFoldersPanel apiUrl={apiUrl} />}
       {effectiveTab === 'filters'  && meta.mode !== 'worker' && <SmartFiltersPanel />}
       {effectiveTab === 'recipes'  && meta.mode !== 'worker' && <RecipesPanel apiUrl={apiUrl} />}
-      {effectiveTab === 'transfer' && meta.mode !== 'worker' && <TransferPanel apiUrl={apiUrl} />}
-      {effectiveTab === 'general'  && <GeneralPanel />}
+      {effectiveTab === 'transfer'      && meta.mode !== 'worker' && <TransferPanel apiUrl={apiUrl} />}
+      {effectiveTab === 'notifications' && meta.mode !== 'worker' && <NotificationsPanel apiUrl={apiUrl} />}
+      {effectiveTab === 'general'       && <GeneralPanel />}
     </div>
   );
 }
@@ -971,6 +973,186 @@ function GeneralPanel() {
         >
           Reset Setup…
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Notifications Panel ─────────────────────────────────────────────────────
+
+const WEBHOOK_EVENTS = [
+  { id: 'job:complete', label: 'Job Complete' },
+  { id: 'job:failed',   label: 'Job Failed'   },
+  { id: 'job:queued',   label: 'Job Queued'   },
+];
+
+interface Webhook {
+  id: string;
+  url: string;
+  events: string;
+  secret?: string;
+  enabled: number;
+}
+
+function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
+  const [hooks, setHooks] = useState<Webhook[]>([]);
+  const [newUrl, setNewUrl] = useState('');
+  const [newEvents, setNewEvents] = useState<string[]>(['job:complete', 'job:failed']);
+  const [newSecret, setNewSecret] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [testResult, setTestResult] = useState<Record<string, string>>({});
+
+  const load = useCallback(async () => {
+    const r = await fetch(`${apiUrl}/api/settings/webhooks`);
+    const data = await r.json();
+    setHooks(Array.isArray(data) ? data : []);
+  }, [apiUrl]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    if (!newUrl.trim()) return;
+    await fetch(`${apiUrl}/api/settings/webhooks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: newUrl.trim(), events: newEvents, secret: newSecret || undefined }),
+    });
+    setNewUrl(''); setNewSecret(''); setAdding(false);
+    load();
+  };
+
+  const remove = async (id: string) => {
+    await fetch(`${apiUrl}/api/settings/webhooks/${id}`, { method: 'DELETE' });
+    setHooks(prev => prev.filter(h => h.id !== id));
+  };
+
+  const toggle = async (hook: Webhook) => {
+    await fetch(`${apiUrl}/api/settings/webhooks/${hook.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !hook.enabled }),
+    });
+    setHooks(prev => prev.map(h => h.id === hook.id ? { ...h, enabled: hook.enabled ? 0 : 1 } : h));
+  };
+
+  const test = async (id: string) => {
+    setTestResult(r => ({ ...r, [id]: 'sending…' }));
+    try {
+      await fetch(`${apiUrl}/api/settings/webhooks/${id}/test`, { method: 'POST' });
+      setTestResult(r => ({ ...r, [id]: '✓ Sent!' }));
+    } catch {
+      setTestResult(r => ({ ...r, [id]: '✗ Failed' }));
+    }
+    setTimeout(() => setTestResult(r => { const n = { ...r }; delete n[id]; return n; }), 3000);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-surface border border-border rounded-2xl p-6">
+        <h3 className="text-white font-bold text-sm mb-1">Webhooks</h3>
+        <p className="text-textMuted text-xs mb-5">
+          Paste any URL — Discord, Slack, or custom endpoint. Transcodarr will POST a JSON payload when events fire.
+        </p>
+
+        {hooks.length === 0 && !adding && (
+          <p className="text-textMuted text-sm py-4 text-center border border-border border-dashed rounded-xl">
+            No webhooks configured yet.
+          </p>
+        )}
+
+        <div className="space-y-3 mb-4">
+          {hooks.map(hook => {
+            let eventsArr: string[] = [];
+            try { eventsArr = JSON.parse(hook.events); } catch {}
+            return (
+              <div key={hook.id} className={`bg-background border rounded-xl p-4 transition-all ${hook.enabled ? 'border-border' : 'border-border/40 opacity-60'}`}>
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm font-medium truncate font-mono">{hook.url}</p>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {eventsArr.map(e => (
+                        <span key={e} className="px-1.5 py-0.5 text-[10px] rounded border bg-surface border-border text-textMuted">{e}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => test(hook.id)}
+                      className="px-2.5 py-1 text-xs border border-border text-textMuted hover:text-white hover:border-primary/40 rounded-lg transition-colors"
+                    >
+                      {testResult[hook.id] ?? 'Test'}
+                    </button>
+                    <button onClick={() => toggle(hook)} className="p-1.5 text-textMuted hover:text-white transition-colors">
+                      {hook.enabled
+                        ? <ToggleRight className="w-4 h-4 text-primary" />
+                        : <ToggleLeft className="w-4 h-4" />}
+                    </button>
+                    <button onClick={() => remove(hook.id)} className="p-1.5 text-textMuted hover:text-red-400 transition-colors">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {adding ? (
+          <div className="border border-primary/30 bg-primary/5 rounded-xl p-4 space-y-3">
+            <div>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Webhook URL</label>
+              <input
+                value={newUrl}
+                onChange={e => setNewUrl(e.target.value)}
+                placeholder="https://discord.com/api/webhooks/..."
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/60"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Events to fire on</label>
+              <div className="flex gap-2 flex-wrap">
+                {WEBHOOK_EVENTS.map(ev => (
+                  <label key={ev.id} className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newEvents.includes(ev.id)}
+                      onChange={e => setNewEvents(prev =>
+                        e.target.checked ? [...prev, ev.id] : prev.filter(x => x !== ev.id)
+                      )}
+                      className="accent-primary"
+                    />
+                    <span className="text-xs text-textMuted">{ev.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Secret (optional — for HMAC signature)</label>
+              <input
+                value={newSecret}
+                onChange={e => setNewSecret(e.target.value)}
+                placeholder="my-secret-key"
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/60"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={add} className="px-4 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">
+                Add Webhook
+              </button>
+              <button onClick={() => setAdding(false)} className="px-4 py-2 text-textMuted text-sm hover:text-white transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-xl text-textMuted hover:text-white hover:border-primary/40 transition-all text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            Add Webhook
+          </button>
+        )}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { getDb } from '../db.js';
 import { broadcast } from '../server.js';
 import { dispatchNext } from '../dispatcher.js';
 import { getStats, recordProcessedFile } from '../queue.js';
+import { fireWebhooks } from '../webhooks.js';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
 import fs from 'fs';
 import path from 'path';
@@ -195,6 +196,8 @@ export async function workersRoutes(app: FastifyInstance) {
         return reply.status(401).send({ error: 'Unauthorized' });
       }
       const now = Math.floor(Date.now() / 1000);
+      const jobFull = db.prepare('SELECT file_path, recipe, fps, dispatched_at FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+      const elapsed = jobFull?.dispatched_at ? now - jobFull.dispatched_at : null;
 
       if (success) {
         let targetDbPath = jobRow?.file_path;
@@ -207,18 +210,19 @@ export async function workersRoutes(app: FastifyInstance) {
               .run(targetDbPath, path.basename(targetDbPath), req.params.jobId);
           }
         }
-        db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?')
-          .run('complete', sizeBefore ?? null, sizeAfter ?? null, now, now, req.params.jobId);
+        db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
+          .run('complete', sizeBefore ?? null, sizeAfter ?? null, jobFull?.fps ?? null, elapsed, now, now, req.params.jobId);
         // Persist fingerprint so "Clear All" doesn't re-queue this file
-        const jobMeta = db.prepare('SELECT file_path, recipe FROM jobs WHERE id = ?').get(req.params.jobId) as any;
-        if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore ?? 0, jobMeta.recipe);
+        if (jobFull) recordProcessedFile(jobFull.file_path, sizeBefore ?? 0, jobFull.recipe);
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });
         broadcast('stats:update', getStats());
+        fireWebhooks('job:complete', { jobId: req.params.jobId, fileName: jobFull?.file_path ? path.basename(jobFull.file_path) : '', sizeBefore, sizeAfter });
       } else {
         db.prepare('UPDATE jobs SET status = ?, phase = NULL, error = ?, updated_at = ? WHERE id = ?')
           .run('failed', error ?? 'Unknown error', now, req.params.jobId);
         broadcast('job:failed', { jobId: req.params.jobId, error });
         broadcast('stats:update', getStats());
+        fireWebhooks('job:failed', { jobId: req.params.jobId, fileName: jobFull?.file_path ? path.basename(jobFull.file_path) : '', error });
       }
 
       db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
@@ -296,6 +300,8 @@ export async function workersRoutes(app: FastifyInstance) {
 
         const sizeAfter = fs.statSync(tmpPath).size;
         const now = Math.floor(Date.now() / 1000);
+        const jobMeta = db.prepare('SELECT file_path, recipe, fps, dispatched_at FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+        const elapsed = jobMeta?.dispatched_at ? now - jobMeta.dispatched_at : null;
 
         // Atomic swap: original → .bak → tmp → final → delete .bak
         const bakPath = origPath + '.bak';
@@ -309,14 +315,14 @@ export async function workersRoutes(app: FastifyInstance) {
             .run(finalPath, path.basename(finalPath), req.params.jobId);
         }
 
-        db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?')
-          .run('complete', sizeBefore, sizeAfter, now, now, req.params.jobId);
+        db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
+          .run('complete', sizeBefore, sizeAfter, jobMeta?.fps ?? null, elapsed, now, now, req.params.jobId);
         db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
         // Persist fingerprint so "Clear All" doesn't re-queue this file
-        const jobMeta = db.prepare('SELECT file_path, recipe FROM jobs WHERE id = ?').get(req.params.jobId) as any;
         if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore, jobMeta.recipe);
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });
         broadcast('stats:update', getStats());
+        fireWebhooks('job:complete', { jobId: req.params.jobId, fileName: jobMeta?.file_path ? path.basename(jobMeta.file_path) : '', sizeBefore, sizeAfter });
         // Trigger next job immediately
         dispatchNext().catch(() => {});
 
@@ -330,6 +336,7 @@ export async function workersRoutes(app: FastifyInstance) {
         db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
         broadcast('job:failed', { jobId: req.params.jobId, error: err.message });
         broadcast('stats:update', getStats());
+        fireWebhooks('job:failed', { jobId: req.params.jobId, error: err.message });
         // Trigger next job even on failure (worker is now idle)
         dispatchNext().catch(() => {});
         return reply.status(500).send({ error: err.message });

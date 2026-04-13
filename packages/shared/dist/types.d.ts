@@ -48,6 +48,8 @@ export interface WorkerInfo {
     currentFps?: number;
     /** Current transfer phase shown in the UI */
     currentPhase?: TransferPhase;
+    /** Live GPU metrics (NVIDIA only, may be absent) */
+    gpuStats?: GpuStats;
 }
 export interface Recipe {
     id: string;
@@ -163,7 +165,17 @@ export interface WatchedPath {
     enabled: boolean;
     createdAt: number;
 }
-export type WsEventType = 'worker:discovered' | 'worker:accepted' | 'worker:updated' | 'worker:offline' | 'worker:progress' | 'job:queued' | 'job:progress' | 'job:complete' | 'job:failed' | 'job:removed' | 'job:cleared' | 'scan:summary' | 'scan:progress' | 'stats:update' | 'system:warning';
+export interface GpuStats {
+    /** GPU utilisation 0–100% */
+    utilPct: number;
+    /** GPU temperature in °C */
+    tempC: number;
+    /** VRAM used in MB */
+    vramUsedMB: number;
+    /** VRAM total in MB */
+    vramTotalMB: number;
+}
+export type WsEventType = 'worker:discovered' | 'worker:accepted' | 'worker:updated' | 'worker:offline' | 'worker:progress' | 'worker:stats' | 'job:queued' | 'job:progress' | 'job:complete' | 'job:failed' | 'job:removed' | 'job:cleared' | 'scan:summary' | 'scan:progress' | 'stats:update' | 'system:warning';
 export interface WsEvent<T = unknown> {
     event: WsEventType;
     data: T;

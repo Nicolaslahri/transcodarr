@@ -152,6 +152,8 @@ export async function transcodeFile(
     proc.on('close', code => {
       if (signal) signal.removeEventListener('abort', onAbort);
       if (cancelled) {
+        // Clean up the partial tmp file immediately so it doesn't linger on disk
+        try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* best effort */ }
         reject(new Error('Cancelled'));
       } else if (code === 0) {
         resolve();

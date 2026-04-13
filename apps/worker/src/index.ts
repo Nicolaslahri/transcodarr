@@ -2,7 +2,7 @@ import os from 'os';
 import { nanoid } from 'nanoid';
 import { ensureFfmpeg, detectHardware } from './hardware.js';
 import { broadcastWorkerMdns, stopMdns } from './mdns.js';
-import { createWorkerServer, initWorkerServer } from './server.js';
+import { createWorkerServer, initWorkerServer, startGpuStatsPoller, latestGpuStats } from './server.js';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
@@ -52,6 +52,9 @@ async function main() {
   initWorkerServer(hardware, WORKER_ID, MAIN_URL);
   await createWorkerServer(WORKER_PORT);
 
+  // 2b. Start GPU stats poller (NVIDIA only; no-ops silently on other hardware)
+  startGpuStatsPoller();
+
   // 3. Register with Main (HTTP fallback if mDNS fails)
   try {
     await fetch(`${MAIN_URL}/api/workers/register`, {
@@ -68,10 +71,17 @@ async function main() {
   // 4. Broadcast mDNS beacon
   broadcastWorkerMdns(WORKER_ID, WORKER_NAME, WORKER_PORT, hardware);
 
-  // 5. Heartbeat every 30s
+  // 5. Heartbeat every 30s — includes GPU stats if available
   setInterval(async () => {
     try {
-      await fetch(`${MAIN_URL}/api/workers/${WORKER_ID}/heartbeat`, { method: 'POST', signal: AbortSignal.timeout(3000) });
+      const body: Record<string, unknown> = {};
+      if (latestGpuStats) body.gpuStats = latestGpuStats;
+      await fetch(`${MAIN_URL}/api/workers/${WORKER_ID}/heartbeat`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+        signal:  AbortSignal.timeout(3000),
+      });
     } catch { /* ignore */ }
   }, 30_000);
 

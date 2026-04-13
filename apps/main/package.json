@@ -1,6 +1,6 @@
 {
   "name": "@transcodarr/main",
-  "version": "0.0.7",
+  "version": "1.0.12",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

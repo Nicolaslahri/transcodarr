@@ -1,6 +1,6 @@
 import { initDb } from './db.js';
 import { createServer, startWorkerHealthPoller } from './server.js';
-import { startWatcher } from './watcher.js';
+import { startWatcher, startPeriodicScanPoller } from './watcher.js';
 import { startMdns } from './mdns.js';
 import { ensureFfmpeg } from './ffmpeg.js';
 import { startDispatcher } from './dispatcher.js';
@@ -44,6 +44,9 @@ async function main() {
     process.env.MAIN_HOST = getLocalIp();
     startDispatcher();
     console.log(`✅ Dispatcher started (callback: ${process.env.MAIN_HOST}:${PORT})`);
+
+    // 7. Start periodic scan poller
+    startPeriodicScanPoller();
   } else {
     console.log('✅ Setup mode active. Waiting for Configuration via UI.');
   }

@@ -51,6 +51,46 @@ export async function jobsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // POST /api/jobs/:id/cancel — cancel an active job and re-queue it
+  app.post<{ Params: { id: string } }>('/:id/cancel', async (req, reply) => {
+    const job = getJob(req.params.id);
+    if (!job) return reply.status(404).send({ error: 'Not found' });
+    if (!['dispatched', 'transcoding', 'swapping'].includes(job.status)) {
+      return reply.status(400).send({ error: 'Job is not active' });
+    }
+
+    // Tell the worker to kill its ffmpeg process
+    if (job.workerId) {
+      const workerRow = getDb().prepare('SELECT host, port FROM workers WHERE id = ?').get(job.workerId) as any;
+      if (workerRow) {
+        try {
+          await fetch(`http://${workerRow.host}:${workerRow.port}/job`, {
+            method: 'DELETE',
+            signal: AbortSignal.timeout(5_000),
+          });
+        } catch { /* worker unreachable — still re-queue */ }
+      }
+    }
+
+    // Re-queue at same sort_order
+    const db = getDb();
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(
+      'UPDATE jobs SET status = ?, worker_id = NULL, phase = NULL, progress = 0, callback_token = NULL, dispatched_at = NULL, fps = NULL, eta = NULL, error = NULL, updated_at = ? WHERE id = ?'
+    ).run('queued', now, req.params.id);
+
+    // Mark worker idle
+    if (job.workerId) {
+      db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.workerId);
+    }
+
+    const updated = getJob(req.params.id);
+    broadcast('job:queued', updated);
+    broadcast('stats:update', getStats());
+    dispatchNext().catch(() => {});
+    return updated;
+  });
+
   // POST /api/jobs/:id/retry — retry a single failed job
   app.post<{ Params: { id: string } }>('/:id/retry', async (req, reply) => {
     const job = getJob(req.params.id);

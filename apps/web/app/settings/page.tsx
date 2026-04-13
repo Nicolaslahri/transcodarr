@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import {
   FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight,
   Filter, Settings2, BookOpen, Info, ArrowLeftRight,
-  Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell,
+  Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell, Pencil,
 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
@@ -186,42 +186,89 @@ interface WatchedPath {
   id: string; path: string; recipe: string;
   enabled: boolean; recurse: boolean;
   extensions: string; priority: string; min_size_mb: number;
+  preferred_audio_lang?: string; preferred_subtitle_lang?: string;
+  scan_interval_hours?: number; last_scan_at?: number;
 }
 
+const LANG_OPTIONS = [
+  { value: '', label: 'Any (keep all tracks)' },
+  { value: 'eng', label: 'English (eng)' },
+  { value: 'jpn', label: 'Japanese (jpn)' },
+  { value: 'spa', label: 'Spanish (spa)' },
+  { value: 'fra', label: 'French (fra)' },
+  { value: 'deu', label: 'German (deu)' },
+  { value: 'ita', label: 'Italian (ita)' },
+  { value: 'por', label: 'Portuguese (por)' },
+  { value: 'zho', label: 'Chinese (zho)' },
+  { value: 'kor', label: 'Korean (kor)' },
+  { value: 'ara', label: 'Arabic (ara)' },
+];
+
+const BLANK_FORM = { path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100, preferredAudioLang: '', preferredSubtitleLang: '', scanIntervalHours: 0 };
+
 function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
-  const [paths, setPaths]   = useState<WatchedPath[]>([]);
-  const [adding, setAdding] = useState(false);
+  const [paths, setPaths]     = useState<WatchedPath[]>([]);
+  const [adding, setAdding]   = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [recipePickerOpen, setRecipePickerOpen] = useState(false);
-  const [form, setForm] = useState({
-    path: '', recipe: 'space-saver', recurse: true,
-    extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100,
-  });
+  const [form, setForm]       = useState({ ...BLANK_FORM });
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  const [allRecipes, setAllRecipes] = useState<Recipe[]>([]);
 
   const load = () => fetch('/api/settings/paths').then(r => r.json()).then(setPaths).catch(() => {});
   useEffect(() => { load(); }, []);
 
-  // Load initial recipe info
+  // Load recipes for display
   useEffect(() => {
     fetch(`${apiUrl}/api/settings/recipes`)
       .then(r => r.json())
       .then((rs: Recipe[]) => {
-        const found = rs.find(r => r.id === form.recipe);
+        setAllRecipes(rs);
+        const found = rs.find(r => r.id === BLANK_FORM.recipe);
         if (found) setSelectedRecipe(found);
       })
       .catch(() => {});
   }, []);
 
-  const save = async () => {
-    await fetch('/api/settings/paths', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form }),
-    });
+  const openEdit = (p: WatchedPath) => {
+    setForm({ path: p.path, recipe: p.recipe, recurse: p.recurse, extensions: p.extensions, priority: p.priority, minSizeMb: p.min_size_mb, preferredAudioLang: p.preferred_audio_lang ?? '', preferredSubtitleLang: p.preferred_subtitle_lang ?? '', scanIntervalHours: p.scan_interval_hours ?? 0 });
+    const found = allRecipes.find(r => r.id === p.recipe);
+    setSelectedRecipe(found ?? null);
+    setEditingId(p.id);
+    setAdding(true);
+  };
+
+  const closeForm = () => {
     setAdding(false);
-    setForm({ path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100 });
-    setSelectedRecipe(null);
+    setEditingId(null);
+    setForm({ ...BLANK_FORM });
+    const found = allRecipes.find(r => r.id === BLANK_FORM.recipe);
+    setSelectedRecipe(found ?? null);
+  };
+
+  const save = async () => {
+    const { preferredAudioLang, preferredSubtitleLang, scanIntervalHours, ...rest } = form;
+    const payload = {
+      ...rest,
+      preferred_audio_lang:    preferredAudioLang || null,
+      preferred_subtitle_lang: preferredSubtitleLang || null,
+      scan_interval_hours:     scanIntervalHours,
+    };
+    if (editingId) {
+      await fetch(`/api/settings/paths/${editingId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      await fetch('/api/settings/paths', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+    closeForm();
     load();
   };
 
@@ -270,6 +317,9 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
               <button onClick={() => scanNow(p)} className="text-xs text-textMuted hover:text-primary transition-colors px-3 py-1.5 border border-border rounded-lg">
                 Scan Now
               </button>
+              <button onClick={() => openEdit(p)} title="Edit folder" className="text-textMuted hover:text-white transition-colors">
+                <Pencil className="w-4 h-4" />
+              </button>
               <button onClick={() => toggle(p)} className="text-textMuted hover:text-white transition-colors">
                 {p.enabled ? <ToggleRight className="w-5 h-5 text-primary" /> : <ToggleLeft className="w-5 h-5" />}
               </button>
@@ -284,7 +334,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
       {/* Add form */}
       {adding && (
         <div className="bg-surface border border-primary/30 rounded-2xl p-6 space-y-4">
-          <h3 className="text-white font-bold text-sm">Add Watched Folder</h3>
+          <h3 className="text-white font-bold text-sm">{editingId ? 'Edit Watched Folder' : 'Add Watched Folder'}</h3>
 
           <div>
             <label className="text-xs text-textMuted font-medium mb-1.5 block">Folder Path</label>
@@ -353,6 +403,29 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Audio Language</label>
+              <select
+                value={form.preferredAudioLang}
+                onChange={e => setForm(f => ({ ...f, preferredAudioLang: e.target.value }))}
+                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+              >
+                {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Subtitle Language</label>
+              <select
+                value={form.preferredSubtitleLang}
+                onChange={e => setForm(f => ({ ...f, preferredSubtitleLang: e.target.value }))}
+                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+              >
+                {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
+            </div>
+          </div>
+
           <div>
             <label className="text-xs text-textMuted font-medium mb-1.5 block">Extensions</label>
             <input
@@ -362,7 +435,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
             />
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -372,6 +445,22 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
               />
               <span className="text-sm text-white">Scan subdirectories</span>
             </label>
+
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-textMuted font-medium whitespace-nowrap">Periodic re-scan</label>
+              <select
+                value={form.scanIntervalHours}
+                onChange={e => setForm(f => ({ ...f, scanIntervalHours: parseInt(e.target.value) }))}
+                className="bg-background border border-border rounded-xl px-3 py-2 text-sm text-white focus:outline-none appearance-none"
+              >
+                <option value={0}>Off</option>
+                <option value={6}>Every 6h</option>
+                <option value={12}>Every 12h</option>
+                <option value={24}>Daily</option>
+                <option value={48}>Every 2 days</option>
+                <option value={168}>Weekly</option>
+              </select>
+            </div>
           </div>
 
           <div className="flex gap-2 pt-2">
@@ -380,16 +469,16 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
               disabled={!form.path || !form.recipe}
               className="px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
             >
-              Add Folder
+              {editingId ? 'Save Changes' : 'Add Folder'}
             </button>
-            <button onClick={() => setAdding(false)} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
+            <button onClick={closeForm} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
               Cancel
             </button>
           </div>
         </div>
       )}
 
-      {!adding && (
+      {!adding && !editingId && (
         <button
           onClick={() => setAdding(true)}
           className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors px-4 py-2.5 border border-dashed border-border rounded-xl w-full justify-center"
@@ -866,17 +955,19 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
 
 function GeneralPanel() {
   const { apiUrl, meta } = useAppState();
-  const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '' });
+  const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '', preferred_audio_lang: '', preferred_subtitle_lang: '' });
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     fetch(`${apiUrl}/api/settings/general`).then(r => r.json()).then(data => {
       setSettings(s => ({
-        nodeName:          data.nodeName          ?? s.nodeName,
-        maxConcurrentJobs: data.maxConcurrentJobs ?? s.maxConcurrentJobs,
-        queueStrategy:     data.queueStrategy     ?? s.queueStrategy,
-        autoAcceptWorkers: data.autoAcceptWorkers ?? s.autoAcceptWorkers,
-        mainUrl:           data.mainUrl           ?? s.mainUrl,
+        nodeName:               data.nodeName               ?? s.nodeName,
+        maxConcurrentJobs:      data.max_concurrent_jobs    ?? data.maxConcurrentJobs ?? s.maxConcurrentJobs,
+        queueStrategy:          data.queueStrategy          ?? s.queueStrategy,
+        autoAcceptWorkers:      data.autoAcceptWorkers      ?? s.autoAcceptWorkers,
+        mainUrl:                data.mainUrl                ?? s.mainUrl,
+        preferred_audio_lang:   data.preferred_audio_lang   ?? '',
+        preferred_subtitle_lang: data.preferred_subtitle_lang ?? '',
       }));
     }).catch(() => {});
   }, [apiUrl]);
@@ -944,6 +1035,30 @@ function GeneralPanel() {
             </button>
           </div>
         </Field>
+
+        {meta.mode !== 'worker' && (
+          <>
+            <Field label="Default Audio Language">
+              <select
+                value={settings.preferred_audio_lang}
+                onChange={e => setSettings(s => ({ ...s, preferred_audio_lang: e.target.value }))}
+                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+              >
+                {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
+              <p className="text-xs text-textMuted mt-1.5 ml-1">Global default — overridden per folder if set.</p>
+            </Field>
+            <Field label="Default Subtitle Language">
+              <select
+                value={settings.preferred_subtitle_lang}
+                onChange={e => setSettings(s => ({ ...s, preferred_subtitle_lang: e.target.value }))}
+                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+              >
+                {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
+            </Field>
+          </>
+        )}
 
         {meta.mode === 'worker' && (
           <Field label="Main Node URL">

@@ -6,6 +6,26 @@ import { broadcast } from './server.js';
 import { dispatchNext } from './dispatcher.js';
 import * as fs from 'fs';
 
+// Periodic scan poller — checks every hour if any watched_path is due for a re-scan
+export function startPeriodicScanPoller(): void {
+  setInterval(() => {
+    const now = Math.floor(Date.now() / 1000);
+    const paths = getDb().prepare(
+      'SELECT id, path, recipe, scan_interval_hours, last_scan_at FROM watched_paths WHERE enabled = 1 AND scan_interval_hours > 0'
+    ).all() as any[];
+    for (const wp of paths) {
+      const intervalSecs = wp.scan_interval_hours * 3600;
+      const lastScan = wp.last_scan_at ?? 0;
+      if (now - lastScan >= intervalSecs) {
+        console.log(`🔄 Periodic scan triggered for: ${wp.path} (every ${wp.scan_interval_hours}h)`);
+        manualScanDirectory(wp.path, wp.recipe);
+        getDb().prepare('UPDATE watched_paths SET last_scan_at = ? WHERE id = ?').run(now, wp.id);
+      }
+    }
+  }, 60 * 60 * 1000); // check every hour
+  console.log('  Periodic scan poller started (checks every hour)');
+}
+
 const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.ts', '.m2ts', '.wmv'];
 
 // Debounce map: wait for file to finish being written before analyzing
@@ -144,5 +164,9 @@ export function manualScanDirectory(dir: string, recipe: string) {
 
   const msg = `Scan complete for "${path.basename(dir)}": ${stats.enqueued} queued, ${stats.skipped} already optimized, ${stats.alreadyActive} in progress (${stats.total} total files found)`;
   console.log(`  📊 ${msg}`);
+  // Update last_scan_at for the matching watched_path
+  try {
+    getDb().prepare('UPDATE watched_paths SET last_scan_at = ? WHERE path = ?').run(Math.floor(Date.now() / 1000), dir);
+  } catch { /* non-critical */ }
   broadcast('scan:summary', { sessionId, dir, recipe, ...stats, message: msg });
 }

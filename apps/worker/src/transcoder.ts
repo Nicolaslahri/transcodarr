@@ -75,6 +75,7 @@ export async function transcodeFile(
   payload: JobPayload,
   hardware: HardwareProfile,
   onProgress: (update: Partial<ProgressUpdate>) => void,
+  signal?: AbortSignal,
 ): Promise<TranscodeResult> {
   let inputPath = payload.smbPath ?? payload.filePath;
   const ext       = payload.recipe.targetContainer === 'mp4' ? '.mp4' : '.mkv';
@@ -103,7 +104,7 @@ export async function transcodeFile(
 
   const duration    = getFileDuration(inputPath);
   const hwDecArgs   = getHwDecodeArgs(hardware);
-  const recipeArgs  = buildFfmpegArgs(payload.recipe, hardware);
+  const recipeArgs  = buildFfmpegArgs(payload.recipe, hardware, payload.langPrefs);
 
   const ffmpegArgs = [
     '-hide_banner', '-loglevel', 'error', '-stats',
@@ -121,6 +122,16 @@ export async function transcodeFile(
     const proc = spawn(resolvedFfmpeg, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     let leftover = '';
     let errorLog = '';
+    let cancelled = false;
+
+    const onAbort = () => {
+      cancelled = true;
+      proc.kill('SIGTERM');
+    };
+    if (signal) {
+      if (signal.aborted) { proc.kill('SIGTERM'); }
+      else signal.addEventListener('abort', onAbort);
+    }
 
     const handleData = (data: Buffer) => {
       const chunk = data.toString();
@@ -139,7 +150,10 @@ export async function transcodeFile(
     proc.stderr.on('data', handleData);
     proc.stdout.on('data', handleData);
     proc.on('close', code => {
-      if (code === 0) {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      if (cancelled) {
+        reject(new Error('Cancelled'));
+      } else if (code === 0) {
         resolve();
       } else {
         const lines = errorLog.split('\n').filter(l => l.trim().length > 0);

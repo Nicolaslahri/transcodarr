@@ -131,6 +131,15 @@ export interface Job {
   completedAt?: number;
 }
 
+// ─── Language Preferences ─────────────────────────────────────────────────────
+
+export interface LangPrefs {
+  /** ISO 639-2/B language code for preferred audio track, e.g. 'eng'. Undefined = keep all. */
+  audioLang?: string;
+  /** ISO 639-2/B language code for preferred subtitle track, e.g. 'eng'. Undefined = keep all. */
+  subtitleLang?: string;
+}
+
 // ─── Job Payload (Main → Worker) ─────────────────────────────────────────────
 
 export interface JobPayload {
@@ -152,6 +161,8 @@ export interface JobPayload {
   downloadUrl?: string;
   /** URL for worker to stream-upload the transcoded result (wireless mode only) */
   uploadUrl?: string;
+  /** Preferred audio/subtitle language tracks — applied during ffmpeg arg construction */
+  langPrefs?: LangPrefs;
 }
 
 // ─── File Analysis (from ffprobe) ─────────────────────────────────────────────

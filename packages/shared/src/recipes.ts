@@ -1,13 +1,24 @@
-import type { GpuVendor, HardwareProfile, Recipe } from './types.js';
+import type { GpuVendor, HardwareProfile, LangPrefs, Recipe } from './types.js';
 
 // ─── Built-in Recipes ─────────────────────────────────────────────────────────
 
 export const BUILT_IN_RECIPES: Recipe[] = [
+  // ── Media server ──────────────────────────────────────────────────────────
+  {
+    id: 'plex-ready',
+    name: 'Plex / Jellyfin Ready',
+    description: 'Ensure direct play in Plex and Jellyfin without server-side transcoding. H.264 High L4.1 + AAC + MP4 faststart.',
+    targetCodec: 'h264',
+    targetContainer: 'mp4',
+    icon: '🎬',
+    color: '#e5a00d',
+    estimatedReduction: 15,
+  },
   // ── Core compression ───────────────────────────────────────────────────────
   {
     id: 'space-saver',
     name: 'Space Saver',
-    description: 'Convert to H.265 (HEVC), keep original resolution, copy all audio. Best general-purpose compression.',
+    description: 'Shrink your library by ~40% with no perceptible quality loss. H.265 (HEVC) encode, copy all audio tracks.',
     targetCodec: 'hevc',
     targetContainer: 'mkv',
     icon: '🗜️',
@@ -17,7 +28,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'universal-player',
     name: 'Universal Player',
-    description: 'Convert to H.264 with AAC audio. Maximum compatibility — plays everywhere.',
+    description: 'Play on any device, TV, or browser without format issues. H.264 + AAC — the most broadly supported format.',
     targetCodec: 'h264',
     targetContainer: 'mp4',
     icon: '▶️',
@@ -27,7 +38,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'av1-balanced',
     name: 'AV1 Balanced',
-    description: 'AV1 encode at quality 32. 40–60% smaller than H.264 at similar quality. Slower to encode.',
+    description: 'Maximum storage efficiency for long-term archiving. AV1 at quality 32 — 40–60% smaller than H.264. Slow to encode.',
     targetCodec: 'av1',
     targetContainer: 'mkv',
     icon: '⚡',
@@ -37,7 +48,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'remux-to-mkv',
     name: 'Remux to MKV',
-    description: 'Copy all streams into an MKV container with no re-encoding. Fastest possible — zero quality loss.',
+    description: 'Repackage into MKV with zero re-encoding and zero quality loss. Use to consolidate container formats.',
     targetCodec: 'copy',
     targetContainer: 'mkv',
     icon: '📦',
@@ -47,7 +58,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'web-optimized',
     name: 'Web Optimised',
-    description: 'H.264 + AAC, capped at 1080p, with faststart flag for instant browser playback.',
+    description: 'Stream in a browser tab or embed on a website. H.264 + AAC, capped at 1080p, MP4 with instant-play faststart.',
     targetCodec: 'h264',
     targetContainer: 'mp4',
     icon: '🌐',
@@ -58,7 +69,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'downscale-1080p',
     name: '4K → 1080p',
-    description: 'Downscale 4K HDR content to 1080p H.265. Perfect for devices that cannot handle 4K.',
+    description: 'Reclaim storage and support 4K-limited devices. Downscales to 1080p H.265 while preserving HDR tone.',
     targetCodec: 'hevc',
     targetContainer: 'mkv',
     icon: '📐',
@@ -68,7 +79,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'downscale-720p',
     name: '4K/1080p → 720p',
-    description: 'Downscale to 720p H.265. Good for mobile and tablet viewing with minimal storage.',
+    description: 'Optimise for mobile and tablet viewing. Downscales to 720p H.265 — large size reduction, still great on small screens.',
     targetCodec: 'hevc',
     targetContainer: 'mp4',
     icon: '📱',
@@ -79,7 +90,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'anime-cleaner',
     name: 'Anime Cleaner',
-    description: 'Strip all audio except Japanese and English tracks. Remove bloat from standard anime releases.',
+    description: 'Clean up bloated fansub releases — keeps Japanese + English audio, preserves all subtitles, re-encodes to H.265.',
     targetCodec: 'hevc',
     targetContainer: 'mkv',
     icon: '🌸',
@@ -89,7 +100,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'audio-normalizer',
     name: 'Audio Normalizer',
-    description: 'Apply EBU R128 loudness normalization. Fix movies that are too quiet or brutally loud.',
+    description: 'Fix wildly inconsistent volume levels across your library. Applies EBU R128 loudness normalization.',
     targetCodec: 'hevc',
     targetContainer: 'mkv',
     icon: '🔊',
@@ -99,7 +110,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'hdr-to-sdr',
     name: 'HDR → SDR Tonemap',
-    description: 'Tonemap HDR10 content to SDR with zscale. Fixes washed-out HDR on non-HDR screens.',
+    description: 'Fix washed-out HDR on non-HDR screens. Tonemaps HDR10 to SDR BT.709 using zscale.',
     targetCodec: 'hevc',
     targetContainer: 'mkv',
     icon: '🌅',
@@ -132,9 +143,31 @@ function getVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | 'av1'): s
   return 'libx264';
 }
 
+// ─── Language Map Helper ──────────────────────────────────────────────────────
+
+/**
+ * Returns explicit -map args for selecting preferred audio/subtitle tracks.
+ * When no langs are specified, returns [] and ffmpeg's default stream selection applies.
+ */
+function buildLangMaps(langs: LangPrefs | undefined): string[] {
+  if (!langs?.audioLang && !langs?.subtitleLang) return [];
+  const m: string[] = ['-map', '0:v'];
+  if (langs.audioLang) {
+    m.push('-map', `0:a:m:language:${langs.audioLang}?`);
+  } else {
+    m.push('-map', '0:a');
+  }
+  if (langs.subtitleLang) {
+    m.push('-map', `0:s:m:language:${langs.subtitleLang}?`);
+  } else {
+    m.push('-map', '0:s?');
+  }
+  return m;
+}
+
 // ─── FFmpeg Args Builder ──────────────────────────────────────────────────────
 
-export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
+export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: LangPrefs): string[] {
   // Community/custom recipes supply their own args
   if (recipe.ffmpegArgs && recipe.ffmpegArgs.length > 0) {
     return recipe.ffmpegArgs;
@@ -143,7 +176,17 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
   const args: string[] = [];
 
   switch (recipe.id) {
+    case 'plex-ready': {
+      args.push(...buildLangMaps(langs));
+      const enc = getVideoEncoder(hw, 'h264');
+      args.push('-c:v', enc);
+      if (enc === 'libx264') args.push('-crf', '20', '-preset', 'fast', '-profile:v', 'high', '-level:v', '4.1');
+      else args.push('-qp', '20', '-preset', 'p2', '-profile:v', 'high', '-level:v', '4.1');
+      args.push('-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
+      break;
+    }
     case 'space-saver': {
+      args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h265');
       args.push('-c:v', enc);
       if (enc === 'libx265') args.push('-crf', '28', '-preset', 'slow');
@@ -152,6 +195,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       break;
     }
     case 'universal-player': {
+      args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h264');
       args.push('-c:v', enc);
       if (enc === 'libx264') args.push('-crf', '23', '-preset', 'fast');
@@ -160,6 +204,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       break;
     }
     case 'av1-balanced': {
+      args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'av1');
       args.push('-c:v', enc);
       if (enc === 'libsvtav1') args.push('-crf', '32', '-preset', '6');
@@ -169,10 +214,12 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       break;
     }
     case 'remux-to-mkv': {
+      args.push(...buildLangMaps(langs));
       args.push('-c:v', 'copy', '-c:a', 'copy', '-c:s', 'copy');
       break;
     }
     case 'web-optimized': {
+      args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h264');
       args.push('-vf', 'scale=\'min(1920,iw)\':\'min(1080,ih)\':force_original_aspect_ratio=decrease');
       args.push('-c:v', enc);
@@ -182,6 +229,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       break;
     }
     case 'anime-cleaner': {
+      // anime-cleaner has its own explicit mapping — lang prefs are ignored
       const enc = getVideoEncoder(hw, 'h265');
       args.push(
         '-map', '0:v',
@@ -196,6 +244,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       break;
     }
     case 'downscale-1080p': {
+      args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h265');
       args.push('-vf', 'scale=1920:1080:flags=lanczos', '-c:v', enc);
       if (enc === 'libx265') args.push('-crf', '22', '-preset', 'slow');
@@ -204,6 +253,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       break;
     }
     case 'downscale-720p': {
+      args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h265');
       args.push('-vf', 'scale=1280:720:flags=lanczos', '-c:v', enc);
       if (enc === 'libx265') args.push('-crf', '24', '-preset', 'fast');
@@ -212,6 +262,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       break;
     }
     case 'audio-normalizer': {
+      args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h265');
       args.push('-c:v', enc);
       if (enc === 'libx265') args.push('-crf', '20', '-preset', 'slow');
@@ -220,6 +271,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile): string[] {
       break;
     }
     case 'hdr-to-sdr': {
+      args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h265');
       args.push(
         '-vf', 'zscale=transfer=linear,tonemap=hable,zscale=transfer=bt709,format=yuv420p',

@@ -1,4 +1,4 @@
-export type JobStatus = 'pending' | 'analyzing' | 'queued' | 'dispatched' | 'transcoding' | 'swapping' | 'complete' | 'failed' | 'skipped';
+export type JobStatus = 'pending' | 'analyzing' | 'queued' | 'paused' | 'dispatched' | 'transcoding' | 'swapping' | 'complete' | 'failed' | 'skipped';
 export type WorkerStatus = 'pending' | 'active' | 'idle' | 'online' | 'offline';
 export type GpuVendor = 'nvidia' | 'amd' | 'intel' | 'cpu';
 export interface HardwareProfile {
@@ -175,7 +175,7 @@ export interface GpuStats {
     /** VRAM total in MB */
     vramTotalMB: number;
 }
-export type WsEventType = 'worker:discovered' | 'worker:accepted' | 'worker:updated' | 'worker:offline' | 'worker:progress' | 'worker:stats' | 'job:queued' | 'job:progress' | 'job:complete' | 'job:failed' | 'job:removed' | 'job:cleared' | 'scan:summary' | 'scan:progress' | 'stats:update' | 'system:warning';
+export type WsEventType = 'worker:discovered' | 'worker:accepted' | 'worker:updated' | 'worker:offline' | 'worker:progress' | 'worker:stats' | 'job:queued' | 'job:paused' | 'job:progress' | 'job:complete' | 'job:failed' | 'job:removed' | 'job:cleared' | 'scan:summary' | 'scan:progress' | 'stats:update' | 'system:warning';
 export interface WsEvent<T = unknown> {
     event: WsEventType;
     data: T;

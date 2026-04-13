@@ -66,21 +66,40 @@ export function startDispatcher(): void {
   console.log(`  Dispatcher running (30s fallback heartbeat; event-driven on enqueue/complete)`);
 }
 
-// Exported so routes/jobs.ts, watcher.ts, and workers.ts can trigger dispatch immediately
+// Re-entrancy guard: prevents concurrent dispatchNext() calls from racing each other
+let dispatching = false;
+
+// Exported so routes/jobs.ts, watcher.ts, and workers.ts can trigger dispatch immediately.
+// Loops until no more idle workers or no more queued jobs (handles max_concurrent_jobs).
 export async function dispatchNext(): Promise<void> {
+  if (dispatching) return; // already running — new jobs will be picked up by the ongoing loop
+  dispatching = true;
+  try {
+    // Safety cap: max 20 iterations per call (avoids infinite loop on bugs)
+    for (let i = 0; i < 20; i++) {
+      const dispatched = await dispatchOne();
+      if (!dispatched) break;
+    }
+  } finally {
+    dispatching = false;
+  }
+}
+
+// Dispatch a single job-worker pair. Returns true if a job was dispatched, false if nothing to do.
+async function dispatchOne(): Promise<boolean> {
   const queuedJobs = getJobsByStatus('queued');
-  if (queuedJobs.length === 0) return; // nothing to do, stay quiet
+  if (queuedJobs.length === 0) return false;
 
   // Enforce max_concurrent_jobs setting
   const maxRow = getDb().prepare("SELECT value FROM settings WHERE key = 'max_concurrent_jobs'").get() as any;
   const maxConcurrent = maxRow ? parseInt(maxRow.value, 10) : 0;
   if (maxConcurrent > 0) {
     const activeCount = (getDb().prepare(
-      "SELECT COUNT(*) as cnt FROM jobs WHERE status IN ('dispatched','transcoding','swapping')"
+      "SELECT COUNT(*) as cnt FROM jobs WHERE status IN ('dispatched','transcoding','swapping','receiving','sending')"
     ).get() as any).cnt;
     if (activeCount >= maxConcurrent) {
       console.log(`⏳ Max concurrent jobs (${maxConcurrent}) reached — ${activeCount} active`);
-      return;
+      return false;
     }
   }
 
@@ -95,13 +114,12 @@ export async function dispatchNext(): Promise<void> {
       const summary = allWorkers.map(w => `${w.name}:${w.status}`).join(', ');
       console.log(`⏳ ${queuedJobs.length} job(s) queued — no idle workers (${summary})`);
     }
-    return;
+    return false;
   }
 
   // Find first dispatchable job+worker pair (respecting pinned_worker_id)
   let job = queuedJobs[0];
   let worker = idleWorkers[0];
-  // If first job has a pin, find the matching idle worker
   const pinned = queuedJobs.find(j => j.pinnedWorkerId && idleWorkers.some(w => w.id === j.pinnedWorkerId));
   const unpinned = queuedJobs.find(j => !j.pinnedWorkerId);
   if (pinned) {
@@ -111,9 +129,8 @@ export async function dispatchNext(): Promise<void> {
     job = unpinned;
     worker = idleWorkers[0];
   } else {
-    // All queued jobs are pinned to workers that aren't idle yet
     console.log(`⏳ ${queuedJobs.length} job(s) queued — pinned workers not idle yet`);
-    return;
+    return false;
   }
 
   const recipe = [...BUILT_IN_RECIPES, ...(() => {
@@ -122,7 +139,7 @@ export async function dispatchNext(): Promise<void> {
       return row ? JSON.parse(row.value) : [];
     } catch { return []; }
   })()].find((r: any) => r.id === job.recipe);
-  if (!recipe) return;
+  if (!recipe) return false;
 
   const workerRow = getDb().prepare('SELECT smb_mappings, connection_mode FROM workers WHERE id = ?').get(worker.id) as any;
   const connectionMode: ConnectionMode = (workerRow?.connection_mode ?? 'smb') as ConnectionMode;
@@ -150,6 +167,11 @@ export async function dispatchNext(): Promise<void> {
   const mainHost  = rawHost === '0.0.0.0' ? getRoutableIp(worker.host) : rawHost;
   const mainPort  = Number(process.env.PORT ?? process.env.MAIN_PORT ?? 3001);
   const callbackToken = nanoid(32);
+
+  // Mark the worker as active in DB immediately before the async fetch,
+  // so the next iteration of dispatchOne() doesn't try to use the same worker.
+  getDb().prepare('UPDATE workers SET status = ? WHERE id = ?').run('active', worker.id);
+  updateJobStatus(job.id, 'dispatched', { worker_id: worker.id, callback_token: callbackToken, dispatched_at: Math.floor(Date.now() / 1000) });
 
   let payload: JobPayload;
 
@@ -205,12 +227,15 @@ export async function dispatchNext(): Promise<void> {
       throw new Error(`Worker returned ${res.status}: ${text}`);
     }
 
-    updateJobStatus(job.id, 'dispatched', { worker_id: worker.id, callback_token: callbackToken, dispatched_at: Math.floor(Date.now() / 1000) });
-    getDb().prepare('UPDATE workers SET status = ? WHERE id = ?').run('active', worker.id);
     broadcast('job:progress', { ...getJob(job.id), workerName: worker.name });
     console.log(`✅ Dispatched successfully → ${worker.name}`);
+    return true;
   } catch (err: any) {
+    // Roll back the optimistic status update so the job re-queues on next dispatch attempt
+    updateJobStatus(job.id, 'queued', { worker_id: null, callback_token: null, dispatched_at: null });
+    getDb().prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(worker.id);
     console.error(`❌ Failed to dispatch to ${worker.name} (${worker.host}:${worker.port}):`, err.message);
+    return false;
   }
 }
 

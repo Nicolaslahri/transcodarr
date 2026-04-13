@@ -148,11 +148,13 @@ export async function jobsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // POST /api/jobs/:id/cancel — cancel an active job and re-queue it
+  // POST /api/jobs/:id/cancel — pause an active job (sets status='paused', does NOT auto-re-dispatch)
+  // The worker's cleanup callback is the sole gate for releasing the worker.
+  // User must click Resume to put the job back in the dispatch queue.
   app.post<{ Params: { id: string } }>('/:id/cancel', async (req, reply) => {
     const job = getJob(req.params.id);
     if (!job) return reply.status(404).send({ error: 'Not found' });
-    if (!['dispatched', 'transcoding', 'swapping'].includes(job.status)) {
+    if (!['dispatched', 'transcoding', 'receiving', 'sending', 'swapping'].includes(job.status)) {
       return reply.status(400).send({ error: 'Job is not active' });
     }
 
@@ -165,23 +167,36 @@ export async function jobsRoutes(app: FastifyInstance) {
             method: 'DELETE',
             signal: AbortSignal.timeout(5_000),
           });
-        } catch { /* worker unreachable — still re-queue */ }
+        } catch { /* worker unreachable — still pause */ }
       }
     }
 
-    // Re-queue at same sort_order.
-    // NOTE: do NOT mark worker idle here — the worker's cleanup callback (complete route)
-    // is the single source of truth for releasing the worker. Marking idle + dispatching
-    // here would race with the callback, potentially sending two jobs to the same worker.
+    // Set to 'paused' (not 'queued') so dispatchNext() won't auto-pick it up again.
+    // Worker cleanup callback will release the worker via the complete route.
     const db = getDb();
     const now = Math.floor(Date.now() / 1000);
     db.prepare(
       'UPDATE jobs SET status = ?, worker_id = NULL, phase = NULL, progress = 0, callback_token = NULL, dispatched_at = NULL, fps = NULL, eta = NULL, error = NULL, updated_at = ? WHERE id = ?'
-    ).run('queued', now, req.params.id);
+    ).run('paused', now, req.params.id);
 
+    const updated = getJob(req.params.id);
+    broadcast('job:paused', updated);
+    broadcast('stats:update', getStats());
+    return updated;
+  });
+
+  // POST /api/jobs/:id/resume — un-pause a job and put it back in the queue
+  app.post<{ Params: { id: string } }>('/:id/resume', async (req, reply) => {
+    const job = getJob(req.params.id);
+    if (!job) return reply.status(404).send({ error: 'Not found' });
+    if (job.status !== 'paused') return reply.status(400).send({ error: 'Job is not paused' });
+    const now = Math.floor(Date.now() / 1000);
+    getDb().prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?')
+      .run('queued', now, req.params.id);
     const updated = getJob(req.params.id);
     broadcast('job:queued', updated);
     broadcast('stats:update', getStats());
+    dispatchNext().catch(() => {});
     return updated;
   });
 

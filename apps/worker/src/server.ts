@@ -190,15 +190,33 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
 
   currentJob = { jobId: payload.jobId, fileName, progress: 0, phase: mode === 'wireless' ? 'receiving' : 'transcoding' };
 
-  const sendProgress = async (progress: number, fps?: number, eta?: number, phase = 'transcoding') => {
+  // Progress throttle — don't spam Main more than once every 500ms
+  let lastProgressSent = 0;
+
+  const sendProgress = async (progress: number, fps?: number, eta?: number, phase = 'transcoding', force = false) => {
     currentJob = { jobId: payload.jobId, fileName, progress, fps, phase };
+
+    // Print terminal progress line (overwrite in place)
+    const fpsStr  = fps != null ? ` · ${fps.toFixed(1)} fps` : '';
+    const phaseStr = phase === 'transcoding' ? 'Transcoding' : phase === 'receiving' ? 'Downloading' : phase === 'sending' ? 'Uploading' : phase;
+    const bar = '█'.repeat(Math.floor(progress / 5)) + '░'.repeat(20 - Math.floor(progress / 5));
+    process.stdout.write(`\r   ${phaseStr} [${bar}] ${progress}%${fpsStr}   `);
+    if (progress >= 99 || phase === 'swapping') process.stdout.write('\n');
+
+    const now = Date.now();
+    if (!force && now - lastProgressSent < 500) return;
+    lastProgressSent = now;
+
     try {
       await fetch(progressUrl, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ workerId, progress, fps, eta, phase }),
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${payload.callbackToken}`,
+        },
+        body: JSON.stringify({ workerId, progress, fps, eta, phase }),
       });
-    } catch { /* best-effort */ }
+    } catch { /* best-effort — Main may be temporarily unreachable */ }
   };
 
   // ─── Wireless pipeline ────────────────────────────────────────────────────
@@ -266,9 +284,10 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
       try { if (localInput  && fs.existsSync(localInput))  fs.unlinkSync(localInput);  } catch { /**/ }
       try { if (localOutput && fs.existsSync(localOutput)) fs.unlinkSync(localOutput); } catch { /**/ }
 
+      process.stdout.write('\n');
       await fetch(completeUrl, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${payload.callbackToken}` },
         body:    JSON.stringify({ workerId, callbackToken: payload.callbackToken, success: false, error: err.message }),
       }).catch(() => {});
       console.error(`❌ [Wireless] Pipeline failed: ${err.message}`);
@@ -285,9 +304,11 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
       await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding');
     });
 
+    await sendProgress(100, undefined, undefined, 'swapping', true);
+
     await fetch(completeUrl, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${payload.callbackToken}` },
       body:    JSON.stringify({
         workerId,
         callbackToken: payload.callbackToken,
@@ -301,9 +322,10 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
     const saved = Math.round((result.sizeBefore - result.sizeAfter) / 1e6);
     console.log(`✅ [SMB] Done! Saved ${saved} MB (${result.sizeBefore} → ${result.sizeAfter} bytes)`);
   } catch (err: any) {
+    process.stdout.write('\n');
     await fetch(completeUrl, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${payload.callbackToken}` },
       body:    JSON.stringify({ workerId, callbackToken: payload.callbackToken, success: false, error: err.message }),
     });
     console.error(`❌ [SMB] Transcoding failed: ${err.message}`);

@@ -172,6 +172,12 @@ export async function workersRoutes(app: FastifyInstance) {
         'dispatched'; // receiving / sending stay as 'dispatched' in DB; phase field carries the detail
       db.prepare('UPDATE jobs SET progress = ?, fps = ?, eta = ?, phase = ?, status = ?, updated_at = ? WHERE id = ?')
         .run(progress, fps ?? null, eta ?? null, phase, dbStatus, Math.floor(Date.now() / 1000), req.params.jobId);
+      // Terminal progress display on Main
+      const fpsStr  = fps != null ? ` · ${fps.toFixed(1)} fps` : '';
+      const bar     = '█'.repeat(Math.floor(progress / 5)) + '░'.repeat(20 - Math.floor(progress / 5));
+      process.stdout.write(`\r   [Main] ${phase} [${bar}] ${progress}%${fpsStr}   `);
+      if (progress >= 99) process.stdout.write('\n');
+
       broadcast('job:progress', { jobId: req.params.jobId, workerId, progress, fps, eta, phase, status: dbStatus });
       broadcast('worker:progress', { workerId, progress, fps, eta, phase });
       return { ok: true };

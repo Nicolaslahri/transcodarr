@@ -41,7 +41,10 @@ async function main() {
     console.log('✅ Worker health poller active (20s interval)');
 
     // 6. Start job dispatcher
-    process.env.MAIN_HOST = getLocalIp();
+    // Only auto-detect if MAIN_HOST was not explicitly set (or was set to the bind-all sentinel)
+    if (!process.env.MAIN_HOST || process.env.MAIN_HOST === '0.0.0.0') {
+      process.env.MAIN_HOST = getLocalIp();
+    }
     startDispatcher();
     console.log(`✅ Dispatcher started (callback: ${process.env.MAIN_HOST}:${PORT})`);
 

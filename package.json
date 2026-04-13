@@ -1,6 +1,6 @@
 {
   "name": "transcodarr",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "private": true,
   "packageManager": "npm@10.8.2",
   "workspaces": [

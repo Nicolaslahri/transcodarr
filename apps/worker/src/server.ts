@@ -192,11 +192,26 @@ export async function createWorkerServer(port: number) {
 // ─── Background pipeline ──────────────────────────────────────────────────────
 
 async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireless'): Promise<void> {
-  // Use mainHost/mainPort from the job payload so callbacks always hit the correct LAN IP,
-  // regardless of what mainUrl was configured at worker startup (avoids Docker bridge IP issues).
-  const callbackBase = (payload.mainHost && payload.mainPort)
-    ? `http://${payload.mainHost}:${payload.mainPort}`
-    : mainUrl.replace(/\/$/, '');
+  // Always use the worker's own mainUrl (user-configured) as the callback base.
+  // Main may be running in Docker and can only see its container-internal IPs, so
+  // payload.mainHost / the URLs embedded in the payload may contain 127.0.0.1 or a
+  // Docker bridge IP that the worker cannot reach. mainUrl is what the user set and
+  // is guaranteed to be a routable address from the worker's perspective.
+  const callbackBase = mainUrl.replace(/\/$/, '');
+
+  // Also fix the download/upload URLs that Main embedded in the payload: replace
+  // their host with the correct host from mainUrl so they route properly.
+  const fixPayloadUrl = (url?: string): string => {
+    if (!url) return callbackBase;
+    try {
+      const base = new URL(callbackBase);
+      const u    = new URL(url);
+      u.hostname = base.hostname;
+      u.port     = base.port;
+      return u.toString();
+    } catch { return url; }
+  };
+
   const progressUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/progress`;
   const completeUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/complete`;
   const fileName = (payload.smbPath ?? payload.filePath).split(/[\\\/]/).pop() ?? payload.filePath;
@@ -238,8 +253,8 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
   // ─── Wireless pipeline ────────────────────────────────────────────────────
 
   if (mode === 'wireless') {
-    const downloadUrl = payload.downloadUrl!;
-    const uploadUrl   = payload.uploadUrl!;
+    const downloadUrl = fixPayloadUrl(payload.downloadUrl);
+    const uploadUrl   = fixPayloadUrl(payload.uploadUrl);
     let localInput: string | undefined;
     let localOutput: string | undefined;
 

@@ -184,6 +184,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             setScanSummary(data);
             setScanProgress(null); // clear in-progress banner on completion
             break;
+          case 'system:warning':
+            addToast({ type: 'warning', title: data.title, message: data.message });
+            break;
         }
       } catch { /* ignore */ }
     };

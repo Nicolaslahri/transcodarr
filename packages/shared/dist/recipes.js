@@ -181,10 +181,12 @@ export function buildFfmpegArgs(recipe, hw, langs) {
             args.push(...buildLangMaps(langs));
             const enc = getVideoEncoder(hw, 'h264');
             args.push('-c:v', enc);
+            // Level 5.1 supports up to 4K (4096×2304); 4.1 only allows up to 1080p and causes
+            // nvenc to reject 4K input with "Nothing was written into output file"
             if (enc === 'libx264')
-                args.push('-crf', '20', '-preset', 'fast', '-profile:v', 'high', '-level:v', '4.1');
+                args.push('-crf', '20', '-preset', 'fast', '-profile:v', 'high', '-level:v', '5.1');
             else
-                args.push('-qp', '20', '-preset', 'p2', '-profile:v', 'high', '-level:v', '4.1');
+                args.push('-qp', '20', '-preset', 'p2', '-profile:v', 'high', '-level:v', '5.1');
             args.push('-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
             break;
         }

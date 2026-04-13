@@ -7,19 +7,48 @@ import { fireWebhooks } from '../webhooks.js';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
 import fs from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const MAIN_VERSION: string = (() => {
+  try { return require('../../../package.json').version; } catch { return 'unknown'; }
+})();
 
 function rowToWorker(row: any): WorkerInfo {
+  const workerVersion    = row.version ?? undefined;
+  const versionMismatch  = workerVersion != null && workerVersion !== MAIN_VERSION;
   return {
-    id:             row.id,
-    name:           row.name,
-    host:           row.host,
-    port:           row.port,
-    status:         row.status,
-    hardware:       JSON.parse(row.hardware ?? '{}'),
-    smbMappings:    JSON.parse(row.smb_mappings ?? '[]'),
-    connectionMode: (row.connection_mode ?? 'smb') as ConnectionMode,
-    lastSeen:       row.last_seen,
+    id:              row.id,
+    name:            row.name,
+    host:            row.host,
+    port:            row.port,
+    status:          row.status,
+    hardware:        JSON.parse(row.hardware ?? '{}'),
+    smbMappings:     JSON.parse(row.smb_mappings ?? '[]'),
+    connectionMode:  (row.connection_mode ?? 'smb') as ConnectionMode,
+    lastSeen:        row.last_seen,
+    version:         workerVersion,
+    versionMismatch,
   };
+}
+
+/**
+ * Perform a version + capability sanity check between Main and a newly
+ * connecting worker. Broadcasts warning toasts for the UI if anything
+ * looks wrong, but never blocks the connection.
+ */
+function sanityCheck(workerId: string, workerName: string, workerVersion?: string): void {
+  if (!workerVersion) return; // old worker without version reporting — skip
+
+  if (workerVersion !== MAIN_VERSION) {
+    const msg = `${workerName} is running v${workerVersion} but Main is v${MAIN_VERSION}. `
+      + `Update both nodes to the same version to avoid compatibility issues.`;
+    console.warn(`⚠️  [Sanity] Version mismatch with ${workerName}: worker=${workerVersion} main=${MAIN_VERSION}`);
+    broadcast('worker:updated', rowToWorker(getDb().prepare('SELECT * FROM workers WHERE id = ?').get(workerId) as any));
+    broadcast('system:warning', { title: 'Worker version mismatch', message: msg, workerId });
+  } else {
+    console.log(`✅ [Sanity] ${workerName} version OK (v${workerVersion})`);
+  }
 }
 
 export async function workersRoutes(app: FastifyInstance) {
@@ -46,14 +75,15 @@ export async function workersRoutes(app: FastifyInstance) {
       const workerId = meta.id ?? meta.name;
       const existing = db.prepare('SELECT id FROM workers WHERE id = ?').get(workerId);
       
+      const workerVersion = meta.version ?? undefined;
       if (!existing) {
-        db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen) VALUES (?,?,?,?,'pending',?,?)`)
-          .run(workerId, meta.name, ip, port, JSON.stringify(meta.hardware ?? {}), Math.floor(Date.now() / 1000));
+        db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen, version) VALUES (?,?,?,?,'pending',?,?,?)`)
+          .run(workerId, meta.name, ip, port, JSON.stringify(meta.hardware ?? {}), Math.floor(Date.now() / 1000), workerVersion ?? null);
         broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(workerId) as any));
       } else {
         // Update existing (might have changed port/IP)
-        db.prepare('UPDATE workers SET host = ?, port = ?, last_seen = ? WHERE id = ?')
-          .run(ip, port, Math.floor(Date.now() / 1000), workerId);
+        db.prepare('UPDATE workers SET host = ?, port = ?, last_seen = ?, version = ? WHERE id = ?')
+          .run(ip, port, Math.floor(Date.now() / 1000), workerVersion ?? null, workerId);
       }
       return { ok: true };
     } catch (err: any) {
@@ -62,32 +92,31 @@ export async function workersRoutes(app: FastifyInstance) {
   });
 
   // POST /api/workers/register — called by Worker on boot (fallback if mDNS fails)
-  app.post<{ Body: { id: string; name: string; host: string; port: number; hardware: any } }>(
+  app.post<{ Body: { id: string; name: string; host: string; port: number; hardware: any; version?: string } }>(
     '/register',
     async (req) => {
-      const { id, name, host, port, hardware } = req.body;
+      const { id, name, host, port, hardware, version } = req.body;
       const realHost = req.ip && req.ip !== '127.0.0.1' && req.ip !== '::1' ? req.ip : host;
       const db = getDb();
 
       const existing = db.prepare('SELECT id, status FROM workers WHERE id = ?').get(id) as any;
       if (existing) {
-        // If it was previously accepted, transition smoothly back to idle (skipping pending)
-        // Note: include 'online' to recover any workers corrupted by the old health poller
         const wasAccepted = ['idle', 'active', 'offline', 'online'].includes(existing.status);
         const newStatus = wasAccepted ? 'idle' : existing.status;
-        db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ?, status = ? WHERE id = ?')
-          .run(realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), newStatus, id);
+        db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ?, status = ?, version = ? WHERE id = ?')
+          .run(realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), newStatus, version ?? null, id);
         if (wasAccepted) {
           broadcast('worker:updated', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
-          console.log(`🔄 Worker re-registered (HTTP): ${name} → ${newStatus}`);
+          console.log(`🔄 Worker re-registered (HTTP): ${name} v${version ?? '?'} → ${newStatus}`);
+          sanityCheck(id, name, version);
         }
       } else {
-        db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen) VALUES (?,?,?,?,'pending',?,?)`)
-          .run(id, name, realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000));
+        db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen, version) VALUES (?,?,?,?,'pending',?,?,?)`)
+          .run(id, name, realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), version ?? null);
         broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
-        console.log(`🔍 New worker registered (HTTP): ${name} (${realHost}:${port})`);
+        console.log(`🔍 New worker registered (HTTP): ${name} v${version ?? '?'} (${realHost}:${port})`);
       }
-      return { ok: true };
+      return { ok: true, mainVersion: MAIN_VERSION };
     },
   );
 

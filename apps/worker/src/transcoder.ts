@@ -44,8 +44,10 @@ function getFileDuration(inputPath: string): number {
 function parseProgressLine(line: string, duration: number): Partial<ProgressUpdate> | null {
   if (!line.includes('time=')) return null;
 
-  const timeMatch = line.match(/time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
-  const fpsMatch  = line.match(/fps=\s*([0-9.]+)/);
+  const timeMatch  = line.match(/time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
+  const fpsMatch   = line.match(/fps=\s*([0-9.]+)/);
+  // speed=1.96x → ffmpeg processes 1.96 seconds of video per real second
+  const speedMatch = line.match(/speed=\s*([0-9.]+)x/);
   if (!timeMatch) return null;
 
   const elapsed = parseInt(timeMatch[1]) * 3600
@@ -55,9 +57,16 @@ function parseProgressLine(line: string, duration: number): Partial<ProgressUpda
 
   const progress = duration > 0 ? Math.min(99, Math.round((elapsed / duration) * 100)) : 0;
   const fps      = fpsMatch ? parseFloat(fpsMatch[1]) : undefined;
-  const eta      = (duration > 0 && fps && fps > 0)
-    ? Date.now() + ((duration - elapsed) / fps) * 1000
-    : undefined;
+
+  // Prefer speed= for ETA (most accurate). Fall back to fps / assumed 24fps source.
+  const speed = speedMatch ? parseFloat(speedMatch[1]) : undefined;
+  const eta = (() => {
+    const remaining = duration - elapsed;
+    if (duration <= 0 || remaining <= 0) return undefined;
+    if (speed && speed > 0) return Date.now() + (remaining / speed) * 1000;
+    if (fps && fps > 0)     return Date.now() + (remaining / (fps / 24)) * 1000; // fallback
+    return undefined;
+  })();
 
   return { progress, fps, eta, phase: 'transcoding' };
 }

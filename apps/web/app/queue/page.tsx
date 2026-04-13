@@ -39,17 +39,18 @@ function formatEta(etaMs: number): string {
 const PHASE_CONFIG: Record<string, {
   label: string;
   Icon: React.FC<{ className?: string }>;
-  accent: string;       // Tailwind text colour
-  border: string;       // card left border + glow
-  barBg: string;        // progress bar fill
-  chip: string;         // chip bg + border
+  accent: string;
+  border: string;
+  barBg: string;
+  chip: string;
+  sortPriority: number; // lower = shown first
 }> = {
-  queued:      { label: 'Queued',              Icon: Clock,            accent: 'text-blue-400',    border: 'border-l-blue-500/40',      barBg: 'bg-blue-500',    chip: 'bg-blue-500/10 border-blue-500/30 text-blue-400' },
-  dispatched:  { label: 'Waiting for Worker',  Icon: Timer,            accent: 'text-yellow-400',  border: 'border-l-yellow-500/40',    barBg: 'bg-yellow-500',  chip: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' },
-  receiving:   { label: 'Downloading',         Icon: ArrowDownToLine,  accent: 'text-sky-400',     border: 'border-l-sky-500/60',       barBg: 'bg-sky-400',     chip: 'bg-sky-500/10 border-sky-500/30 text-sky-400' },
-  transcoding: { label: 'Transcoding',         Icon: Zap,              accent: 'text-primary',     border: 'border-l-primary/70',       barBg: 'bg-primary',     chip: 'bg-primary/10 border-primary/30 text-primary' },
-  sending:     { label: 'Uploading Result',    Icon: Upload,           accent: 'text-violet-400',  border: 'border-l-violet-500/60',    barBg: 'bg-violet-400',  chip: 'bg-violet-500/10 border-violet-500/30 text-violet-400' },
-  swapping:    { label: 'Finishing Up',        Icon: RefreshCw,        accent: 'text-orange-400',  border: 'border-l-orange-500/60',    barBg: 'bg-orange-400',  chip: 'bg-orange-500/10 border-orange-500/30 text-orange-400' },
+  transcoding: { label: 'Transcoding',       Icon: Zap,             accent: 'text-primary',     border: 'border-l-primary/70',        barBg: 'bg-primary',    chip: 'bg-primary/10 border-primary/30 text-primary',          sortPriority: 0 },
+  receiving:   { label: 'Downloading File',  Icon: ArrowDownToLine, accent: 'text-sky-400',     border: 'border-l-sky-500/60',        barBg: 'bg-sky-400',    chip: 'bg-sky-500/10 border-sky-500/30 text-sky-400',          sortPriority: 1 },
+  sending:     { label: 'Uploading Result',  Icon: Upload,          accent: 'text-violet-400',  border: 'border-l-violet-500/60',     barBg: 'bg-violet-400', chip: 'bg-violet-500/10 border-violet-500/30 text-violet-400', sortPriority: 2 },
+  swapping:    { label: 'Finishing Up',      Icon: RefreshCw,       accent: 'text-orange-400',  border: 'border-l-orange-500/60',     barBg: 'bg-orange-400', chip: 'bg-orange-500/10 border-orange-500/30 text-orange-400', sortPriority: 3 },
+  dispatched:  { label: 'Ready to Dispatch', Icon: Timer,           accent: 'text-yellow-400',  border: 'border-l-yellow-500/40',     barBg: 'bg-yellow-500', chip: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400', sortPriority: 4 },
+  queued:      { label: 'Queued',            Icon: Clock,           accent: 'text-blue-400',    border: 'border-l-blue-500/40',       barBg: 'bg-blue-500',   chip: 'bg-blue-500/10 border-blue-500/30 text-blue-400',       sortPriority: 5 },
 };
 
 // ─── Scan Summary Banner ───────────────────────────────────────────────────────
@@ -137,14 +138,21 @@ export default function QueuePage() {
 
   useEffect(() => { if (scanSummary) setLocalScan(scanSummary); }, [scanSummary]);
 
-  const activeJobs    = jobs.filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));
+  const activeJobs = jobs
+    .filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status))
+    .sort((a, b) => {
+      const pa = PHASE_CONFIG[a.phase ?? a.status]?.sortPriority ?? 99;
+      const pb = PHASE_CONFIG[b.phase ?? b.status]?.sortPriority ?? 99;
+      return pa - pb;
+    });
   const completedJobs = jobs.filter(j => j.status === 'complete');
   const failedJobs    = jobs.filter(j => j.status === 'failed');
 
-  const clearAll  = () => fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
-  const removeJob = (id: string) => fetch(`${apiUrl}/api/jobs/${id}`, { method: 'DELETE' });
+  const clearHistory = () => fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
+  const retryAll     = () => fetch(`${apiUrl}/api/jobs/retry-all`, { method: 'POST' });
+  const removeJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}`, { method: 'DELETE' });
 
-  const canClear = completedJobs.length > 0 || failedJobs.length > 0 || activeJobs.some(j => j.status === 'queued');
+  const canClear = completedJobs.length > 0 || failedJobs.length > 0;
 
   return (
     <div className="p-10 max-w-7xl mx-auto space-y-6">
@@ -155,11 +163,11 @@ export default function QueuePage() {
         </div>
         {canClear && (
           <button
-            onClick={clearAll}
+            onClick={clearHistory}
             className="flex items-center gap-2 px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-sm font-medium"
           >
             <Trash2 className="w-4 h-4" />
-            Clear All
+            Clear History
           </button>
         )}
       </header>
@@ -186,11 +194,20 @@ export default function QueuePage() {
 
       {failedJobs.length > 0 && (
         <section>
-          <h2 className="text-xs font-bold uppercase tracking-widest text-red-400/70 mb-3">
-            Failed ({failedJobs.length})
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-red-400/70">
+              Failed ({failedJobs.length})
+            </h2>
+            <button
+              onClick={retryAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 hover:text-white border border-red-500/20 hover:border-red-500/40 hover:bg-red-500/10 rounded-lg transition-all"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Retry All
+            </button>
+          </div>
           <div className="space-y-2">
-            {failedJobs.map(job => <FailedJobRow key={job.id} job={job} onRemove={() => removeJob(job.id)} />)}
+            {failedJobs.map(job => <FailedJobRow key={job.id} job={job} onRemove={() => removeJob(job.id)} onRetry={() => fetch(`${apiUrl}/api/jobs/${job.id}/retry`, { method: 'POST' })} />)}
           </div>
         </section>
       )}
@@ -342,7 +359,7 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
 
 // ─── Failed Job Row ───────────────────────────────────────────────────────────
 
-function FailedJobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
+function FailedJobRow({ job, onRemove, onRetry }: { job: Job; onRemove: () => void; onRetry: () => void }) {
   const from = codecLabel(job.codecIn);
   const to   = targetCodecLabel(job.recipe);
   return (
@@ -357,7 +374,10 @@ function FailedJobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
         <ArrowRight className="w-3 h-3 text-textMuted" />
         <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
       </div>
-      <button onClick={onRemove} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors shrink-0">
+      <button onClick={onRetry} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-yellow-400 transition-colors shrink-0" title="Retry">
+        <RefreshCw className="w-4 h-4" />
+      </button>
+      <button onClick={onRemove} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors shrink-0" title="Remove">
         <XCircle className="w-4 h-4" />
       </button>
     </div>

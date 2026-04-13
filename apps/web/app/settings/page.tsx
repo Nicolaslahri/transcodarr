@@ -622,9 +622,9 @@ function TransferPanel({ apiUrl }: { apiUrl: string }) {
       <div className="flex items-start gap-3 p-4 bg-primary/5 border border-primary/15 rounded-xl">
         <Info className="w-4 h-4 text-primary/70 mt-0.5 shrink-0" />
         <p className="text-xs text-primary/80 leading-relaxed">
-          <strong className="text-white">SMB / Network Share</strong> — the worker accesses your media directly via a mounted network share. Set up the base path mapping once; all subfolders are resolved automatically.
+          <strong className="text-white">Shared Drive</strong> — the worker reads and writes your media files directly via a mapped network drive. Faster; requires a NAS or shared folder mounted on the worker.
           <br />
-          <strong className="text-white">Wireless Transfer</strong> — no shared filesystem needed. Files are transferred to the worker before transcoding and sent back when done.
+          <strong className="text-white">Direct Transfer</strong> — no network drive needed. The app sends the file to the worker over Wi-Fi/LAN, transcodes it, then sends the result back. Works anywhere.
         </p>
       </div>
 
@@ -724,11 +724,11 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
           </div>
           {mode === 'wireless' ? (
             <span className="px-2 py-1 text-xs font-medium rounded-lg border bg-blue-500/10 text-blue-400 border-blue-500/20 flex items-center gap-1">
-              <Wifi className="w-3 h-3" /> Wireless Transfer
+              <Wifi className="w-3 h-3" /> Direct Transfer
             </span>
           ) : (
             <span className="px-2 py-1 text-xs font-medium rounded-lg border bg-green-500/10 text-green-400 border-green-500/20 flex items-center gap-1">
-              <HardDrive className="w-3 h-3" /> Network Share (SMB)
+              <HardDrive className="w-3 h-3" /> Shared Drive
             </span>
           )}
         </div>
@@ -740,14 +740,14 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
             className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all
               ${mode === 'smb' ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-background border-border text-textMuted hover:text-white'}`}
           >
-            <HardDrive className="w-4 h-4" /> SMB / Network Share
+            <HardDrive className="w-4 h-4" /> Shared Drive
           </button>
           <button
             onClick={() => setMode('wireless')}
             className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-sm font-medium transition-all
               ${mode === 'wireless' ? 'bg-blue-500/10 border-blue-500/40 text-blue-400' : 'bg-background border-border text-textMuted hover:text-white'}`}
           >
-            <Wifi className="w-4 h-4" /> Wireless Transfer
+            <Wifi className="w-4 h-4" /> Direct Transfer
           </button>
         </div>
 

@@ -90,7 +90,6 @@ export function initDb(): void {
 
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_worker ON jobs(worker_id);
-    CREATE INDEX IF NOT EXISTS idx_jobs_sort ON jobs(sort_order);
   `);
 
   // Migrations — safely add columns if they don't exist yet
@@ -107,6 +106,7 @@ export function initDb(): void {
   migrate(`ALTER TABLE jobs ADD COLUMN callback_token TEXT`);
   // v4 migrations
   migrate(`ALTER TABLE jobs ADD COLUMN sort_order INTEGER`);
+  migrate(`CREATE INDEX IF NOT EXISTS idx_jobs_sort ON jobs(sort_order)`);
   migrate(`ALTER TABLE jobs ADD COLUMN pinned_worker_id TEXT`);
   migrate(`ALTER TABLE jobs ADD COLUMN has_subtitles INTEGER DEFAULT 0`);
   migrate(`ALTER TABLE jobs ADD COLUMN avg_fps REAL`);

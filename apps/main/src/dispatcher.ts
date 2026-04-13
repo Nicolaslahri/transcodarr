@@ -7,13 +7,27 @@ import { nanoid } from 'nanoid';
 import path from 'path';
 import os from 'os';
 
-function getRoutableIp(): string {
-  for (const ifaces of Object.values(os.networkInterfaces())) {
-    for (const iface of ifaces ?? []) {
-      if (!iface.internal && iface.family === 'IPv4') return iface.address;
+function getRoutableIp(preferSubnet?: string): string {
+  const candidates: string[] = [];
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.family !== 'IPv4' || addr.internal) continue;
+      const p = addr.address.split('.').map(Number);
+      if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) continue; // Docker bridge range
+      if (p[0] === 169 && p[1] === 254) continue;              // link-local
+      candidates.push(addr.address);
     }
   }
-  return '127.0.0.1';
+  // Prefer an interface on the same /24 as the worker (most reliable for cross-device transfers)
+  if (preferSubnet) {
+    const prefix = preferSubnet.split('.').slice(0, 3).join('.');
+    const match = candidates.find(ip => ip.startsWith(prefix + '.'));
+    if (match) return match;
+  }
+  return candidates.find(ip => ip.startsWith('192.168.'))
+    ?? candidates.find(ip => ip.startsWith('10.'))
+    ?? candidates[0]
+    ?? '127.0.0.1';
 }
 
 const DISPATCH_INTERVAL_MS = 30_000; // Fallback heartbeat; actual dispatch is event-driven
@@ -133,7 +147,7 @@ export async function dispatchNext(): Promise<void> {
   })();
 
   const rawHost   = process.env.MAIN_HOST ?? '0.0.0.0';
-  const mainHost  = rawHost === '0.0.0.0' ? getRoutableIp() : rawHost;
+  const mainHost  = rawHost === '0.0.0.0' ? getRoutableIp(worker.host) : rawHost;
   const mainPort  = Number(process.env.PORT ?? process.env.MAIN_PORT ?? 3001);
   const callbackToken = nanoid(32);
 

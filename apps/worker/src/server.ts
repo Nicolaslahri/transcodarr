@@ -192,7 +192,11 @@ export async function createWorkerServer(port: number) {
 // ─── Background pipeline ──────────────────────────────────────────────────────
 
 async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireless'): Promise<void> {
-  const callbackBase = mainUrl.replace(/\/$/, '');
+  // Use mainHost/mainPort from the job payload so callbacks always hit the correct LAN IP,
+  // regardless of what mainUrl was configured at worker startup (avoids Docker bridge IP issues).
+  const callbackBase = (payload.mainHost && payload.mainPort)
+    ? `http://${payload.mainHost}:${payload.mainPort}`
+    : mainUrl.replace(/\/$/, '');
   const progressUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/progress`;
   const completeUrl  = `${callbackBase}/api/workers/jobs/${payload.jobId}/complete`;
   const fileName = (payload.smbPath ?? payload.filePath).split(/[\\\/]/).pop() ?? payload.filePath;

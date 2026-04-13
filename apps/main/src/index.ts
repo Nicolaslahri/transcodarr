@@ -55,13 +55,20 @@ async function main() {
 }
 
 function getLocalIp(): string {
-  const ifaces = os.networkInterfaces();
-  for (const iface of Object.values(ifaces)) {
-    for (const addr of iface ?? []) {
-      if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+  const candidates: string[] = [];
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.family !== 'IPv4' || addr.internal) continue;
+      const p = addr.address.split('.').map(Number);
+      if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) continue; // Docker bridge range
+      if (p[0] === 169 && p[1] === 254) continue;              // link-local
+      candidates.push(addr.address);
     }
   }
-  return '127.0.0.1';
+  return candidates.find(ip => ip.startsWith('192.168.'))
+    ?? candidates.find(ip => ip.startsWith('10.'))
+    ?? candidates[0]
+    ?? '127.0.0.1';
 }
 
 main().catch(err => {

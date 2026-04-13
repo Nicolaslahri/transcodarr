@@ -38,6 +38,16 @@ export function analyzeFile(filePath: string): FileAnalysis | null {
 
 // ─── Queue CRUD ───────────────────────────────────────────────────────────────
 
+/** Record a file as processed so it won't be re-queued even after "Clear All". */
+export function recordProcessedFile(filePath: string, fileSize: number, recipeId: string): void {
+  try {
+    getDb().prepare(`
+      INSERT OR REPLACE INTO processed_files (file_path, recipe, file_size, processed_at)
+      VALUES (?, ?, ?, ?)
+    `).run(filePath, recipeId, fileSize, Math.floor(Date.now() / 1000));
+  } catch { /* non-critical */ }
+}
+
 export function enqueueFile(filePath: string, recipeId: string, force = false): Job | null {
   const db = getDb();
   const recipe = BUILT_IN_RECIPES.find(r => r.id === recipeId);
@@ -47,6 +57,9 @@ export function enqueueFile(filePath: string, recipeId: string, force = false): 
   // If not forced (auto-scanned by Watcher), reject if ANY record of the file exists.
   // If forced (manual click via UI), only reject if it's currently actively processing.
   if (!force) {
+    // Check persistent fingerprint first (survives "Clear All")
+    const processed = db.prepare('SELECT file_path FROM processed_files WHERE file_path = ? AND recipe = ?').get(filePath, recipeId);
+    if (processed) return null;
     const existing = db.prepare('SELECT id FROM jobs WHERE file_path = ?').get(filePath);
     if (existing) return null;
   } else {

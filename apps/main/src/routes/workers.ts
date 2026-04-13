@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { getDb } from '../db.js';
 import { broadcast } from '../server.js';
 import { dispatchNext } from '../dispatcher.js';
+import { getStats, recordProcessedFile } from '../queue.js';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
 import fs from 'fs';
 import path from 'path';
@@ -164,12 +165,14 @@ export async function workersRoutes(app: FastifyInstance) {
         const provided = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
         if (provided !== jobRow.callback_token) return reply.status(401).send({ error: 'Unauthorized' });
       }
-      const activeStatus = ['receiving', 'transcoding', 'swapping'].includes(phase) ? phase
-        : phase === 'sending' ? 'sending'
-        : 'dispatched';
+      // Map phase → valid JobStatus for DB storage
+      const dbStatus =
+        phase === 'transcoding' ? 'transcoding' :
+        phase === 'swapping'    ? 'swapping'    :
+        'dispatched'; // receiving / sending stay as 'dispatched' in DB; phase field carries the detail
       db.prepare('UPDATE jobs SET progress = ?, fps = ?, eta = ?, phase = ?, status = ?, updated_at = ? WHERE id = ?')
-        .run(progress, fps ?? null, eta ?? null, phase, activeStatus === 'transcoding' ? 'transcoding' : 'dispatched', Math.floor(Date.now() / 1000), req.params.jobId);
-      broadcast('job:progress', { jobId: req.params.jobId, workerId, progress, fps, eta, phase });
+        .run(progress, fps ?? null, eta ?? null, phase, dbStatus, Math.floor(Date.now() / 1000), req.params.jobId);
+      broadcast('job:progress', { jobId: req.params.jobId, workerId, progress, fps, eta, phase, status: dbStatus });
       broadcast('worker:progress', { workerId, progress, fps, eta, phase });
       return { ok: true };
     },
@@ -200,11 +203,16 @@ export async function workersRoutes(app: FastifyInstance) {
         }
         db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?')
           .run('complete', sizeBefore ?? null, sizeAfter ?? null, now, now, req.params.jobId);
+        // Persist fingerprint so "Clear All" doesn't re-queue this file
+        const jobMeta = db.prepare('SELECT file_path, recipe FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+        if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore ?? 0, jobMeta.recipe);
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });
+        broadcast('stats:update', getStats());
       } else {
         db.prepare('UPDATE jobs SET status = ?, phase = NULL, error = ?, updated_at = ? WHERE id = ?')
           .run('failed', error ?? 'Unknown error', now, req.params.jobId);
         broadcast('job:failed', { jobId: req.params.jobId, error });
+        broadcast('stats:update', getStats());
       }
 
       db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
@@ -238,7 +246,7 @@ export async function workersRoutes(app: FastifyInstance) {
       // Update job phase to 'receiving' (from worker's perspective)
       db.prepare("UPDATE jobs SET phase = 'receiving', status = 'dispatched', updated_at = ? WHERE id = ?")
         .run(Math.floor(Date.now() / 1000), req.params.jobId);
-      broadcast('job:progress', { jobId: req.params.jobId, progress: 0, phase: 'receiving' });
+      broadcast('job:progress', { jobId: req.params.jobId, progress: 0, phase: 'receiving', status: 'dispatched' });
 
       const stream = fs.createReadStream(filePath);
       return reply.send(stream);
@@ -298,7 +306,11 @@ export async function workersRoutes(app: FastifyInstance) {
         db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?')
           .run('complete', sizeBefore, sizeAfter, now, now, req.params.jobId);
         db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
+        // Persist fingerprint so "Clear All" doesn't re-queue this file
+        const jobMeta = db.prepare('SELECT file_path, recipe FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+        if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore, jobMeta.recipe);
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });
+        broadcast('stats:update', getStats());
         // Trigger next job immediately
         dispatchNext().catch(() => {});
 
@@ -311,6 +323,7 @@ export async function workersRoutes(app: FastifyInstance) {
           .run('failed', err.message, now, req.params.jobId);
         db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
         broadcast('job:failed', { jobId: req.params.jobId, error: err.message });
+        broadcast('stats:update', getStats());
         // Trigger next job even on failure (worker is now idle)
         dispatchNext().catch(() => {});
         return reply.status(500).send({ error: err.message });

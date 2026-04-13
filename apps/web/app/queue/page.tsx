@@ -1,7 +1,7 @@
 'use client';
 
 import { useAppState, type ScanSummary } from '@/hooks/useTranscodarrSocket';
-import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, ChevronRight } from 'lucide-react';
+import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock } from 'lucide-react';
 import type { Job } from '@transcodarr/shared';
 import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
@@ -20,15 +20,20 @@ function codecLabel(raw?: string): string {
   return CODEC_LABELS[normalized] ?? raw.toUpperCase();
 }
 
-function containerLabel(recipe: string): string {
-  const r = BUILT_IN_RECIPES.find(x => x.id === recipe);
-  return r ? r.targetContainer.toUpperCase() : '?';
-}
-
 function targetCodecLabel(recipe: string): string {
   const r = BUILT_IN_RECIPES.find(x => x.id === recipe);
   if (!r) return '?';
   return CODEC_LABELS[r.targetCodec] ?? r.targetCodec.toUpperCase();
+}
+
+function formatEta(etaMs: number): string {
+  const secs = Math.max(0, Math.round((etaMs - Date.now()) / 1000));
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
 }
 
 // ─── Scan Summary Banner ───────────────────────────────────────────────────────
@@ -96,7 +101,6 @@ export default function QueuePage() {
 
   const clearAll = async () => {
     await fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
-    // Real-time update comes via WebSocket
   };
 
   const removeJob = async (id: string) => {
@@ -121,7 +125,6 @@ export default function QueuePage() {
         )}
       </header>
 
-      {/* Scan result banner */}
       {localScan && (
         <ScanBanner summary={localScan} onDismiss={() => setLocalScan(null)} />
       )}
@@ -144,7 +147,6 @@ export default function QueuePage() {
         </div>
       </section>
 
-      {/* Failed Jobs */}
       {failedJobs.length > 0 && (
         <section>
           <h2 className="text-sm font-bold uppercase tracking-widest text-red-400/70 mb-4">
@@ -158,7 +160,6 @@ export default function QueuePage() {
         </section>
       )}
 
-      {/* Completed Jobs */}
       {completedJobs.length > 0 && (
         <section>
           <h2 className="text-sm font-bold uppercase tracking-widest text-textMuted mb-4">
@@ -197,12 +198,27 @@ function ConversionBadge({ job }: { job: Job }) {
   );
 }
 
+// Phase → display config
+const PHASE_CONFIG: Record<string, { label: string; color: string; barColor: string }> = {
+  queued:      { label: 'Queued',                  color: 'text-blue-400 border-blue-400/30 bg-blue-400/10',      barColor: 'bg-blue-400' },
+  dispatched:  { label: 'Waiting for Worker',       color: 'text-yellow-400 border-yellow-400/30 bg-yellow-400/10', barColor: 'bg-yellow-400' },
+  receiving:   { label: '📡 Downloading to Worker', color: 'text-sky-400 border-sky-400/30 bg-sky-400/10',         barColor: 'bg-sky-400' },
+  transcoding: { label: '🎬 Transcoding',           color: 'text-primary border-primary/30 bg-primary/10',         barColor: 'bg-primary' },
+  sending:     { label: '📤 Uploading Result',      color: 'text-violet-400 border-violet-400/30 bg-violet-400/10', barColor: 'bg-violet-400' },
+  swapping:    { label: '🔄 Finishing Up',          color: 'text-orange-400 border-orange-400/30 bg-orange-400/10', barColor: 'bg-orange-400' },
+};
+
 function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
-  const isTranscoding = job.status === 'transcoding';
+  // Use phase for display detail; fall back to status
+  const phaseKey = job.phase ?? job.status;
+  const cfg = PHASE_CONFIG[phaseKey] ?? PHASE_CONFIG[job.status] ?? { label: job.status.toUpperCase(), color: 'text-textMuted border-border bg-background', barColor: 'bg-primary' };
+
+  // Animate wave for any processing phase (not just transcoding, and not queued/dispatched)
+  const isAnimating = ['receiving', 'transcoding', 'sending', 'swapping'].includes(phaseKey);
   const waveRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isTranscoding && waveRef.current) {
+    if (isAnimating && waveRef.current) {
       const bars = waveRef.current.children;
       const ctx  = gsap.context(() => {
         gsap.to(bars, {
@@ -213,82 +229,75 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
       }, waveRef);
       return () => ctx.revert();
     }
-  }, [isTranscoding]);
+  }, [isAnimating]);
 
-  const statusColor: Record<string, string> = {
-    queued:      'text-blue-400 border-blue-400/30 bg-blue-400/10',
-    dispatched:  'text-yellow-400 border-yellow-400/30 bg-yellow-400/10',
-    receiving:   'text-sky-400 border-sky-400/30 bg-sky-400/10',
-    transcoding: 'text-primary border-primary/30 bg-primary/10',
-    sending:     'text-violet-400 border-violet-400/30 bg-violet-400/10',
-    swapping:    'text-orange-400 border-orange-400/30 bg-orange-400/10',
-  };
-  const statusClass = statusColor[job.status] ?? 'text-textMuted border-border bg-background';
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!job.eta) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [job.eta]);
 
-  // User-friendly labels for internal status/phase values
-  const statusLabel: Record<string, string> = {
-    queued:      'Queued',
-    dispatched:  'Waiting for Worker',
-    receiving:   'Downloading to Worker',
-    transcoding: 'Transcoding',
-    sending:     'Uploading Result',
-    swapping:    'Finishing Up',
-  };
-  const phaseEmoji: Record<string, string> = {
-    receiving:   '📡',
-    transcoding: '🎬',
-    sending:     '📤',
-    swapping:    '🔄',
-  };
-  const currentPhase = (job as any).phase as string | undefined;
-  const displayLabel = currentPhase
-    ? `${phaseEmoji[currentPhase] ?? ''} ${statusLabel[currentPhase] ?? currentPhase}`.trim()
-    : statusLabel[job.status] ?? job.status.toUpperCase();
+  const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'swapping'].includes(job.status);
 
   return (
-    <div className="bg-surface border border-border rounded-xl p-4 flex items-center gap-4">
-      <div className="p-3 bg-background rounded-xl shrink-0">
-        <Film className="w-5 h-5 text-textMuted" />
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <h3 className="text-white font-medium truncate text-sm">{job.fileName}</h3>
-        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-          <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded border ${statusClass}`}>
-            {displayLabel}
-          </span>
-          <ConversionBadge job={job} />
-          {job.fps && <span className="text-xs text-textMuted">{job.fps} fps</span>}
+    <div className="bg-surface border border-border rounded-xl overflow-hidden">
+      <div className="p-4 flex items-center gap-4">
+        <div className="p-3 bg-background rounded-xl shrink-0">
+          <Film className="w-5 h-5 text-textMuted" />
         </div>
-      </div>
 
-      <div className="flex items-center gap-4 shrink-0">
-        {isTranscoding && (
-          <div ref={waveRef} className="flex items-end gap-[2px] h-6 w-8">
-            <div className="w-1.5 h-2 bg-primary rounded-sm transform scale-y-50 origin-bottom" />
-            <div className="w-1.5 h-4 bg-primary rounded-sm transform scale-y-50 origin-bottom" />
-            <div className="w-1.5 h-6 bg-primary rounded-sm transform scale-y-50 origin-bottom" />
-            <div className="w-1.5 h-3 bg-primary rounded-sm transform scale-y-50 origin-bottom" />
-          </div>
-        )}
-
-        <div className="w-28 text-right">
-          <p className="text-xs text-textMuted mb-1">{job.progress}%</p>
-          <div className="h-1.5 bg-background rounded-full overflow-hidden border border-border">
-            <div
-              className="h-full bg-primary transition-all duration-500 ease-out"
-              style={{ width: `${job.progress}%` }}
-            />
+        <div className="flex-1 min-w-0">
+          <h3 className="text-white font-medium truncate text-sm mb-1.5">{job.fileName}</h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded border ${cfg.color}`}>
+              {cfg.label}
+            </span>
+            <ConversionBadge job={job} />
+            {job.fps != null && job.fps > 0 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
+                {job.fps.toFixed(1)} fps
+              </span>
+            )}
           </div>
         </div>
 
-        <button
-          onClick={onRemove}
-          disabled={['transcoding', 'dispatched', 'swapping'].includes(job.status)}
-          className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          <XCircle className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-4 shrink-0">
+          {isAnimating && (
+            <div ref={waveRef} className="flex items-end gap-[2px] h-6 w-8">
+              <div className="w-1.5 h-2 bg-primary rounded-sm transform scale-y-50 origin-bottom" />
+              <div className="w-1.5 h-4 bg-primary rounded-sm transform scale-y-50 origin-bottom" />
+              <div className="w-1.5 h-6 bg-primary rounded-sm transform scale-y-50 origin-bottom" />
+              <div className="w-1.5 h-3 bg-primary rounded-sm transform scale-y-50 origin-bottom" />
+            </div>
+          )}
+
+          <div className="w-28 text-right">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs text-textMuted">{job.progress}%</span>
+              {job.eta && job.eta > Date.now() && (
+                <span className="text-[10px] text-textMuted flex items-center gap-0.5">
+                  <Clock className="w-2.5 h-2.5" />
+                  {formatEta(job.eta)}
+                </span>
+              )}
+            </div>
+            <div className="h-1.5 bg-background rounded-full overflow-hidden border border-border">
+              <div
+                className={`h-full transition-all duration-500 ease-out ${cfg.barColor}`}
+                style={{ width: `${job.progress}%` }}
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={onRemove}
+            disabled={!canRemove}
+            className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <XCircle className="w-5 h-5" />
+          </button>
+        </div>
       </div>
     </div>
   );

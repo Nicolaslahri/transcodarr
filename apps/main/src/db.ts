@@ -71,6 +71,14 @@ export function initDb(): void {
       value TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS processed_files (
+      file_path    TEXT NOT NULL,
+      recipe       TEXT NOT NULL,
+      file_size    INTEGER,
+      processed_at INTEGER DEFAULT (unixepoch()),
+      PRIMARY KEY (file_path, recipe)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_worker ON jobs(worker_id);
   `);

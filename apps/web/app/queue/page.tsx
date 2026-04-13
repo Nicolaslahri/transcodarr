@@ -1,7 +1,7 @@
 'use client';
 
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
-import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User } from 'lucide-react';
+import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import gsap from 'gsap';
@@ -285,15 +285,14 @@ export default function QueuePage() {
           <h1 className="text-4xl font-bold tracking-tight text-white mb-2">Queue</h1>
           <p className="text-textMuted">Active transcodes and processing history.</p>
         </div>
-        {canClear && (
-          <button
-            onClick={clearHistory}
-            className="flex items-center gap-2 px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-sm font-medium"
-          >
-            <Trash2 className="w-4 h-4" />
-            Clear History
-          </button>
-        )}
+        <button
+          onClick={clearHistory}
+          disabled={!canClear}
+          className="flex items-center gap-2 px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent"
+        >
+          <Trash2 className="w-4 h-4" />
+          Clear History
+        </button>
       </header>
 
       <LiveStrip jobs={jobs} />
@@ -457,7 +456,7 @@ function JobRow({
   const cfg = PHASE_CONFIG[phaseKey] ?? PHASE_CONFIG['dispatched'];
   const { Icon } = cfg;
 
-  const isProcessing = ['receiving', 'transcoding', 'sending', 'swapping'].includes(phaseKey);
+  const isProcessing = ['dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(phaseKey);
   const waveRef = useRef<HTMLDivElement>(null);
 
   // dnd-kit sortable hook — only active for draggable rows
@@ -581,10 +580,10 @@ function JobRow({
           {isProcessing ? (
             <button
               onClick={onCancel}
-              title="Cancel and re-queue"
+              title="Pause — cancel and re-queue"
               className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-amber-400 transition-colors"
             >
-              <XCircle className="w-4 h-4" />
+              <PauseCircle className="w-4 h-4" />
             </button>
           ) : (
             <button

@@ -1,6 +1,7 @@
 'use client';
 
-import { createContext, useContext, useState, ReactNode, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, ReactNode, useCallback, useRef, useEffect } from 'react';
+import { Cpu, CheckCircle2, AlertCircle, Info, X, Check, Trash2 } from 'lucide-react';
 import gsap from 'gsap';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -56,8 +57,8 @@ export function useToast() {
 function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: string) => void }) {
   return (
     <div
-      style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 9999 }}
-      className="flex flex-col gap-3 pointer-events-none"
+      style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 99999, pointerEvents: 'none' }}
+      className="flex flex-col gap-3"
     >
       {toasts.map(t => (
         <ToastCard key={t.id} toast={t} onDismiss={onDismiss} />
@@ -69,67 +70,80 @@ function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id
 function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
 
-  // Entrance animation
-  const handleRef = (el: HTMLDivElement | null) => {
-    if (!el) return;
-    (ref as any).current = el;
-    gsap.fromTo(el,
-      { x: 60, opacity: 0, scale: 0.95 },
-      { x: 0, opacity: 1, scale: 1, duration: 0.4, ease: 'back.out(1.4)' }
+  useEffect(() => {
+    if (!ref.current) return;
+    gsap.fromTo(ref.current,
+      { x: 64, opacity: 0 },
+      { x: 0, opacity: 1, duration: 0.35, ease: 'power3.out' }
     );
-  };
+  }, []);
 
+  // cb fires immediately — animation is purely cosmetic
   const dismiss = (cb?: () => void) => {
-    if (!ref.current) { cb?.(); onDismiss(toast.id); return; }
+    cb?.();
+    if (!ref.current) { onDismiss(toast.id); return; }
     gsap.to(ref.current, {
-      x: 60, opacity: 0, scale: 0.9, duration: 0.25, ease: 'power2.in',
-      onComplete: () => { cb?.(); onDismiss(toast.id); }
+      x: 64, opacity: 0, duration: 0.2, ease: 'power2.in',
+      onComplete: () => onDismiss(toast.id),
     });
   };
 
   const isWorker = toast.type === 'worker-discovered';
 
+  const iconMap = {
+    'worker-discovered': <Cpu className="w-4 h-4 text-yellow-400" />,
+    'success':           <CheckCircle2 className="w-4 h-4 text-green-400" />,
+    'error':             <AlertCircle className="w-4 h-4 text-red-400" />,
+    'info':              <Info className="w-4 h-4 text-primary" />,
+  };
+
+  const accentColor = {
+    'worker-discovered': 'border-yellow-500/30',
+    'success':           'border-green-500/30',
+    'error':             'border-red-500/30',
+    'info':              'border-primary/30',
+  }[toast.type];
+
   return (
     <div
-      ref={handleRef}
-      className={`pointer-events-auto w-[360px] rounded-2xl border shadow-2xl shadow-black/40 overflow-hidden
-        ${isWorker
-          ? 'bg-[#111] border-yellow-500/40 shadow-yellow-500/5'
-          : 'bg-surface border-border'
-        }`}
+      ref={ref}
+      style={{ pointerEvents: 'auto' }}
+      className={`w-80 rounded-2xl border bg-surface shadow-2xl shadow-black/50 overflow-hidden ${accentColor}`}
     >
-      {/* Top accent bar */}
-      {isWorker && <div className="h-0.5 w-full bg-gradient-to-r from-yellow-500 via-orange-400 to-yellow-500" />}
+      {/* Accent top line */}
+      {isWorker && <div className="h-px w-full bg-gradient-to-r from-transparent via-yellow-500/60 to-transparent" />}
 
       <div className="p-4">
-        <div className="flex items-start gap-3 mb-3">
-          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-lg
-            ${isWorker ? 'bg-yellow-500/10' : 'bg-primary/10'}`}>
-            {isWorker ? '🟡' : toast.type === 'success' ? '✅' : toast.type === 'error' ? '❌' : 'ℹ️'}
+        <div className="flex items-start gap-3">
+          <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0
+            ${isWorker ? 'bg-yellow-500/10' : toast.type === 'success' ? 'bg-green-500/10' : toast.type === 'error' ? 'bg-red-500/10' : 'bg-primary/10'}`}>
+            {iconMap[toast.type]}
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="font-bold text-white text-sm">{toast.title}</p>
-            <p className="text-textMuted text-xs mt-0.5 truncate">{toast.message}</p>
+          <div className="flex-1 min-w-0 pt-0.5">
+            <p className="font-semibold text-white text-sm leading-tight">{toast.title}</p>
+            <p className="text-textMuted text-xs mt-0.5 leading-relaxed">{toast.message}</p>
           </div>
           <button
             onClick={() => dismiss()}
-            className="text-textMuted hover:text-white transition-colors text-xs shrink-0 p-1"
-          >✕</button>
+            className="text-textMuted hover:text-white transition-colors p-1 shrink-0 -mt-0.5 -mr-1 rounded-lg hover:bg-white/5"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         {isWorker && toast.onAccept && (
-          <div className="flex gap-2 mt-2">
+          <div className="flex gap-2 mt-3">
             <button
               onClick={() => dismiss(toast.onAccept)}
-              className="flex-1 py-2 px-3 bg-yellow-500 hover:bg-yellow-400 text-black text-xs font-bold rounded-xl transition-colors"
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 bg-yellow-500 hover:bg-yellow-400 text-black text-xs font-bold rounded-xl transition-colors"
             >
-              ✓ Add to Fleet
+              <Check className="w-3.5 h-3.5" /> Add to Fleet
             </button>
             <button
               onClick={() => dismiss(toast.onReject)}
-              className="py-2 px-3 bg-background hover:bg-border text-textMuted text-xs font-medium rounded-xl transition-colors border border-border"
+              className="flex items-center justify-center gap-1.5 py-2 px-3 bg-background hover:bg-white/5 text-textMuted hover:text-white text-xs font-medium rounded-xl border border-border transition-colors"
             >
-              Reject
+              <Trash2 className="w-3.5 h-3.5" /> Reject
             </button>
           </div>
         )}

@@ -10,7 +10,7 @@ const DISPATCH_INTERVAL_MS = 30_000; // Fallback heartbeat; actual dispatch is e
 
 // ─── SMB path translation ─────────────────────────────────────────────────────
 
-function translatePath(filePath: string, mappings: SmbMapping[]): string | undefined {
+function translatePath(filePath: string, mappings: SmbMapping[]): { smbPath: string; smbBasePath: string } | undefined {
   for (const mapping of mappings) {
     // Normalize separators
     const base = mapping.networkBasePath.replace(/\\/g, '/').replace(/\/$/, '');
@@ -19,7 +19,7 @@ function translatePath(filePath: string, mappings: SmbMapping[]): string | undef
 
     if (normalized.startsWith(base)) {
       const relative = normalized.slice(base.length).replace(/\//g, path.sep);
-      return path.join(local, relative);
+      return { smbPath: path.join(local, relative), smbBasePath: local };
     }
   }
   return undefined;
@@ -91,19 +91,20 @@ export async function dispatchNext(): Promise<void> {
     };
     console.log(`📡 Wireless mode: worker will download/upload via ${baseUrl}`);
   } else {
-    const smbPath = translatePath(job.filePath, workerMappings);
+    const translated = translatePath(job.filePath, workerMappings);
     payload = {
       jobId:        job.id,
       filePath:     job.filePath,
-      smbPath,
+      smbPath:      translated?.smbPath,
+      smbBasePath:  translated?.smbBasePath,
       recipe,
       mainHost,
       mainPort,
       callbackToken,
       transferMode: 'smb',
     };
-    if (smbPath) {
-      console.log(`📂 SMB mode: ${job.filePath} → ${smbPath}`);
+    if (translated) {
+      console.log(`📂 SMB mode: ${job.filePath} → ${translated.smbPath} (base: ${translated.smbBasePath})`);
     } else {
       console.log(`⚠️  SMB mode but no path mapping for ${job.filePath} — worker will use filePath directly`);
     }

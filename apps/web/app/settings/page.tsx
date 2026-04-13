@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight,
   Filter, Settings2, BookOpen, Info, ArrowLeftRight,
@@ -16,8 +17,8 @@ type Tab = 'folders' | 'filters' | 'recipes' | 'transfer' | 'general';
 
 export default function SettingsPage() {
   const { meta, apiUrl } = useAppState();
+  const searchParams = useSearchParams();
 
-  // Support ?tab=transfer deep-link from Fleet page
   const [tab, setTab] = useState<Tab>(() => {
     if (typeof window !== 'undefined') {
       const p = new URLSearchParams(window.location.search).get('tab') as Tab | null;
@@ -25,6 +26,12 @@ export default function SettingsPage() {
     }
     return meta.mode === 'worker' ? 'general' : 'folders';
   });
+
+  // Respond to client-side navigation (?tab=transfer from Fleet page)
+  useEffect(() => {
+    const p = searchParams.get('tab') as Tab | null;
+    if (p) setTab(p);
+  }, [searchParams]);
 
   const effectiveTab = meta.mode === 'worker' && tab !== 'general' ? 'general' : tab;
 
@@ -633,6 +640,15 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
   const [mappings, setMappings] = useState<SmbMapping[]>(worker.smbMappings ?? []);
   const [saving, setSaving]     = useState(false);
   const [saveOk, setSaveOk]     = useState(false);
+  const [dirty, setDirty]       = useState(false);
+  const initializedRef          = useRef(false);
+
+  // Mark dirty when user changes mode or mappings (skip on initial mount)
+  useEffect(() => {
+    if (!initializedRef.current) { initializedRef.current = true; return; }
+    setDirty(true);
+    setSaveOk(false);
+  }, [mode, JSON.stringify(mappings)]);
 
   const fetchMainFs = useCallback(async (p?: string): Promise<FsResult> => {
     const url = `${apiUrl}/api/settings/fs${p ? `?path=${encodeURIComponent(p)}` : ''}`;
@@ -676,7 +692,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
         body: JSON.stringify({ connectionMode: mode, mappings }),
       });
       setSaveOk(true);
-      setTimeout(() => setSaveOk(false), 2000);
+      setDirty(false);
     } finally {
       setSaving(false);
     }
@@ -832,11 +848,11 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
         <div className="flex justify-end pt-1 border-t border-border">
           <button
             onClick={save}
-            disabled={saving}
+            disabled={saving || (!dirty && saveOk)}
             className={`mt-4 px-5 py-2.5 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 flex items-center gap-1.5
-              ${saveOk ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-primary text-background hover:bg-primary/90'}`}
+              ${saveOk && !dirty ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-primary text-background hover:bg-primary/90'}`}
           >
-            {saving ? 'Saving…' : saveOk ? '✓ Saved' : 'Save Transfer Config'}
+            {saving ? 'Saving…' : saveOk && !dirty ? '✓ Saved' : 'Save Transfer Config'}
           </button>
         </div>
       </div>

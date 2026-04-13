@@ -129,6 +129,8 @@ export interface JobPayload {
   filePath: string;
   /** Translated path if Worker has an SMB mapping covering filePath (SMB mode only) */
   smbPath?: string;
+  /** Worker-side base path of the matching SMB mapping — used as fallback search root if smbPath doesn't exist */
+  smbBasePath?: string;
   recipe: Recipe;
   mainHost: string;
   mainPort: number;

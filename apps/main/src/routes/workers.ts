@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { getDb } from '../db.js';
 import { broadcast } from '../server.js';
+import { dispatchNext } from '../dispatcher.js';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
 import fs from 'fs';
 import path from 'path';
@@ -153,11 +154,16 @@ export async function workersRoutes(app: FastifyInstance) {
   });
 
   // POST /api/workers/jobs/:jobId/progress — progress callback from Worker
-  app.post<{ Params: { jobId: string }; Body: { workerId: string; progress: number; fps?: number; eta?: number; phase: string } }>(
+  app.post<{ Params: { jobId: string }; Headers: { authorization?: string }; Body: { workerId: string; progress: number; fps?: number; eta?: number; phase: string } }>(
     '/jobs/:jobId/progress',
-    async (req) => {
+    async (req, reply) => {
       const { workerId, progress, fps, eta, phase } = req.body;
       const db = getDb();
+      const jobRow = db.prepare('SELECT callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+      if (jobRow?.callback_token) {
+        const provided = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+        if (provided !== jobRow.callback_token) return reply.status(401).send({ error: 'Unauthorized' });
+      }
       const activeStatus = ['receiving', 'transcoding', 'swapping'].includes(phase) ? phase
         : phase === 'sending' ? 'sending'
         : 'dispatched';
@@ -172,25 +178,25 @@ export async function workersRoutes(app: FastifyInstance) {
   // POST /api/workers/jobs/:jobId/complete — job done callback from Worker (SMB mode)
   app.post<{ Params: { jobId: string }; Body: { workerId: string; callbackToken: string; success: boolean; outputPath?: string; sizeBefore?: number; sizeAfter?: number; error?: string } }>(
     '/jobs/:jobId/complete',
-    async (req) => {
-      const { workerId, success, outputPath, sizeBefore, sizeAfter, error } = req.body;
+    async (req, reply) => {
+      const { workerId, callbackToken, success, outputPath, sizeBefore, sizeAfter, error } = req.body;
       const db = getDb();
+      const jobRow = db.prepare('SELECT file_path, callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+      if (jobRow?.callback_token && callbackToken !== jobRow.callback_token) {
+        return reply.status(401).send({ error: 'Unauthorized' });
+      }
       const now = Math.floor(Date.now() / 1000);
 
       if (success) {
-        const job = db.prepare('SELECT file_path FROM jobs WHERE id = ?').get(req.params.jobId) as any;
-        let targetDbPath = job?.file_path;
+        let targetDbPath = jobRow?.file_path;
         if (targetDbPath && outputPath) {
-            import('path').then(pathMod => {
-                const newExt = pathMod.extname(outputPath);
-                const oldExt = pathMod.extname(targetDbPath);
-                if (newExt && newExt !== oldExt) {
-                    targetDbPath = targetDbPath.slice(0, -oldExt.length) + newExt;
-                    const newBase = pathMod.basename(targetDbPath);
-                    db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
-                      .run(targetDbPath, newBase, req.params.jobId);
-                }
-            });
+          const newExt = path.extname(outputPath);
+          const oldExt = path.extname(targetDbPath);
+          if (newExt && newExt !== oldExt) {
+            targetDbPath = targetDbPath.slice(0, -oldExt.length) + newExt;
+            db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
+              .run(targetDbPath, path.basename(targetDbPath), req.params.jobId);
+          }
         }
         db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?')
           .run('complete', sizeBefore ?? null, sizeAfter ?? null, now, now, req.params.jobId);
@@ -202,6 +208,8 @@ export async function workersRoutes(app: FastifyInstance) {
       }
 
       db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
+      // Trigger next job immediately rather than waiting for the 30s poll
+      dispatchNext().catch(() => {});
       return { ok: true };
     },
   );
@@ -211,8 +219,12 @@ export async function workersRoutes(app: FastifyInstance) {
     '/jobs/:jobId/download',
     async (req, reply) => {
       const db = getDb();
-      const job = db.prepare('SELECT file_path, worker_id FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+      const job = db.prepare('SELECT file_path, worker_id, callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       if (!job) return reply.status(404).send({ error: 'Job not found' });
+      if (job.callback_token) {
+        const provided = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+        if (provided !== job.callback_token) return reply.status(401).send({ error: 'Unauthorized' });
+      }
 
       const filePath = job.file_path;
       if (!fs.existsSync(filePath)) return reply.status(404).send({ error: 'File not found on Main' });
@@ -238,8 +250,12 @@ export async function workersRoutes(app: FastifyInstance) {
     '/jobs/:jobId/upload',
     async (req, reply) => {
       const db = getDb();
-      const job = db.prepare('SELECT file_path, worker_id FROM jobs WHERE id = ?').get(req.params.jobId) as any;
+      const job = db.prepare('SELECT file_path, worker_id, callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       if (!job) return reply.status(404).send({ error: 'Job not found' });
+      if (job.callback_token) {
+        const provided = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+        if (provided !== job.callback_token) return reply.status(401).send({ error: 'Unauthorized' });
+      }
 
       const origPath   = job.file_path;
       const sizeBefore = parseInt(req.headers['x-size-before'] ?? '0') || fs.existsSync(origPath) ? fs.statSync(origPath).size : 0;
@@ -283,6 +299,8 @@ export async function workersRoutes(app: FastifyInstance) {
           .run('complete', sizeBefore, sizeAfter, now, now, req.params.jobId);
         db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });
+        // Trigger next job immediately
+        dispatchNext().catch(() => {});
 
         return { ok: true };
       } catch (err: any) {
@@ -293,6 +311,8 @@ export async function workersRoutes(app: FastifyInstance) {
           .run('failed', err.message, now, req.params.jobId);
         db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
         broadcast('job:failed', { jobId: req.params.jobId, error: err.message });
+        // Trigger next job even on failure (worker is now idle)
+        dispatchNext().catch(() => {});
         return reply.status(500).send({ error: err.message });
       }
     },

@@ -6,7 +6,7 @@ import { ensureFfmpeg } from './ffmpeg.js';
 import { startDispatcher } from './dispatcher.js';
 import os from 'os';
 
-const PORT = Number(process.env.MAIN_PORT ?? 3001);
+const PORT = Number(process.env.PORT ?? process.env.MAIN_PORT ?? 3001);
 const HOST = process.env.MAIN_HOST ?? '0.0.0.0';
 
 async function main() {

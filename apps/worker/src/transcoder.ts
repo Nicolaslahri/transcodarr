@@ -116,8 +116,15 @@ export async function transcodeFile(
 
   const bakPath = inputPath + '.bak';
   fs.renameSync(inputPath, bakPath);   // 1. rename original → .bak
-  fs.renameSync(tmpPath, finalPath);   // 2. rename tmp → final
-  fs.unlinkSync(bakPath);              // 3. delete .bak
+  try {
+    fs.renameSync(tmpPath, finalPath); // 2. rename tmp → final
+    fs.unlinkSync(bakPath);            // 3. delete .bak
+  } catch (swapErr) {
+    // Rollback: restore original from .bak so we don't lose the source file
+    try { fs.renameSync(bakPath, inputPath); } catch { /* best effort */ }
+    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* best effort */ }
+    throw swapErr;
+  }
 
   const sizeAfter = fs.statSync(finalPath).size;
   return { sizeBefore, sizeAfter, outputPath: finalPath };

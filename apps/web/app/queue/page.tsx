@@ -225,6 +225,15 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
   };
   const statusClass = statusColor[job.status] ?? 'text-textMuted border-border bg-background';
 
+  // User-friendly labels for internal status/phase values
+  const statusLabel: Record<string, string> = {
+    queued:      'Queued',
+    dispatched:  'Waiting for Worker',
+    receiving:   'Downloading to Worker',
+    transcoding: 'Transcoding',
+    sending:     'Uploading Result',
+    swapping:    'Finishing Up',
+  };
   const phaseEmoji: Record<string, string> = {
     receiving:   '📡',
     transcoding: '🎬',
@@ -232,6 +241,9 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
     swapping:    '🔄',
   };
   const currentPhase = (job as any).phase as string | undefined;
+  const displayLabel = currentPhase
+    ? `${phaseEmoji[currentPhase] ?? ''} ${statusLabel[currentPhase] ?? currentPhase}`.trim()
+    : statusLabel[job.status] ?? job.status.toUpperCase();
 
   return (
     <div className="bg-surface border border-border rounded-xl p-4 flex items-center gap-4">
@@ -243,7 +255,7 @@ function JobRow({ job, onRemove }: { job: Job; onRemove: () => void }) {
         <h3 className="text-white font-medium truncate text-sm">{job.fileName}</h3>
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
           <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded border ${statusClass}`}>
-            {currentPhase ? `${phaseEmoji[currentPhase] ?? ''} ${currentPhase.toUpperCase()}` : job.status.toUpperCase()}
+            {displayLabel}
           </span>
           <ConversionBadge job={job} />
           {job.fps && <span className="text-xs text-textMuted">{job.fps} fps</span>}

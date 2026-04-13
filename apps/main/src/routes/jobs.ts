@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { getJobs, getJob, enqueueFile, updateJobStatus, getStats, deleteJob, clearQueue } from '../queue.js';
 import { broadcast } from '../server.js';
+import { dispatchNext } from '../dispatcher.js';
 
 export async function jobsRoutes(app: FastifyInstance) {
   // GET /api/jobs
@@ -24,6 +25,7 @@ export async function jobsRoutes(app: FastifyInstance) {
   app.post<{ Body: { filePath: string; recipe: string } }>('/', async (req, reply) => {
     const job = enqueueFile(req.body.filePath, req.body.recipe, true);
     if (!job) return reply.status(400).send({ error: 'Could not enqueue file (already queued, skipped, or unreadable)' });
+    dispatchNext().catch(() => {});
     return job;
   });
 
@@ -52,6 +54,7 @@ export async function jobsRoutes(app: FastifyInstance) {
     if (!job) return reply.status(404).send({ error: 'Not found' });
     if (job.status !== 'failed') return reply.status(400).send({ error: 'Only failed jobs can be retried' });
     updateJobStatus(req.params.id, 'queued', { error: null, progress: 0, worker_id: null });
+    dispatchNext().catch(() => {});
     return getJob(req.params.id);
   });
 }

@@ -6,7 +6,7 @@ import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 import { nanoid } from 'nanoid';
 import path from 'path';
 
-const DISPATCH_INTERVAL_MS = 5_000;
+const DISPATCH_INTERVAL_MS = 30_000; // Fallback heartbeat; actual dispatch is event-driven
 
 // ─── SMB path translation ─────────────────────────────────────────────────────
 
@@ -39,10 +39,11 @@ export function getAcceptedWorkers(): WorkerInfo[] {
 
 export function startDispatcher(): void {
   setInterval(dispatchNext, DISPATCH_INTERVAL_MS);
-  console.log(`  Dispatcher running (every ${DISPATCH_INTERVAL_MS / 1000}s)`);
+  console.log(`  Dispatcher running (30s fallback heartbeat; event-driven on enqueue/complete)`);
 }
 
-async function dispatchNext(): Promise<void> {
+// Exported so routes/jobs.ts, watcher.ts, and workers.ts can trigger dispatch immediately
+export async function dispatchNext(): Promise<void> {
   const queuedJobs = getJobsByStatus('queued');
   if (queuedJobs.length === 0) return; // nothing to do, stay quiet
 
@@ -70,7 +71,7 @@ async function dispatchNext(): Promise<void> {
   const workerMappings: SmbMapping[] = JSON.parse(workerRow?.smb_mappings ?? '[]');
 
   const mainHost  = process.env.MAIN_HOST ?? '0.0.0.0';
-  const mainPort  = Number(process.env.MAIN_PORT ?? 3001);
+  const mainPort  = Number(process.env.PORT ?? process.env.MAIN_PORT ?? 3001);
   const callbackToken = nanoid(32);
 
   let payload: JobPayload;
@@ -124,7 +125,7 @@ async function dispatchNext(): Promise<void> {
       throw new Error(`Worker returned ${res.status}: ${text}`);
     }
 
-    updateJobStatus(job.id, 'dispatched', { worker_id: worker.id });
+    updateJobStatus(job.id, 'dispatched', { worker_id: worker.id, callback_token: callbackToken });
     getDb().prepare('UPDATE workers SET status = ? WHERE id = ?').run('active', worker.id);
     broadcast('job:progress', { ...getJob(job.id), workerName: worker.name });
     console.log(`✅ Dispatched successfully → ${worker.name}`);

@@ -17,7 +17,7 @@ services:
       - "3001:3001"
     environment:
       - NODE_NAME=Transcodarr Main
-      - MAIN_PORT=3001
+      - PORT=3001
       - TZ=Asia/Kolkata
     volumes:
       # ── Config & database (persists across restarts) ──────────────

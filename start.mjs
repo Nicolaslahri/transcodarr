@@ -111,7 +111,9 @@ async function launchRole(role) {
   if (role === 'main') await waitForPortFree(3001);
   console.log(`\n  Starting ${label} on port ${port}...\n`);
 
-  const portEnvKey = role === 'main' ? 'MAIN_PORT' : 'WORKER_PORT';
+  // Both roles now use the unified PORT env var. Legacy MAIN_PORT/WORKER_PORT still work
+  // as fallbacks (see apps/*/src/index.ts), but PORT is the canonical var going forward.
+  const portEnvKey = 'PORT';
 
   if (isProd) {
     const entrypoint = role === 'main' ? 'apps/main/dist/index.js' : 'apps/worker/dist/index.js';

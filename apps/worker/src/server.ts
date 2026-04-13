@@ -207,6 +207,7 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
     const downloadUrl = payload.downloadUrl!;
     const uploadUrl   = payload.uploadUrl!;
     let localInput: string | undefined;
+    let localOutput: string | undefined;
 
     try {
       // Phase 1: Receive the file from Main
@@ -236,6 +237,7 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
           await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding');
         },
       );
+      localOutput = result.outputPath;
 
       // Phase 3: Upload the result back to Main
       console.log(`📤 [Wireless] Uploading result → Main…`);
@@ -256,14 +258,13 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
 
       // Main's /upload endpoint handles job completion & atomic swap
       // Clean up local temp files
-      try {
-        if (fs.existsSync(localInput)) fs.unlinkSync(localInput);
-        if (fs.existsSync(result.outputPath)) fs.unlinkSync(result.outputPath);
-      } catch { /**/ }
+      try { if (fs.existsSync(localInput)) fs.unlinkSync(localInput); } catch { /**/ }
+      try { if (fs.existsSync(result.outputPath)) fs.unlinkSync(result.outputPath); } catch { /**/ }
 
     } catch (err: any) {
-      // Clean up temp file if download succeeded
-      try { if (localInput && fs.existsSync(localInput)) fs.unlinkSync(localInput); } catch { /**/ }
+      // Clean up both temp files regardless of which phase failed
+      try { if (localInput  && fs.existsSync(localInput))  fs.unlinkSync(localInput);  } catch { /**/ }
+      try { if (localOutput && fs.existsSync(localOutput)) fs.unlinkSync(localOutput); } catch { /**/ }
 
       await fetch(completeUrl, {
         method:  'POST',

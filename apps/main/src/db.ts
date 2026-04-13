@@ -85,4 +85,6 @@ export function initDb(): void {
   migrate(`ALTER TABLE workers ADD COLUMN connection_mode TEXT DEFAULT 'smb'`);
   migrate(`ALTER TABLE jobs ADD COLUMN phase TEXT`);
   migrate(`ALTER TABLE jobs ADD COLUMN transfer_mode TEXT DEFAULT 'smb'`);
+  // v3 migrations
+  migrate(`ALTER TABLE jobs ADD COLUMN callback_token TEXT`);
 }

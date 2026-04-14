@@ -181,6 +181,17 @@ export function SocketProvider({ children }: { children: ReactNode }) {
           case 'job:progress':
           case 'job:complete':
           case 'job:failed':
+            // Browser notification when tab is not focused
+            if (event === 'job:complete' || event === 'job:failed') {
+              const notifEnabled = typeof localStorage !== 'undefined'
+                ? localStorage.getItem('transcodarr:notifications') !== 'off'
+                : true;
+              if (notifEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.visibilityState === 'hidden') {
+                const title = event === 'job:complete' ? 'Transcode complete' : 'Transcode failed';
+                const body  = data.fileName ?? (event === 'job:complete' ? 'Job finished successfully' : 'A job encountered an error');
+                new Notification(title, { body, icon: '/favicon.ico', tag: data.jobId });
+              }
+            }
             setJobs(prev => {
               const idx = prev.findIndex(j => j.id === (data.jobId ?? data.id));
               if (idx === -1) return prev;

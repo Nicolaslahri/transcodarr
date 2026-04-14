@@ -187,7 +187,7 @@ interface WatchedPath {
   enabled: boolean; recurse: boolean;
   extensions: string; priority: string; min_size_mb: number;
   preferred_audio_lang?: string; preferred_subtitle_lang?: string;
-  scan_interval_hours?: number; last_scan_at?: number;
+  scan_interval_hours?: number; last_scan_at?: number; move_to?: string;
 }
 
 const LANG_OPTIONS = [
@@ -204,7 +204,7 @@ const LANG_OPTIONS = [
   { value: 'ara', label: 'Arabic (ara)' },
 ];
 
-const BLANK_FORM = { path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100, preferredAudioLang: '', preferredSubtitleLang: '', scanIntervalHours: 0 };
+const BLANK_FORM = { path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100, preferredAudioLang: '', preferredSubtitleLang: '', scanIntervalHours: 0, moveTo: '' };
 
 function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   const [paths, setPaths]     = useState<WatchedPath[]>([]);
@@ -232,7 +232,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   }, []);
 
   const openEdit = (p: WatchedPath) => {
-    setForm({ path: p.path, recipe: p.recipe, recurse: p.recurse, extensions: p.extensions, priority: p.priority, minSizeMb: p.min_size_mb, preferredAudioLang: p.preferred_audio_lang ?? '', preferredSubtitleLang: p.preferred_subtitle_lang ?? '', scanIntervalHours: p.scan_interval_hours ?? 0 });
+    setForm({ path: p.path, recipe: p.recipe, recurse: p.recurse, extensions: p.extensions, priority: p.priority, minSizeMb: p.min_size_mb, preferredAudioLang: p.preferred_audio_lang ?? '', preferredSubtitleLang: p.preferred_subtitle_lang ?? '', scanIntervalHours: p.scan_interval_hours ?? 0, moveTo: p.move_to ?? '' });
     const found = allRecipes.find(r => r.id === p.recipe);
     setSelectedRecipe(found ?? null);
     setEditingId(p.id);
@@ -248,12 +248,13 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   };
 
   const save = async () => {
-    const { preferredAudioLang, preferredSubtitleLang, scanIntervalHours, ...rest } = form;
+    const { preferredAudioLang, preferredSubtitleLang, scanIntervalHours, moveTo, ...rest } = form;
     const payload = {
       ...rest,
       preferred_audio_lang:    preferredAudioLang || null,
       preferred_subtitle_lang: preferredSubtitleLang || null,
       scan_interval_hours:     scanIntervalHours,
+      move_to:                 moveTo || null,
     };
     if (editingId) {
       await fetch(`/api/settings/paths/${editingId}`, {
@@ -461,6 +462,31 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                 <option value={168}>Weekly</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-textMuted font-medium block mb-1.5">
+              Move completed files to <span className="text-textMuted/60">(optional)</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={form.moveTo}
+                onChange={e => setForm(f => ({ ...f, moveTo: e.target.value }))}
+                placeholder="Leave empty to keep files in place"
+                className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
+              />
+              <button
+                type="button"
+                onClick={() => setExplorerOpen(true)}
+                className="px-3 py-2 bg-background border border-border rounded-xl text-textMuted hover:text-white hover:border-primary/40 transition-colors text-xs"
+              >
+                Browse
+              </button>
+            </div>
+            <p className="text-[11px] text-textMuted/50 mt-1">
+              After transcoding completes, the output file will be moved to this directory.
+            </p>
           </div>
 
           <div className="flex gap-2 pt-2">
@@ -1109,6 +1135,56 @@ interface Webhook {
   enabled: number;
 }
 
+function BrowserNotificationsCard() {
+  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [enabled, setEnabled] = useState(true);
+
+  useEffect(() => {
+    if (typeof Notification === 'undefined') { setPermission('unsupported'); return; }
+    setPermission(Notification.permission);
+    setEnabled(localStorage.getItem('transcodarr:notifications') !== 'off');
+  }, []);
+
+  const request = async () => {
+    const result = await Notification.requestPermission();
+    setPermission(result);
+  };
+
+  const toggle = (on: boolean) => {
+    setEnabled(on);
+    localStorage.setItem('transcodarr:notifications', on ? 'on' : 'off');
+  };
+
+  if (permission === 'unsupported') return null;
+
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-6">
+      <h3 className="text-white font-bold text-sm mb-1">Browser Notifications</h3>
+      <p className="text-textMuted text-xs mb-4">
+        Get a desktop notification when a job completes or fails — even when this tab is in the background.
+      </p>
+      {permission !== 'granted' ? (
+        <button
+          onClick={request}
+          className="px-4 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors"
+        >
+          Enable desktop notifications
+        </button>
+      ) : (
+        <label className="flex items-center gap-3 cursor-pointer">
+          <div
+            onClick={() => toggle(!enabled)}
+            className={`relative w-10 h-6 rounded-full transition-colors cursor-pointer ${enabled ? 'bg-primary' : 'bg-border'}`}
+          >
+            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${enabled ? 'left-5' : 'left-1'}`} />
+          </div>
+          <span className="text-sm text-white">Notify me when jobs complete or fail</span>
+        </label>
+      )}
+    </div>
+  );
+}
+
 function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
   const [hooks, setHooks] = useState<Webhook[]>([]);
   const [newUrl, setNewUrl] = useState('');
@@ -1163,6 +1239,8 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
 
   return (
     <div className="space-y-6">
+      <BrowserNotificationsCard />
+
       <div className="bg-surface border border-border rounded-2xl p-6">
         <h3 className="text-white font-bold text-sm mb-1">Webhooks</h3>
         <p className="text-textMuted text-xs mb-5">

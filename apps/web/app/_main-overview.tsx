@@ -12,6 +12,14 @@ interface SpeedStats {
   totalGbSaved: number;
 }
 
+function lastSeenLabel(unixSec: number): string {
+  const secs = Math.floor(Date.now() / 1000) - unixSec;
+  if (secs < 5)   return 'just now';
+  if (secs < 60)  return `${secs}s ago`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  return `${Math.floor(secs / 3600)}h ago`;
+}
+
 const PHASE_LABEL: Record<string, string> = {
   receiving:   'Downloading',
   transcoding: 'Transcoding',
@@ -268,6 +276,13 @@ function WorkerCard({ worker, activeJob }: { worker: WorkerInfo; activeJob: Job 
             No GPU metrics
           </div>
         )
+      )}
+
+      {/* Last seen */}
+      {worker.lastSeen > 0 && (
+        <p className="text-[11px] text-textMuted/40 text-right mt-2">
+          {lastSeenLabel(worker.lastSeen)}
+        </p>
       )}
     </div>
   );

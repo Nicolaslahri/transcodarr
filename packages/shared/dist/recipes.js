@@ -187,7 +187,7 @@ export function buildFfmpegArgs(recipe, hw, langs) {
                 args.push('-crf', '20', '-preset', 'fast', '-profile:v', 'high', '-level:v', '5.1');
             else
                 args.push('-qp', '20', '-preset', 'p2', '-profile:v', 'high', '-level:v', '5.1');
-            args.push('-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
+            args.push('-c:a', 'aac', '-b:a', '192k', '-c:s', 'mov_text', '-movflags', '+faststart');
             break;
         }
         case 'space-saver': {
@@ -209,7 +209,7 @@ export function buildFfmpegArgs(recipe, hw, langs) {
                 args.push('-crf', '23', '-preset', 'fast');
             else
                 args.push('-qp', '23', '-preset', 'p2');
-            args.push('-c:a', 'aac', '-b:a', '192k');
+            args.push('-c:a', 'aac', '-b:a', '192k', '-c:s', 'mov_text');
             break;
         }
         case 'av1-balanced': {
@@ -239,7 +239,7 @@ export function buildFfmpegArgs(recipe, hw, langs) {
                 args.push('-crf', '23', '-preset', 'fast', '-movflags', '+faststart');
             else
                 args.push('-qp', '23', '-preset', 'p2', '-movflags', '+faststart');
-            args.push('-c:a', 'aac', '-b:a', '192k');
+            args.push('-c:a', 'aac', '-b:a', '192k', '-c:s', 'mov_text');
             break;
         }
         case 'anime-cleaner': {
@@ -272,7 +272,7 @@ export function buildFfmpegArgs(recipe, hw, langs) {
                 args.push('-crf', '24', '-preset', 'fast');
             else
                 args.push('-qp', '24', '-preset', 'p3');
-            args.push('-c:a', 'aac', '-b:a', '128k');
+            args.push('-c:a', 'aac', '-b:a', '128k', '-c:s', 'mov_text');
             break;
         }
         case 'audio-normalizer': {

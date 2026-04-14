@@ -103,16 +103,16 @@ export async function settingsRoutes(app: FastifyInstance) {
     recurse?: boolean; extensions?: string;
     priority?: string; minSizeMb?: number;
     preferred_audio_lang?: string | null; preferred_subtitle_lang?: string | null;
-    scan_interval_hours?: number;
+    scan_interval_hours?: number; move_to?: string | null;
   } }>('/paths', async (req, reply) => {
-    const { path: watchPath, recipe, recurse = true, extensions = '.mkv,.mp4,.avi,.ts,.mov', priority = 'normal', minSizeMb = 100, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours = 0 } = req.body;
+    const { path: watchPath, recipe, recurse = true, extensions = '.mkv,.mp4,.avi,.ts,.mov', priority = 'normal', minSizeMb = 100, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours = 0, move_to } = req.body;
     if (!watchPath || !recipe) return reply.status(400).send({ error: 'path and recipe required' });
 
     const id = nanoid();
     getDb().prepare(`
-      INSERT INTO watched_paths (id, path, recipe, recurse, extensions, priority, min_size_mb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, watchPath, recipe, recurse ? 1 : 0, extensions, priority, minSizeMb, preferred_audio_lang ?? null, preferred_subtitle_lang ?? null, scan_interval_hours);
+      INSERT INTO watched_paths (id, path, recipe, recurse, extensions, priority, min_size_mb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, watchPath, recipe, recurse ? 1 : 0, extensions, priority, minSizeMb, preferred_audio_lang ?? null, preferred_subtitle_lang ?? null, scan_interval_hours, move_to ?? null);
 
     // Dynamically hot-reload the watcher
     addWatchedPath(watchPath, recipe);
@@ -135,9 +135,9 @@ export async function settingsRoutes(app: FastifyInstance) {
     recurse?: boolean; extensions?: string;
     priority?: string; minSizeMb?: number;
     preferred_audio_lang?: string | null; preferred_subtitle_lang?: string | null;
-    scan_interval_hours?: number;
+    scan_interval_hours?: number; move_to?: string | null;
   } }>('/paths/:id', async (req) => {
-    const { path: watchPath, recipe, recurse, extensions, priority, minSizeMb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours } = req.body;
+    const { path: watchPath, recipe, recurse, extensions, priority, minSizeMb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to } = req.body;
     const fields: string[] = [];
     const vals: any[] = [];
     if (watchPath !== undefined) { fields.push('path = ?'); vals.push(watchPath); }
@@ -149,6 +149,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (preferred_audio_lang !== undefined) { fields.push('preferred_audio_lang = ?'); vals.push(preferred_audio_lang); }
     if (preferred_subtitle_lang !== undefined) { fields.push('preferred_subtitle_lang = ?'); vals.push(preferred_subtitle_lang); }
     if (scan_interval_hours !== undefined) { fields.push('scan_interval_hours = ?'); vals.push(scan_interval_hours); }
+    if (move_to !== undefined) { fields.push('move_to = ?'); vals.push(move_to ?? null); }
     if (fields.length) {
       vals.push(req.params.id);
       getDb().prepare(`UPDATE watched_paths SET ${fields.join(', ')} WHERE id = ?`).run(...vals);

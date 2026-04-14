@@ -88,7 +88,7 @@ export default function OverviewPage() {
       </header>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 stagger-list">
         <StatCard icon={<Activity className="text-primary w-5 h-5" />}    label="Jobs Today"     value={stats.jobsToday}    suffix="" />
         <StatCard icon={<HardDrive className="text-green-400 w-5 h-5" />} label="Space Saved"    value={stats.gbSaved}      suffix=" GB" />
         <StatCard icon={<Cpu className="text-purple-400 w-5 h-5" />}      label="Workers Online" value={stats.workersOnline} suffix="" />
@@ -97,7 +97,7 @@ export default function OverviewPage() {
 
       {/* Queue depth bar */}
       {(stats.queueDepth > 0 || stats.activeJobs > 0) && (
-        <div className="bg-surface border border-border rounded-2xl p-5">
+        <div className="card-hover bg-surface border border-border rounded-2xl p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-bold text-white">Queue Status</h2>
             <span className="text-xs text-textMuted">{stats.activeJobs} active · {stats.queueDepth} waiting</span>
@@ -139,14 +139,14 @@ export default function OverviewPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Activity */}
-        <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+        <div className="card-hover bg-surface border border-border rounded-2xl overflow-hidden">
           <div className="px-6 py-4 border-b border-border flex items-center justify-between">
             <h2 className="font-bold text-white text-sm">Recent Activity</h2>
             <a href="/queue" className="flex items-center gap-1 text-xs text-textMuted hover:text-primary transition-colors">
               View all <ArrowRight className="w-3 h-3" />
             </a>
           </div>
-          <div className="divide-y divide-border">
+          <div className="divide-y divide-border stagger-list">
             {recentJobs.length === 0 && (
               <div className="px-6 py-8 text-center text-textMuted text-sm">No completed jobs yet</div>
             )}
@@ -170,11 +170,11 @@ export default function OverviewPage() {
         </div>
 
         {/* Performance stats */}
-        <div className="bg-surface border border-border rounded-2xl overflow-hidden">
+        <div className="card-hover bg-surface border border-border rounded-2xl overflow-hidden">
           <div className="px-6 py-4 border-b border-border">
             <h2 className="font-bold text-white text-sm">Performance</h2>
           </div>
-          <div className="divide-y divide-border">
+          <div className="divide-y divide-border stagger-list">
             <PerfRow
               icon={<Gauge className="w-4 h-4 text-primary" />}
               label="Avg Encode Speed"
@@ -332,7 +332,7 @@ function PerfRow({ icon, label, value }: { icon: React.ReactNode; label: string;
 
 function StatCard({ icon, label, value, suffix }: { icon: React.ReactNode; label: string; value: number; suffix: string }) {
   return (
-    <div className="stat-card bg-surface border border-border rounded-2xl p-5 flex items-start gap-4 hover:border-border/60 transition-colors">
+    <div className="stat-card card-hover bg-surface border border-border rounded-2xl p-5 flex items-start gap-4">
       <div className="p-2.5 bg-background rounded-xl border border-border/50 shrink-0">{icon}</div>
       <div>
         <p className="text-xs text-textMuted font-medium mb-1">{label}</p>

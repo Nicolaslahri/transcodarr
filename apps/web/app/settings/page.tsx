@@ -603,7 +603,7 @@ function SmartFiltersPanel() {
     <div className="animate-section space-y-4">
       <p className="text-textMuted text-sm">These rules are evaluated <strong className="text-white">before</strong> any job is created. Files that match are skipped and marked in the Library.</p>
 
-      <div className="bg-surface border border-border rounded-2xl divide-y divide-border overflow-hidden">
+      <div className="card-hover bg-surface border border-border rounded-2xl divide-y divide-border overflow-hidden">
         <FilterRow title="Skip already in target codec" description="If the file is already in the recipe's target codec, skip it entirely." enabled={filters.skipAlreadyTargetCodec} onToggle={v => set('skipAlreadyTargetCodec', v)} />
         <FilterRow title="Skip low-bitrate files" description="Files already heavily compressed at this bitrate probably won't benefit from re-encoding." enabled={filters.skipBelowBitrateKbps !== null} onToggle={v => set('skipBelowBitrateKbps', v ? 500 : null)}>
           {filters.skipBelowBitrateKbps !== null && <NumberInput label="Below (kbps)" value={filters.skipBelowBitrateKbps} onChange={v => set('skipBelowBitrateKbps', v)} />}
@@ -863,7 +863,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
         hint="Select the same folder as seen by this Worker via the network share (e.g. Z:\ on Windows, /mnt/media on Linux)."
       />
 
-      <div className="bg-surface border border-border rounded-2xl p-6 space-y-5">
+      <div className="card-hover bg-surface border border-border rounded-2xl p-6 space-y-5">
         {/* Worker header */}
         <div className="flex items-center justify-between">
           <div>
@@ -1048,7 +1048,7 @@ function GeneralPanel() {
 
   return (
     <div className="animate-section space-y-6">
-      <div className="bg-surface border border-border rounded-2xl p-6 space-y-5">
+      <div className="card-hover bg-surface border border-border rounded-2xl p-6 space-y-5">
         <Field label="Node Display Name">
           <input
             value={settings.nodeName}
@@ -1136,7 +1136,7 @@ function GeneralPanel() {
         </button>
       </div>
 
-      <div className="bg-surface border border-red-500/20 rounded-2xl p-6">
+      <div className="card-hover bg-surface border border-red-500/20 rounded-2xl p-6">
         <h3 className="text-red-400 font-bold text-sm mb-1">Reset Setup</h3>
         <p className="text-textMuted text-xs mb-4">Wipe this node's role configuration and restart the onboarding wizard. The server will restart automatically.</p>
         <button
@@ -1189,7 +1189,7 @@ function BrowserNotificationsCard() {
   if (permission === 'unsupported') return null;
 
   return (
-    <div className="bg-surface border border-border rounded-2xl p-6">
+    <div className="card-hover bg-surface border border-border rounded-2xl p-6">
       <h3 className="text-white font-bold text-sm mb-1">Browser Notifications</h3>
       <p className="text-textMuted text-xs mb-4">
         Get a desktop notification when a job completes or fails — even when this tab is in the background.
@@ -1272,7 +1272,7 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
     <div className="animate-section space-y-6">
       <BrowserNotificationsCard />
 
-      <div className="bg-surface border border-border rounded-2xl p-6">
+      <div className="card-hover bg-surface border border-border rounded-2xl p-6">
         <h3 className="text-white font-bold text-sm mb-1">Webhooks</h3>
         <p className="text-textMuted text-xs mb-5">
           Paste any URL — Discord, Slack, or custom endpoint. Transcodarr will POST a JSON payload when events fire.
@@ -1289,7 +1289,7 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
             let eventsArr: string[] = [];
             try { eventsArr = JSON.parse(hook.events); } catch {}
             return (
-              <div key={hook.id} className={`bg-background border rounded-xl p-4 transition-all ${hook.enabled ? 'border-border' : 'border-border/40 opacity-60'}`}>
+              <div key={hook.id} className={`card-hover bg-background border rounded-xl p-4 ${hook.enabled ? 'border-border' : 'border-border/40 opacity-60'}`}>
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-sm font-medium truncate font-mono">{hook.url}</p>

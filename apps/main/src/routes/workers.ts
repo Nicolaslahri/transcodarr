@@ -286,15 +286,34 @@ export async function workersRoutes(app: FastifyInstance) {
           .run('complete', sizeBefore ?? null, sizeAfter ?? null, jobFull?.fps ?? null, elapsed, now, now, req.params.jobId);
         // Persist fingerprint so "Clear All" doesn't re-queue this file
         if (jobFull) recordProcessedFile(jobFull.file_path, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
-        broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });
+        // Post-processing: move file if the source watched path has move_to configured
+        if (targetDbPath && fs.existsSync(targetDbPath)) {
+          const moveTo = (db.prepare(
+            "SELECT move_to FROM watched_paths WHERE ? LIKE path || '%' AND move_to IS NOT NULL ORDER BY LENGTH(path) DESC LIMIT 1"
+          ).get(jobFull?.file_path ?? targetDbPath) as any)?.move_to as string | undefined;
+          if (moveTo) {
+            try {
+              fs.mkdirSync(moveTo, { recursive: true });
+              const dest = path.join(moveTo, path.basename(targetDbPath));
+              fs.renameSync(targetDbPath, dest);
+              db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
+                .run(dest, path.basename(dest), req.params.jobId);
+            } catch (moveErr: any) {
+              console.warn(`⚠️  move_to failed: ${moveErr.message}`);
+            }
+          }
+        }
+        const completeName = jobFull?.file_path ? path.basename(jobFull.file_path) : undefined;
+        broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter, fileName: completeName });
         broadcast('stats:update', getStats());
-        fireWebhooks('job:complete', { jobId: req.params.jobId, fileName: jobFull?.file_path ? path.basename(jobFull.file_path) : '', sizeBefore, sizeAfter });
+        fireWebhooks('job:complete', { jobId: req.params.jobId, fileName: completeName ?? '', sizeBefore, sizeAfter });
       } else {
         db.prepare('UPDATE jobs SET status = ?, phase = NULL, error = ?, updated_at = ? WHERE id = ?')
           .run('failed', error ?? 'Unknown error', now, req.params.jobId);
-        broadcast('job:failed', { jobId: req.params.jobId, error });
+        const failedName = jobFull?.file_path ? path.basename(jobFull.file_path) : undefined;
+        broadcast('job:failed', { jobId: req.params.jobId, error, fileName: failedName });
         broadcast('stats:update', getStats());
-        fireWebhooks('job:failed', { jobId: req.params.jobId, fileName: jobFull?.file_path ? path.basename(jobFull.file_path) : '', error });
+        fireWebhooks('job:failed', { jobId: req.params.jobId, fileName: failedName ?? '', error });
       }
 
       db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
@@ -392,9 +411,10 @@ export async function workersRoutes(app: FastifyInstance) {
         db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
         // Persist fingerprint so "Clear All" doesn't re-queue this file
         if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore, jobMeta.recipe, jobMeta.content_key ?? undefined);
-        broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter });
+        const wirelessName = jobMeta?.file_path ? path.basename(jobMeta.file_path) : undefined;
+        broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter, fileName: wirelessName });
         broadcast('stats:update', getStats());
-        fireWebhooks('job:complete', { jobId: req.params.jobId, fileName: jobMeta?.file_path ? path.basename(jobMeta.file_path) : '', sizeBefore, sizeAfter });
+        fireWebhooks('job:complete', { jobId: req.params.jobId, fileName: wirelessName ?? '', sizeBefore, sizeAfter });
         // Trigger next job immediately
         dispatchNext().catch(() => {});
 

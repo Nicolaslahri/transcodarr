@@ -131,4 +131,6 @@ export function initDb(): void {
   migrate(`ALTER TABLE jobs ADD COLUMN content_key TEXT`);
   // v7 migrations — worker version tracking
   migrate(`ALTER TABLE workers ADD COLUMN version TEXT`);
+  // v8 migrations — post-processing
+  migrate(`ALTER TABLE watched_paths ADD COLUMN move_to TEXT`);
 }

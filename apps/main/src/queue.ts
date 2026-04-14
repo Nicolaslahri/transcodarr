@@ -155,9 +155,10 @@ export function getStats() {
   const jobsToday = (db.prepare('SELECT COUNT(*) as c FROM jobs WHERE status = ? AND completed_at > ?').get('complete', today) as any).c;
   const jobsTotal = (db.prepare('SELECT COUNT(*) as c FROM jobs WHERE status = ?').get('complete') as any).c;
   const gbSaved = (db.prepare('SELECT SUM(size_before - size_after) as s FROM jobs WHERE status = ? AND size_before IS NOT NULL AND size_after IS NOT NULL').get('complete') as any).s ?? 0;
-  const queueDepth = (db.prepare("SELECT COUNT(*) as c FROM jobs WHERE status IN ('queued','pending')").get() as any).c;
-  const activeJobs = (db.prepare("SELECT COUNT(*) as c FROM jobs WHERE status IN ('transcoding','dispatched','swapping')").get() as any).c;
-  return { jobsToday, jobsTotal, gbSaved: Math.round((gbSaved / 1e9) * 100) / 100, queueDepth, activeJobs };
+  const queueDepth    = (db.prepare("SELECT COUNT(*) as c FROM jobs WHERE status IN ('queued','pending')").get() as any).c;
+  const activeJobs    = (db.prepare("SELECT COUNT(*) as c FROM jobs WHERE status IN ('transcoding','dispatched','swapping','receiving','sending')").get() as any).c;
+  const workersOnline = (db.prepare("SELECT COUNT(*) as c FROM workers WHERE status IN ('idle','active')").get() as any).c;
+  return { jobsToday, jobsTotal, gbSaved: Math.round((gbSaved / 1e9) * 100) / 100, queueDepth, activeJobs, workersOnline };
 }
 
 export function deleteJob(id: string): boolean {

@@ -109,7 +109,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         const { event, data } = JSON.parse(msg.data) as WsEvent<any>;
         switch (event) {
           case 'stats:update':
-            setStats(data);
+            // Merge instead of replace — backend may omit fields we derive locally
+            setStats(prev => ({ ...prev, ...data }));
             break;
           case 'worker:discovered':
             setWorkers(prev => {

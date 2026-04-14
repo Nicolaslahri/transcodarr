@@ -71,7 +71,7 @@ async function main() {
   // 4. Broadcast mDNS beacon
   broadcastWorkerMdns(WORKER_ID, WORKER_NAME, WORKER_PORT, hardware);
 
-  // 5. Heartbeat every 30s — includes GPU stats if available
+  // 5. Heartbeat every 5s — includes GPU stats so fleet page stays live even when idle
   setInterval(async () => {
     try {
       const body: Record<string, unknown> = {};
@@ -83,7 +83,7 @@ async function main() {
         signal:  AbortSignal.timeout(3000),
       });
     } catch { /* ignore */ }
-  }, 30_000);
+  }, 5_000);
 
   console.log('\n🟢 Worker is ready and waiting for jobs.\n');
 }

@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import {
   FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight,
   Filter, Settings2, BookOpen, Info, ArrowLeftRight,
-  Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell, Pencil,
+  Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell, Pencil, Clock, ArrowRightCircle,
 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
@@ -182,6 +182,14 @@ function FsBrowser({
 
 // ─── Watched Folders ─────────────────────────────────────────────────────────
 
+function lastScannedLabel(unixSec: number): string {
+  const secs = Math.floor(Date.now() / 1000) - unixSec;
+  if (secs < 60)   return 'just now';
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
+
 interface WatchedPath {
   id: string; path: string; recipe: string;
   enabled: boolean; recurse: boolean;
@@ -312,7 +320,30 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                 <Badge label={p.recurse ? 'Recursive' : 'Top-level only'} color="neutral" />
                 <Badge label={`≥ ${p.min_size_mb} MB`} color="neutral" />
               </div>
-              <p className="text-textMuted text-xs mt-2 font-mono">{p.extensions}</p>
+              <div className="flex flex-wrap items-center gap-3 mt-2">
+                <p className="text-textMuted text-xs font-mono">{p.extensions}</p>
+                {(p.scan_interval_hours ?? 0) > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-sky-400">
+                    <Clock className="w-3 h-3" />
+                    {p.scan_interval_hours === 6 ? 'Every 6h'
+                      : p.scan_interval_hours === 12 ? 'Every 12h'
+                      : p.scan_interval_hours === 24 ? 'Daily'
+                      : p.scan_interval_hours === 48 ? 'Every 2 days'
+                      : p.scan_interval_hours === 168 ? 'Weekly'
+                      : `Every ${p.scan_interval_hours}h`}
+                  </span>
+                )}
+                {p.last_scan_at != null && p.last_scan_at > 0 && (
+                  <span className="text-xs text-textMuted/60">
+                    Last scanned {lastScannedLabel(p.last_scan_at)}
+                  </span>
+                )}
+                {p.move_to && (
+                  <span className="flex items-center gap-1 text-xs text-textMuted/60">
+                    <ArrowRightCircle className="w-3 h-3" /> {p.move_to}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button onClick={() => scanNow(p)} className="text-xs text-textMuted hover:text-primary transition-colors px-3 py-1.5 border border-border rounded-lg">

@@ -517,7 +517,9 @@ function JobRow({
   useEffect(() => { setOverrideStatus(null); }, [job.status]);
   const displayStatus = overrideStatus ?? job.status;
 
-  const phaseKey = overrideStatus ? overrideStatus : effectivePhase(job);
+  // job.phase may still be 'transcoding' from the WS event if it wasn't cleared yet —
+  // when status is 'paused', always treat it as 'paused' regardless of phase.
+  const phaseKey = overrideStatus ?? (job.status === 'paused' ? 'paused' : effectivePhase(job));
   const cfg = PHASE_CONFIG[phaseKey] ?? PHASE_CONFIG['queued'];
   const { Icon } = cfg;
 

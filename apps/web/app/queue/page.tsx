@@ -557,7 +557,7 @@ function JobRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-surface border border-border border-l-2 ${cfg.border} rounded-xl overflow-hidden transition-all duration-300 ${isProcessing ? 'shadow-lg' : ''} ${isDragging ? 'z-50' : ''}`}
+      className={`bg-surface border border-border border-l-2 ${cfg.border} rounded-xl overflow-hidden transition-colors duration-300 ${isProcessing ? 'shadow-lg' : ''} ${isDragging ? 'z-50' : ''}`}
     >
       {/* Progress bar — top of card when active */}
       {isProcessing && job.progress > 0 && (

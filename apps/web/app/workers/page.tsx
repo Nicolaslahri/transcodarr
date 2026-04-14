@@ -5,8 +5,9 @@ import { useToast } from '@/hooks/useToast';
 import {
   CheckCircle2, Cpu, Server, ShieldAlert, X, Plus, Trash2,
   Zap, Download, Upload, Settings2, Wifi, HardDrive, AlertTriangle,
+  Thermometer, MemoryStick,
 } from 'lucide-react';
-import type { WorkerInfo, ConnectionMode, TransferPhase } from '@transcodarr/shared';
+import type { WorkerInfo, ConnectionMode, TransferPhase, GpuStats } from '@transcodarr/shared';
 import { useState } from 'react';
 import Link from 'next/link';
 
@@ -256,12 +257,13 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
           </div>
         </div>
 
-        {/* Hardware tags */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="px-2 py-1 bg-background text-white text-xs rounded-lg border border-border/50">
+        {/* GPU name + version row */}
+        <div className="flex items-center gap-2 flex-wrap mb-2">
+          <span className="px-2.5 py-1 bg-background text-white text-xs font-medium rounded-lg border border-border/50 flex items-center gap-1.5">
+            <Cpu className="w-3 h-3 text-textMuted" />
             {worker.hardware?.gpuName ?? 'Unknown GPU'}
           </span>
-          {worker.version && (
+          {worker.version && worker.version !== 'unknown' && (
             worker.versionMismatch ? (
               <span
                 title={`Worker v${worker.version} ≠ Main (version mismatch)`}
@@ -276,16 +278,23 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
               </span>
             )
           )}
+        </div>
+
+        {/* Encoder badges */}
+        <div className="flex items-center gap-1.5 flex-wrap">
           {worker.hardware?.encoders?.some((e: string) => e.includes('nvenc')) && (
-            <span className="px-2 py-1 bg-green-900/30 text-green-400 text-xs font-bold rounded-lg border border-green-500/30">NVENC</span>
+            <EncoderBadge type="nvenc" />
           )}
           {worker.hardware?.encoders?.some((e: string) => e.includes('amf')) && (
-            <span className="px-2 py-1 bg-red-900/30 text-red-400 text-xs font-bold rounded-lg border border-red-500/30">AMF</span>
+            <EncoderBadge type="amf" />
           )}
           {worker.hardware?.encoders?.some((e: string) => e.includes('qsv')) && (
-            <span className="px-2 py-1 bg-blue-900/30 text-blue-400 text-xs font-bold rounded-lg border border-blue-500/30">QSV</span>
+            <EncoderBadge type="qsv" />
           )}
         </div>
+
+        {/* GPU stats — shown when available */}
+        {worker.gpuStats && <GpuStatsBar stats={worker.gpuStats} />}
 
         {/* Active job phase progress */}
         {isActive && (
@@ -329,6 +338,89 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Encoder Badge ───────────────────────────────────────────────────────────
+
+function NvidiaIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-3 h-3" fill="currentColor">
+      <path d="M9.5 3v2.5c1.5-.4 3.1-.3 4.5.4V3.4C12.7 3 11.1 3 9.5 3zm5 1v2.2c1.3.8 2.4 2 3 3.4h2.2C19 7.3 17.1 5 14.5 4zm3.2 4.8c.2.6.3 1.3.3 2 0 3.9-3.1 7-7 7s-7-3.1-7-7c0-3.6 2.7-6.6 6.2-6.9V5.7C6 6.1 3 9.3 3 13.2c0 4.4 3.6 8 8 8s8-3.6 8-8c0-.8-.1-1.6-.4-2.3l-1.9-.1z"/>
+    </svg>
+  );
+}
+
+function AmdIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-3 h-3" fill="currentColor">
+      <path d="M4 4l4 4V4h12v12h-4l-4-4v4H4V4zm4 8l4-4 4 4-4 4-4-4z"/>
+    </svg>
+  );
+}
+
+function IntelIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-3 h-3" fill="currentColor">
+      <path d="M6 2h12a4 4 0 014 4v12a4 4 0 01-4 4H6a4 4 0 01-4-4V6a4 4 0 014-4zm1.5 5.5v9h1.5v-9H7.5zm3 0v9H12v-3.5h2.5v-1.5H12V9h3.5V7.5H10.5zm6 0v9H18v-9h-1.5z"/>
+    </svg>
+  );
+}
+
+const ENCODER_CONFIG = {
+  nvenc: { label: 'NVENC', desc: 'NVIDIA hardware encoder', bg: 'bg-[#76b900]/10', text: 'text-[#76b900]', border: 'border-[#76b900]/30', Icon: NvidiaIcon },
+  amf:   { label: 'AMF',   desc: 'AMD hardware encoder',    bg: 'bg-[#ed1c24]/10', text: 'text-[#ed1c24]', border: 'border-[#ed1c24]/30', Icon: AmdIcon   },
+  qsv:   { label: 'QSV',   desc: 'Intel hardware encoder',  bg: 'bg-[#0071c5]/10', text: 'text-[#0071c5]', border: 'border-[#0071c5]/30', Icon: IntelIcon  },
+} as const;
+
+function EncoderBadge({ type }: { type: keyof typeof ENCODER_CONFIG }) {
+  const c = ENCODER_CONFIG[type];
+  return (
+    <span
+      title={c.desc}
+      className={`px-2 py-0.5 ${c.bg} ${c.text} text-[11px] font-bold rounded-md border ${c.border} flex items-center gap-1`}
+    >
+      <c.Icon />
+      {c.label}
+    </span>
+  );
+}
+
+// ─── GPU Stats Bar ────────────────────────────────────────────────────────────
+
+function GpuStatsBar({ stats }: { stats: GpuStats }) {
+  const tempColor = stats.tempC >= 90 ? 'text-red-400' : stats.tempC >= 75 ? 'text-amber-400' : 'text-textMuted';
+  const utilColor = stats.utilPct >= 90 ? 'bg-red-400' : stats.utilPct >= 70 ? 'bg-amber-400' : 'bg-primary';
+  const vramPct   = stats.vramTotalMB > 0 ? Math.round((stats.vramUsedMB / stats.vramTotalMB) * 100) : 0;
+
+  return (
+    <div className="mt-2 p-2.5 bg-background/60 rounded-lg border border-border/40 space-y-1.5">
+      {/* GPU utilisation */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-textMuted w-12 shrink-0">GPU</span>
+        <div className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all duration-500 ${utilColor}`} style={{ width: `${stats.utilPct}%` }} />
+        </div>
+        <span className="text-[10px] text-textMuted w-8 text-right">{stats.utilPct}%</span>
+      </div>
+      {/* VRAM */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-textMuted w-12 shrink-0 flex items-center gap-1">
+          <MemoryStick className="w-2.5 h-2.5" /> VRAM
+        </span>
+        <div className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden">
+          <div className="h-full rounded-full bg-sky-500 transition-all duration-500" style={{ width: `${vramPct}%` }} />
+        </div>
+        <span className="text-[10px] text-textMuted w-8 text-right">
+          {stats.vramUsedMB >= 1024 ? `${(stats.vramUsedMB / 1024).toFixed(1)}G` : `${stats.vramUsedMB}M`}
+        </span>
+      </div>
+      {/* Temperature */}
+      <div className="flex items-center justify-end gap-1">
+        <Thermometer className={`w-3 h-3 ${tempColor}`} />
+        <span className={`text-[10px] font-medium ${tempColor}`}>{stats.tempC}°C</span>
       </div>
     </div>
   );

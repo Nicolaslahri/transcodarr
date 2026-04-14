@@ -33,14 +33,21 @@ export default function OverviewPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [speedStats, setSpeedStats] = useState<SpeedStats | null>(null);
 
-  // Fetch speed stats once on mount
+  // Refresh speed stats whenever jobsTotal changes (a new completion) or on mount
   useEffect(() => {
     if (!apiUrl) return;
     fetch(`${apiUrl}/api/jobs/stats/speed`)
       .then(r => r.json())
       .then(setSpeedStats)
       .catch(() => {});
-  }, [apiUrl]);
+  }, [apiUrl, stats.jobsTotal]);
+
+  // Tick every second so last-seen timestamps stay live
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const ctx = gsap.context(() => {

@@ -596,7 +596,7 @@ function JobRow({
         {/* Info */}
         <div className="flex-1 min-w-0">
           <h3 className="text-white font-semibold truncate text-sm leading-tight mb-1.5">{job.fileName}</h3>
-          {/* Single badge row: status chip + file metadata + conversion + subtitle warning */}
+          {/* Badge row: status chip + file metadata + fps (inline, no layout shift) + conversion + subtitle warning */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
               <Icon className="w-2.5 h-2.5" />
@@ -605,19 +605,17 @@ function JobRow({
             {job.resolution && <ResolutionBadge resolution={job.resolution} />}
             {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
             <ConversionBadge job={job} />
+            {job.fps != null && job.fps > 0 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
+                {job.fps.toFixed(1)} fps
+              </span>
+            )}
             <SubtitleWarning job={job} />
           </div>
-          {/* Second row: fps + worker picker — only shown when relevant */}
-          {(job.fps != null && job.fps > 0 || showWorkerPicker) && (
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              {job.fps != null && job.fps > 0 && (
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
-                  {job.fps.toFixed(1)} fps
-                </span>
-              )}
-              {showWorkerPicker && (
-                <WorkerPicker job={job} workers={idleWorkers} apiUrl={apiUrl} />
-              )}
+          {/* Worker picker row — only for queued/dispatched + idle workers available */}
+          {showWorkerPicker && (
+            <div className="mt-1.5">
+              <WorkerPicker job={job} workers={idleWorkers} apiUrl={apiUrl} />
             </div>
           )}
         </div>
@@ -633,17 +631,17 @@ function JobRow({
             </div>
           )}
 
-          <div className="w-32 text-right">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className={`text-xs font-semibold ${isProcessing ? cfg.accent : 'text-textMuted'}`}>
-                {job.progress}%
-              </span>
+          <div className="w-28 space-y-1.5">
+            <div className="flex items-center justify-end gap-1.5">
               {job.eta && job.eta > Date.now() && (
-                <span className="text-[10px] text-textMuted flex items-center gap-0.5">
+                <span className="text-[10px] text-textMuted flex items-center gap-0.5 shrink-0">
                   <Clock className="w-2.5 h-2.5" />
                   {formatEta(job.eta)}
                 </span>
               )}
+              <span className={`text-xs font-semibold tabular-nums shrink-0 ${isProcessing ? cfg.accent : 'text-textMuted'}`}>
+                {job.progress}%
+              </span>
             </div>
             <div className="h-1.5 bg-background rounded-full overflow-hidden border border-border/60">
               <div

@@ -56,9 +56,9 @@ export function Sidebar() {
             <Link
               key={href}
               href={href}
-              className={`relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+              className={`nav-link relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
                 ${active
-                  ? 'bg-primary/10 text-primary before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:bg-primary before:rounded-r'
+                  ? 'active bg-primary/10 text-primary before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:bg-primary before:rounded-r'
                   : 'text-textMuted hover:text-white hover:bg-white/5'
                 }`}
             >

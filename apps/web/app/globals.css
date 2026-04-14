@@ -13,18 +13,112 @@ body {
   font-feature-settings: "rlig" 1, "calt" 1;
 }
 
-/* Custom scrollbar for premium feel */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* ─── Scrollbar ──────────────────────────────────────────────────────────────*/
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2a35; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3a45; }
+
+/* ─── Button microinteraction — every button presses down slightly ───────────*/
+button:not(:disabled):active,
+a[role="button"]:active {
+  transform: scale(0.96);
 }
-::-webkit-scrollbar-track {
-  background: transparent;
+button,
+a[role="button"] {
+  transition-property: transform, background-color, color, border-color, box-shadow, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
-::-webkit-scrollbar-thumb {
-  background: #2a2a35;
-  border-radius: 4px;
+
+/* ─── Card hover lift — apply .card-hover to any interactive card ────────────*/
+.card-hover {
+  transition: transform 200ms cubic-bezier(0.16,1,0.3,1),
+              box-shadow 200ms cubic-bezier(0.16,1,0.3,1),
+              border-color 200ms ease;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #3a3a45;
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+
+/* ─── Page section stagger — add animate-section to each major section ───────*/
+/* Usage: wrap section content in <div className="animate-section"> */
+.animate-section {
+  animation: fade-up 0.45s cubic-bezier(0.16,1,0.3,1) both;
+}
+.animate-section:nth-child(1) { animation-delay: 0ms; }
+.animate-section:nth-child(2) { animation-delay: 60ms; }
+.animate-section:nth-child(3) { animation-delay: 120ms; }
+.animate-section:nth-child(4) { animation-delay: 180ms; }
+.animate-section:nth-child(5) { animation-delay: 240ms; }
+.animate-section:nth-child(6) { animation-delay: 300ms; }
+
+/* ─── List item stagger — apply to <ul>/<div> with .stagger-list children ────*/
+.stagger-list > * {
+  animation: fade-up 0.4s cubic-bezier(0.16,1,0.3,1) both;
+}
+.stagger-list > *:nth-child(1)  { animation-delay: 0ms; }
+.stagger-list > *:nth-child(2)  { animation-delay: 40ms; }
+.stagger-list > *:nth-child(3)  { animation-delay: 80ms; }
+.stagger-list > *:nth-child(4)  { animation-delay: 120ms; }
+.stagger-list > *:nth-child(5)  { animation-delay: 160ms; }
+.stagger-list > *:nth-child(6)  { animation-delay: 200ms; }
+.stagger-list > *:nth-child(7)  { animation-delay: 240ms; }
+.stagger-list > *:nth-child(8)  { animation-delay: 280ms; }
+.stagger-list > *:nth-child(n+9) { animation-delay: 320ms; }
+
+/* ─── Nav link hover — icon bounce ──────────────────────────────────────────*/
+.nav-link svg {
+  transition: transform 200ms cubic-bezier(0.16,1,0.3,1);
+}
+.nav-link:hover svg {
+  transform: scale(1.15) translateX(1px);
+}
+.nav-link.active svg {
+  filter: drop-shadow(0 0 6px rgba(0,217,255,0.5));
+}
+
+/* ─── Modal overlay fade ─────────────────────────────────────────────────────*/
+.modal-overlay {
+  animation: fade-in 0.2s ease both;
+}
+.modal-content {
+  animation: scale-in 0.28s cubic-bezier(0.16,1,0.3,1) both;
+}
+
+/* ─── Toast / banner slide ───────────────────────────────────────────────────*/
+.toast-enter {
+  animation: slide-down 0.35s cubic-bezier(0.16,1,0.3,1) both;
+}
+
+/* ─── Status badge pulse for active states ───────────────────────────────────*/
+.badge-active {
+  animation: glow-pulse 2.5s ease-in-out infinite;
+}
+
+/* ─── Scan keyframes ─────────────────────────────────────────────────────────*/
+@keyframes fade-up {
+  0%   { opacity: 0; transform: translateY(14px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+@keyframes scale-in {
+  0%   { opacity: 0; transform: scale(0.94); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes slide-down {
+  0%   { opacity: 0; transform: translateY(-10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0,217,255,0); }
+  50%       { box-shadow: 0 0 24px 4px rgba(0,217,255,0.12); }
+}
+@keyframes glow-pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
+  50%       { box-shadow: 0 0 20px 3px rgba(74,222,128,0.10); }
 }

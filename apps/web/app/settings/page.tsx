@@ -50,7 +50,7 @@ export default function SettingsPage() {
 
   return (
     <div className="p-10 max-w-5xl mx-auto space-y-8">
-      <header>
+      <header className="animate-section">
         <h1 className="text-4xl font-bold tracking-tight text-white mb-1">Settings</h1>
         <p className="text-textMuted">
           {meta.mode === 'worker' ? 'Configure worker preferences' : 'Configure scanning, filters, and preferences.'}
@@ -116,8 +116,8 @@ function FsBrowser({
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div role="dialog" aria-modal="true" aria-label={title} className="bg-surface border border-border w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div role="dialog" aria-modal="true" aria-label={title} className="modal-content bg-surface border border-border w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           <FolderOpen className="w-4 h-4 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
@@ -299,7 +299,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="animate-section space-y-4">
       {paths.length === 0 && !adding && (
         <div className="bg-surface border border-dashed border-border rounded-2xl p-10 text-center">
           <FolderOpen className="w-8 h-8 text-textMuted mx-auto mb-3" />
@@ -309,7 +309,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
       )}
 
       {paths.map(p => (
-        <div key={p.id} className={`bg-surface border rounded-2xl p-5 transition-opacity ${!p.enabled ? 'opacity-50' : ''}`}
+        <div key={p.id} className={`card-hover bg-surface border rounded-2xl p-5 transition-opacity ${!p.enabled ? 'opacity-50' : ''}`}
           style={{ borderColor: p.enabled ? 'var(--color-border)' : undefined }}>
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
@@ -600,7 +600,7 @@ function SmartFiltersPanel() {
   const set = (key: keyof SmartFilters, val: any) => setFilters(f => ({ ...f, [key]: val }));
 
   return (
-    <div className="space-y-4">
+    <div className="animate-section space-y-4">
       <p className="text-textMuted text-sm">These rules are evaluated <strong className="text-white">before</strong> any job is created. Files that match are skipped and marked in the Library.</p>
 
       <div className="bg-surface border border-border rounded-2xl divide-y divide-border overflow-hidden">
@@ -683,7 +683,7 @@ function RecipesPanel({ apiUrl }: { apiUrl: string }) {
   const community = recipes.filter(r =>  r.sourceUrl);
 
   return (
-    <div className="space-y-6">
+    <div className="animate-section space-y-6">
       {/* Built-in */}
       <div>
         <h3 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-4">Built-in Recipes ({builtIn.length})</h3>
@@ -722,7 +722,7 @@ function RecipesPanel({ apiUrl }: { apiUrl: string }) {
 
 function RecipeCard({ recipe, community }: { recipe: Recipe; community?: boolean }) {
   return (
-    <div className="bg-surface border border-border rounded-2xl p-5 hover:border-border/60 transition-colors">
+    <div className="card-hover bg-surface border border-border rounded-2xl p-5">
       <div className="flex items-start gap-3 mb-3">
         <span className="text-2xl">{recipe.icon}</span>
         <div className="flex-1 min-w-0">
@@ -766,7 +766,7 @@ function TransferPanel({ apiUrl }: { apiUrl: string }) {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="animate-section space-y-5">
       <div className="flex items-start gap-3 p-4 bg-primary/5 border border-primary/15 rounded-xl">
         <Info className="w-4 h-4 text-primary/70 mt-0.5 shrink-0" />
         <p className="text-xs text-primary/80 leading-relaxed">
@@ -1047,7 +1047,7 @@ function GeneralPanel() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="animate-section space-y-6">
       <div className="bg-surface border border-border rounded-2xl p-6 space-y-5">
         <Field label="Node Display Name">
           <input
@@ -1269,7 +1269,7 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="animate-section space-y-6">
       <BrowserNotificationsCard />
 
       <div className="bg-surface border border-border rounded-2xl p-6">

@@ -84,7 +84,7 @@ function StatCard({ icon, label, value, sub, highlight }: {
   icon: React.ReactNode; label: string; value: string; sub: string; highlight?: boolean;
 }) {
   return (
-    <div className={`p-4 rounded-xl border ${highlight ? 'bg-primary/5 border-primary/20' : 'bg-surface border-border'}`}>
+    <div className={`card-hover p-4 rounded-xl border ${highlight ? 'bg-primary/5 border-primary/20' : 'bg-surface border-border'}`}>
       <div className="flex items-center gap-2 mb-2">{icon}<span className="text-xs text-textMuted">{label}</span></div>
       <p className={`text-2xl font-bold ${highlight ? 'text-primary' : 'text-white'}`}>{value}</p>
       <p className="text-[11px] text-textMuted mt-0.5">{sub}</p>
@@ -105,7 +105,7 @@ function LibraryRow({ job }: { job: Job }) {
     : null;
 
   return (
-    <div className="flex items-center gap-3 p-3 bg-surface border border-border rounded-xl hover:border-border/80 transition-colors">
+    <div className="card-hover flex items-center gap-3 p-3 bg-surface border border-border rounded-xl">
       <div className="p-2 rounded-lg bg-green-500/10 border border-green-500/20 shrink-0">
         <Film className="w-4 h-4 text-green-400" />
       </div>
@@ -208,7 +208,7 @@ export default function LibraryPage() {
 
   return (
     <div className="p-10 max-w-7xl mx-auto space-y-6">
-      <header className="flex items-start justify-between">
+      <header className="animate-section flex items-start justify-between">
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-white mb-2">Library</h1>
           <p className="text-textMuted">History of all completed transcodes and space savings.</p>
@@ -269,7 +269,7 @@ export default function LibraryPage() {
                 No files match your filters
               </div>
             ) : (
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 stagger-list">
                 {filtered.map(job => <LibraryRow key={job.id} job={job} />)}
               </div>
             )}

@@ -108,7 +108,7 @@ export default function WorkersPage() {
 
   return (
     <div className="p-10 max-w-7xl mx-auto space-y-10">
-      <header className="flex items-center justify-between">
+      <header className="animate-section flex items-center justify-between">
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-white mb-1">Fleet</h1>
           <p className="text-textMuted">Manage transcoding nodes and their connection to your media.</p>
@@ -135,7 +135,7 @@ export default function WorkersPage() {
           <h2 className="text-xs font-bold uppercase tracking-widest text-yellow-500 mb-4 flex items-center gap-2">
             <ShieldAlert className="w-3.5 h-3.5" /> Awaiting Approval ({pendingWorkers.length})
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 stagger-list">
             {pendingWorkers.map(w => (
               <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={handleAccept} onReject={rejectWorker} />
             ))}
@@ -157,7 +157,7 @@ export default function WorkersPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 stagger-list">
             {activeWorkers.map(w => (
               <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={handleAccept} onReject={rejectWorker} />
             ))}
@@ -167,8 +167,8 @@ export default function WorkersPage() {
 
       {/* Add Worker Modal */}
       {addModalOpen && (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div role="dialog" aria-modal="true" aria-labelledby="add-worker-title" className="bg-surface border border-border w-full max-w-md rounded-2xl p-6 shadow-2xl relative">
+        <div className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div role="dialog" aria-modal="true" aria-labelledby="add-worker-title" className="modal-content bg-surface border border-border w-full max-w-md rounded-2xl p-6 shadow-2xl relative">
             <button onClick={() => setAddModalOpen(false)} aria-label="Close dialog" className="absolute top-4 right-4 text-textMuted hover:text-white">
               <X className="w-5 h-5" />
             </button>
@@ -229,7 +229,7 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
   const isOffline  = worker.status === 'offline';
 
   return (
-    <div className={`relative overflow-hidden bg-surface border rounded-2xl transition-all duration-300
+    <div className={`card-hover relative overflow-hidden bg-surface border rounded-2xl
       ${isPending ? 'border-yellow-500/50 shadow-[0_0_30px_rgba(234,179,8,0.07)]' : 'border-border'}`}
     >
       {/* Active job progress — top stripe */}

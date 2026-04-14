@@ -87,7 +87,7 @@ function effectivePhase(j: Job): string {
 
 function ScanProgressBanner({ progress }: { progress: ScanProgress }) {
   return (
-    <div className="flex items-center gap-4 p-4 rounded-xl border bg-surface border-border">
+    <div className="toast-enter flex items-center gap-4 p-4 rounded-xl border bg-surface border-border">
       <div className="p-2 rounded-lg shrink-0 bg-primary/10">
         <Film className="w-5 h-5 text-primary animate-pulse" />
       </div>
@@ -112,7 +112,7 @@ function ScanProgressBanner({ progress }: { progress: ScanProgress }) {
 function ScanBanner({ summary, onDismiss }: { summary: ScanSummary; onDismiss: () => void }) {
   const isError = !!summary.error;
   return (
-    <div className={`flex items-start gap-4 p-4 rounded-xl border ${
+    <div className={`toast-enter flex items-start gap-4 p-4 rounded-xl border ${
       isError ? 'bg-red-500/10 border-red-500/30' : 'bg-primary/10 border-primary/30'
     }`}>
       <div className={`p-2 rounded-lg shrink-0 ${isError ? 'bg-red-500/20' : 'bg-primary/20'}`}>
@@ -284,7 +284,7 @@ export default function QueuePage() {
 
   return (
     <div className="p-10 max-w-7xl mx-auto space-y-6">
-      <header className="flex items-start justify-between">
+      <header className="animate-section flex items-start justify-between">
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-white mb-2">Queue</h1>
           <p className="text-textMuted">Active transcodes and processing history.</p>
@@ -311,7 +311,7 @@ export default function QueuePage() {
         </h2>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={draggableIds} strategy={verticalListSortingStrategy}>
-            <div className="space-y-2">
+            <div className="space-y-2 stagger-list">
               {activeJobs.length === 0 ? (
                 <div className="p-6 bg-surface border border-border border-dashed rounded-xl text-center text-textMuted text-sm">
                   No active jobs. Add a folder in Settings to get started.
@@ -340,7 +340,7 @@ export default function QueuePage() {
           <h2 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-3">
             Paused ({pausedJobs.length})
           </h2>
-          <div className="space-y-2">
+          <div className="space-y-2 stagger-list">
             {pausedJobs.map(job => (
               <JobRow
                 key={job.id}
@@ -371,7 +371,7 @@ export default function QueuePage() {
               Retry All
             </button>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-2 stagger-list">
             {failedJobs.map(job => (
               <FailedJobRow
                 key={job.id}
@@ -389,7 +389,7 @@ export default function QueuePage() {
           <h2 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-3">
             Completed ({completedJobs.length})
           </h2>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 stagger-list">
             {completedJobs.slice(0, 10).map(job => (
               <CompletedJobRow key={job.id} job={job} onRemove={() => removeJob(job.id)} />
             ))}
@@ -557,7 +557,7 @@ function JobRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-surface border border-border border-l-2 ${cfg.border} rounded-xl overflow-hidden transition-colors duration-300 ${isProcessing ? 'shadow-lg' : ''} ${isDragging ? 'z-50' : ''}`}
+      className={`card-hover bg-surface border border-border border-l-2 ${cfg.border} rounded-xl overflow-hidden ${isProcessing ? 'shadow-lg' : ''} ${isDragging ? 'z-50 !transform-none' : ''}`}
     >
       {/* Progress bar — top of card when active */}
       {isProcessing && job.progress > 0 && (
@@ -697,7 +697,7 @@ function FailedJobRow({ job, onRemove, onRetry }: { job: Job; onRemove: () => vo
   const from = codecLabel(job.codecIn);
   const to   = targetCodecLabel(job.recipe);
   return (
-    <div className="bg-red-500/5 border border-red-500/20 border-l-2 border-l-red-500/50 rounded-xl p-3 flex items-center gap-3">
+    <div className="card-hover bg-red-500/5 border border-red-500/20 border-l-2 border-l-red-500/50 rounded-xl p-3 flex items-center gap-3">
       <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-white text-sm font-medium truncate">{job.fileName}</p>

@@ -128,7 +128,7 @@ export default function OverviewPage() {
               Manage <ArrowRight className="w-3 h-3" />
             </a>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 stagger-list">
             {acceptedWorkers.map(w => {
               const activeJob = activeJobs.find(j => j.workerId === w.id);
               return <WorkerCard key={w.id} worker={w} activeJob={activeJob ?? null} />;
@@ -214,7 +214,7 @@ function WorkerCard({ worker, activeJob }: { worker: WorkerInfo; activeJob: Job 
   const fileName = activeJob?.fileName;
 
   return (
-    <div className={`bg-surface border rounded-2xl p-5 transition-all duration-300 ${
+    <div className={`card-hover bg-surface border rounded-2xl p-5 ${
       isActive ? 'border-primary/40' : 'border-border'
     }`}>
       {/* Worker name + status */}

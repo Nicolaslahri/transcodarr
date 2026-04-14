@@ -103,10 +103,11 @@ function smartRetryJob(jobId: string): void {
 
 export async function jobsRoutes(app: FastifyInstance) {
   // GET /api/jobs
-  app.get<{ Querystring: { limit?: string; offset?: string } }>('/', async (req) => {
-    const limit  = Math.min(parseInt(req.query.limit ?? '50'), 200);
+  app.get<{ Querystring: { limit?: string; offset?: string; status?: string } }>('/', async (req) => {
+    const limit  = Math.min(parseInt(req.query.limit ?? '50'), 500);
     const offset = parseInt(req.query.offset ?? '0');
-    return getJobs(limit, offset);
+    const status = req.query.status;
+    return getJobs(limit, offset, status);
   });
 
   // GET /api/jobs/stats

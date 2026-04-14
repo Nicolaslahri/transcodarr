@@ -127,7 +127,12 @@ export function getJob(id: string): Job | null {
   return row ? rowToJob(row) : null;
 }
 
-export function getJobs(limit = 100, offset = 0): Job[] {
+export function getJobs(limit = 100, offset = 0, status?: string): Job[] {
+  if (status) {
+    return (getDb().prepare(
+      'SELECT * FROM jobs WHERE status = ? ORDER BY COALESCE(completed_at, updated_at) DESC LIMIT ? OFFSET ?'
+    ).all(status, limit, offset) as any[]).map(rowToJob);
+  }
   return (getDb().prepare('SELECT * FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset) as any[]).map(rowToJob);
 }
 

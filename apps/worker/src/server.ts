@@ -276,7 +276,7 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
           'Content-Type':  'application/json',
           'Authorization': `Bearer ${payload.callbackToken}`,
         },
-        body: JSON.stringify({ workerId, progress, fps, eta, phase }),
+        body: JSON.stringify({ workerId, progress, fps, eta, phase, ...(latestGpuStats && { gpuStats: latestGpuStats }) }),
       });
     } catch { /* best-effort — Main may be temporarily unreachable */ }
   };

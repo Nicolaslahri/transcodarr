@@ -209,10 +209,10 @@ export async function workersRoutes(app: FastifyInstance) {
   });
 
   // POST /api/workers/jobs/:jobId/progress — progress callback from Worker
-  app.post<{ Params: { jobId: string }; Headers: { authorization?: string }; Body: { workerId: string; progress: number; fps?: number; eta?: number; phase: string } }>(
+  app.post<{ Params: { jobId: string }; Headers: { authorization?: string }; Body: { workerId: string; progress: number; fps?: number; eta?: number; phase: string; gpuStats?: { utilPct: number; tempC: number; vramUsedMB: number; vramTotalMB: number } } }>(
     '/jobs/:jobId/progress',
     async (req, reply) => {
-      const { workerId, progress, fps, eta, phase } = req.body;
+      const { workerId, progress, fps, eta, phase, gpuStats } = req.body;
       const db = getDb();
       const jobRow = db.prepare('SELECT callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       if (jobRow?.callback_token) {
@@ -241,6 +241,9 @@ export async function workersRoutes(app: FastifyInstance) {
 
       broadcast('job:progress', { jobId: req.params.jobId, workerId, progress, fps, eta, phase, status: dbStatus });
       broadcast('worker:progress', { workerId, progress, fps, eta, phase });
+      // Piggyback GPU stats onto every progress update — gives ~500ms refresh rate
+      // during active transcoding instead of the 30s heartbeat interval.
+      if (gpuStats) broadcast('worker:stats', { workerId, gpuStats });
       return { ok: true };
     },
   );

@@ -33,13 +33,16 @@ a[role="button"] {
 
 /* ─── Card hover lift — apply .card-hover to any interactive card ────────────*/
 .card-hover {
-  transition: transform 200ms cubic-bezier(0.16,1,0.3,1),
-              box-shadow 200ms cubic-bezier(0.16,1,0.3,1),
-              border-color 200ms ease;
+  transition: transform 220ms cubic-bezier(0.16,1,0.3,1),
+              box-shadow 220ms cubic-bezier(0.16,1,0.3,1),
+              border-color 220ms ease;
 }
 .card-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  transform: translateY(-3px);
+  box-shadow:
+    0 12px 40px rgba(0,0,0,0.45),
+    0 1px 0 rgba(255,255,255,0.08) inset,
+    0 0 0 1px rgba(255,255,255,0.05) inset;
 }
 
 /* ─── Page section stagger — add animate-section to each major section ───────*/

@@ -1,7 +1,15 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'path';
+import os from 'os';
+import fs from 'fs';
 
-const DB_PATH = process.env.DB_PATH ?? './transcodarr.db';
+// Store the DB in ~/.transcodarr/ so it survives app upgrades and reinstalls.
+// Falls back to DB_PATH env var (useful for Docker volume mounts).
+const DEFAULT_DB_PATH = path.join(os.homedir(), '.transcodarr', 'transcodarr.db');
+const DB_PATH = process.env.DB_PATH ?? DEFAULT_DB_PATH;
+
+// Ensure the directory exists before opening the database
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 let db: DatabaseSync;
 

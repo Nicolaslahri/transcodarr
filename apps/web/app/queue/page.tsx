@@ -207,7 +207,9 @@ export default function QueuePage() {
 
   // Phase-aware sort for active jobs
   const rawActiveJobs = jobs
-    .filter(j => ['queued', 'paused', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));
+    .filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));
+
+  const pausedJobs = jobs.filter(j => j.status === 'paused');
 
   // Maintain drag order: use orderedActiveIds if they match current set, otherwise reset
   const activeJobIds = rawActiveJobs.map(j => j.id).sort().join(',');
@@ -276,7 +278,7 @@ export default function QueuePage() {
   }, [apiUrl]);
 
   // Queued jobs that can be dragged = queued or dispatched only
-  const draggableIds = activeJobs.filter(j => ['queued', 'paused', 'dispatched'].includes(j.status)).map(j => j.id);
+  const draggableIds = activeJobs.filter(j => ['queued', 'dispatched'].includes(j.status)).map(j => j.id);
 
   const idleWorkers = workers.filter(w => ['idle', 'active'].includes(w.status));
 
@@ -332,6 +334,28 @@ export default function QueuePage() {
           </SortableContext>
         </DndContext>
       </section>
+
+      {pausedJobs.length > 0 && (
+        <section>
+          <h2 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-3">
+            Paused ({pausedJobs.length})
+          </h2>
+          <div className="space-y-2">
+            {pausedJobs.map(job => (
+              <JobRow
+                key={job.id}
+                job={job}
+                onResume={() => resumeJob(job.id)}
+                onRemove={() => removeJob(job.id)}
+                onCancel={() => cancelJob(job.id)}
+                idleWorkers={idleWorkers}
+                apiUrl={apiUrl}
+                draggable={false}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       {failedJobs.length > 0 && (
         <section>
@@ -432,10 +456,10 @@ function SubtitleWarning({ job }: { job: Job }) {
   return (
     <span
       className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-400"
-      title="This file has subtitle tracks. MP4 has limited subtitle support — some tracks may be dropped. Use an MKV recipe to preserve all subtitles."
+      title="MP4 only supports text subtitles (mov_text). Image-based subtitles (PGS, VOBSUB) will be dropped. Use a MKV recipe to keep all subtitle types."
     >
       <AlertTriangle className="w-2.5 h-2.5" />
-      Subtitles may be dropped
+      Image subs may be dropped
     </span>
   );
 }
@@ -487,12 +511,18 @@ function JobRow({
   apiUrl: string;
   draggable: boolean;
 }) {
-  const phaseKey = effectivePhase(job);
-  const cfg = PHASE_CONFIG[phaseKey] ?? PHASE_CONFIG['dispatched'];
+  // Optimistic override — show pause/play state immediately on button click,
+  // without waiting for the WS event to arrive (fixes race condition).
+  const [overrideStatus, setOverrideStatus] = useState<string | null>(null);
+  useEffect(() => { setOverrideStatus(null); }, [job.status]);
+  const displayStatus = overrideStatus ?? job.status;
+
+  const phaseKey = overrideStatus ? overrideStatus : effectivePhase(job);
+  const cfg = PHASE_CONFIG[phaseKey] ?? PHASE_CONFIG['queued'];
   const { Icon } = cfg;
 
   const isProcessing = ['dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(phaseKey);
-  const isPaused = job.status === 'paused';
+  const isPaused = displayStatus === 'paused';
   const waveRef = useRef<HTMLDivElement>(null);
 
   // dnd-kit sortable hook — only active for draggable rows
@@ -518,8 +548,8 @@ function JobRow({
     return () => clearInterval(id);
   }, [job.eta]);
 
-  const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'swapping'].includes(job.status);
-  const showWorkerPicker = ['queued', 'dispatched'].includes(job.status) && idleWorkers.length > 0;
+  const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'swapping'].includes(displayStatus);
+  const showWorkerPicker = ['queued', 'dispatched'].includes(displayStatus) && idleWorkers.length > 0;
 
   return (
     <div
@@ -563,35 +593,31 @@ function JobRow({
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <h3 className="text-white font-semibold truncate text-sm leading-tight">{job.fileName}</h3>
-          {/* File metadata badges */}
-          {(job.resolution || job.fileSize != null || job.sizeBefore != null || job.codecIn) && (
-            <div className="flex items-center gap-1.5 mt-0.5 mb-1 flex-wrap">
-              {job.resolution && <ResolutionBadge resolution={job.resolution} />}
-              {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
-              {job.codecIn && (
-                <span className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-textMuted">
-                  {codecLabel(job.codecIn)}
-                </span>
-              )}
-            </div>
-          )}
-          <div className="flex items-center gap-2 flex-wrap">
+          <h3 className="text-white font-semibold truncate text-sm leading-tight mb-1.5">{job.fileName}</h3>
+          {/* Single badge row: status chip + file metadata + conversion + subtitle warning */}
+          <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
               <Icon className="w-2.5 h-2.5" />
               {cfg.label}
             </span>
+            {job.resolution && <ResolutionBadge resolution={job.resolution} />}
+            {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
             <ConversionBadge job={job} />
             <SubtitleWarning job={job} />
-            {job.fps != null && job.fps > 0 && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
-                {job.fps.toFixed(1)} fps
-              </span>
-            )}
-            {showWorkerPicker && (
-              <WorkerPicker job={job} workers={idleWorkers} apiUrl={apiUrl} />
-            )}
           </div>
+          {/* Second row: fps + worker picker — only shown when relevant */}
+          {(job.fps != null && job.fps > 0 || showWorkerPicker) && (
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              {job.fps != null && job.fps > 0 && (
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
+                  {job.fps.toFixed(1)} fps
+                </span>
+              )}
+              {showWorkerPicker && (
+                <WorkerPicker job={job} workers={idleWorkers} apiUrl={apiUrl} />
+              )}
+            </div>
+          )}
         </div>
 
         {/* Progress + controls */}
@@ -627,7 +653,7 @@ function JobRow({
 
           {isProcessing ? (
             <button
-              onClick={onCancel}
+              onClick={() => { setOverrideStatus('paused'); onCancel(); }}
               title="Pause — stops transcoding, keeps job in queue"
               className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-amber-400 transition-colors"
             >
@@ -636,7 +662,7 @@ function JobRow({
           ) : isPaused ? (
             <div className="flex items-center gap-1">
               <button
-                onClick={onResume}
+                onClick={() => { setOverrideStatus(null); onResume(); }}
                 title="Resume — put back in queue"
                 className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-green-400 transition-colors"
               >

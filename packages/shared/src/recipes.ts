@@ -167,8 +167,14 @@ function buildLangMaps(langs: LangPrefs | undefined): string[] {
 
 // ─── FFmpeg Args Builder ──────────────────────────────────────────────────────
 
+// CPU-only video filter patterns that are incompatible with zero-copy CUDA surface output.
+// Community recipes containing these patterns must not use -hwaccel_output_format cuda.
+const CUDA_INCOMPATIBLE_FILTER_PATTERNS = ['zscale=', 'zscale,', 'yadif', 'drawtext=', 'scale=', 'scale,'];
+
 export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: LangPrefs): string[] {
-  // Community/custom recipes supply their own args
+  // Community/custom recipes supply their own args — return them directly.
+  // For NVIDIA CUDA builds: detect CPU-only filters that can't run on CUDA surfaces
+  // and suppress zero-copy mode (handled in getHwDecodeArgs via recipeId check).
   if (recipe.ffmpegArgs && recipe.ffmpegArgs.length > 0) {
     return recipe.ffmpegArgs;
   }
@@ -248,11 +254,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
     case 'downscale-1080p': {
       args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h265');
-      // scale_cuda keeps frames in VRAM (zero-copy to NVENC); interp_algo=lanczos ≈ lanczos flag
-      const scaleFilter = hw.gpu === 'nvidia' && hw.hwaccels.includes('cuda')
-        ? 'scale_cuda=1920:1080:interp_algo=lanczos'
-        : 'scale=1920:1080:flags=lanczos';
-      args.push('-vf', scaleFilter, '-c:v', enc);
+      args.push('-vf', 'scale=1920:1080:flags=lanczos', '-c:v', enc);
       if (enc === 'libx265') args.push('-crf', '22', '-preset', 'slow');
       else args.push('-qp', '22', '-preset', 'p4');
       args.push('-c:a', 'copy');
@@ -261,10 +263,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
     case 'downscale-720p': {
       args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h265');
-      const scaleFilter = hw.gpu === 'nvidia' && hw.hwaccels.includes('cuda')
-        ? 'scale_cuda=1280:720:interp_algo=lanczos'
-        : 'scale=1280:720:flags=lanczos';
-      args.push('-vf', scaleFilter, '-c:v', enc);
+      args.push('-vf', 'scale=1280:720:flags=lanczos', '-c:v', enc);
       if (enc === 'libx265') args.push('-crf', '24', '-preset', 'fast');
       else args.push('-qp', '24', '-preset', 'p3');
       args.push('-c:a', 'aac', '-b:a', '128k', '-c:s', 'mov_text');
@@ -295,52 +294,34 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
       throw new Error(`Unknown recipe: ${recipe.id}`);
   }
 
-  // ── NVIDIA zero-copy pixel format fix ──────────────────────────────────────
-  // With -hwaccel_output_format cuda, NVDEC outputs CUDA surfaces whose bit
-  // depth matches the source (NV12 for 8-bit, P010LE for 10-bit HDR/WebRip).
-  // H264/HEVC NVENC only accepts NV12 by default, so 10-bit sources trigger
-  // "Could not open encoder — Invalid argument" at frame 0.
-  // scale_cuda=format=nv12 converts on the GPU (essentially free) and keeps
-  // the zero-copy chain intact.  Skip for remux (no encoder) and CPU-filter
-  // recipes (already excluded from zero-copy in getHwDecodeArgs).
-  const needsCudaFmtFix = hw.gpu === 'nvidia'
-    && hw.hwaccels.includes('cuda')
-    && !CUDA_INCOMPATIBLE_RECIPES.has(recipe.id)
-    && recipe.id !== 'remux-to-mkv';
-
-  if (needsCudaFmtFix) {
-    const vfIdx = args.indexOf('-vf');
-    if (vfIdx !== -1) {
-      // Append to existing scale_cuda filter (downscale recipes)
-      args[vfIdx + 1] += ':format=nv12';
-    } else {
-      // Insert passthrough format-conversion filter before -c:v
-      const cvIdx = args.indexOf('-c:v');
-      const insertAt = cvIdx !== -1 ? cvIdx : args.length;
-      args.splice(insertAt, 0, '-vf', 'scale_cuda=format=nv12');
-    }
-  }
-
   return args;
 }
 
 // ─── Hardware Decode Args ─────────────────────────────────────────────────────
 
-// Recipes that use CPU-only video filters (zscale, loudnorm-on-video etc.) and therefore
-// cannot keep frames in VRAM as CUDA surfaces. They still benefit from GPU decode, just
-// without the zero-copy path to the encoder.
-const CUDA_INCOMPATIBLE_RECIPES = new Set(['hdr-to-sdr', 'web-optimized']);
+// Recipes that use CPU-only video filters — cannot use zero-copy CUDA surface output.
+const CUDA_INCOMPATIBLE_RECIPES = new Set(['hdr-to-sdr', 'web-optimized', 'remux-to-mkv']);
 
-export function getHwDecodeArgs(hw: HardwareProfile, recipeId?: string): string[] {
+/**
+ * Returns hardware decode args for ffmpeg.
+ *
+ * @param hw        - Worker hardware profile
+ * @param recipeId  - Optional recipe ID; if the recipe or its ffmpegArgs contain CPU-only
+ *                    filters, zero-copy CUDA output is suppressed to avoid surface format errors.
+ * @param customArgs - Optional community recipe args to scan for CPU-incompatible filters
+ */
+export function getHwDecodeArgs(hw: HardwareProfile, recipeId?: string, customArgs?: string[]): string[] {
   if (hw.gpu === 'nvidia' && hw.hwaccels.includes('cuda')) {
-    // Full zero-copy pipeline: NVDEC → CUDA surface → NVENC (no CPU involvement)
-    // Skip for recipes that use CPU-only filters which can't read CUDA surfaces.
-    if (!recipeId || !CUDA_INCOMPATIBLE_RECIPES.has(recipeId)) {
-      return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'];
+    // Check if the recipe requires CPU-only filters (can't use zero-copy surface output)
+    const isCudaIncompat = (recipeId && CUDA_INCOMPATIBLE_RECIPES.has(recipeId))
+      || (customArgs && customArgs.some(a => CUDA_INCOMPATIBLE_FILTER_PATTERNS.some(p => a.includes(p))));
+
+    if (isCudaIncompat) {
+      // GPU decode only — frames will be copied to CPU before filtering
+      return ['-hwaccel', 'cuda'];
     }
-    // GPU decode only — frames are downloaded to CPU memory before the CPU filter runs,
-    // then NVENC re-uploads them. Still faster than pure software decode.
-    return ['-hwaccel', 'cuda'];
+    // Zero-copy: decode on GPU, keep frames as CUDA surfaces for NVENC
+    return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'];
   }
   if (hw.gpu === 'intel' && hw.hwaccels.includes('qsv')) {
     return ['-hwaccel', 'qsv'];

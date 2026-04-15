@@ -3,7 +3,7 @@ import { getJobsByStatus, updateJobStatus, getJob, recordJobEvent } from './queu
 import { broadcast } from './server.js';
 import type { WorkerInfo, JobPayload, SmbMapping, ConnectionMode, LangPrefs } from '@transcodarr/shared';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
-import { nanoid } from 'nanoid';
+import { randomBytes } from 'crypto';
 import path from 'path';
 import os from 'os';
 
@@ -186,7 +186,7 @@ async function dispatchOne(): Promise<boolean> {
   const rawHost   = process.env.MAIN_HOST ?? '0.0.0.0';
   const mainHost  = rawHost === '0.0.0.0' ? getRoutableIp(worker.host) : rawHost;
   const mainPort  = Number(process.env.PORT ?? process.env.MAIN_PORT ?? 3001);
-  const callbackToken = nanoid(32);
+  const callbackToken = randomBytes(32).toString('hex'); // 64-char hex = 256-bit CSPRNG token
 
   // Mark the worker as active in DB immediately before the async fetch,
   // so the next iteration of dispatchOne() doesn't try to use the same worker.
@@ -212,11 +212,18 @@ async function dispatchOne(): Promise<boolean> {
     console.log(`📡 Wireless mode: worker will download/upload via ${baseUrl}`);
   } else {
     const translated = translatePath(job.filePath, workerMappings);
+    if (!translated) {
+      // No SMB mapping covers this file path — release worker and skip rather than dispatching a broken payload
+      console.warn(`⚠️  [Dispatcher] No SMB mapping covers "${job.filePath}" on worker "${worker.name}" — skipping this worker`);
+      getDb().prepare('UPDATE workers SET status = ? WHERE id = ?').run('idle', worker.id);
+      updateJobStatus(job.id, 'queued', { worker_id: null, callback_token: null, dispatched_at: null });
+      return false;
+    }
     payload = {
       jobId:        job.id,
       filePath:     job.filePath,
-      smbPath:      translated?.smbPath,
-      smbBasePath:  translated?.smbBasePath,
+      smbPath:      translated.smbPath,
+      smbBasePath:  translated.smbBasePath,
       recipe,
       mainHost,
       mainPort,

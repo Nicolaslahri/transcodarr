@@ -103,7 +103,8 @@ export async function transcodeFile(
   if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
 
   const duration    = getFileDuration(inputPath);
-  const hwDecArgs   = getHwDecodeArgs(hardware, payload.recipe.id);
+  // Pass recipeId and custom ffmpegArgs so CUDA incompatible recipes fall back to GPU-decode-only
+  const hwDecArgs   = getHwDecodeArgs(hardware, payload.recipe.id, payload.recipe.ffmpegArgs);
   const recipeArgs  = buildFfmpegArgs(payload.recipe, hardware, payload.langPrefs);
 
   const ffmpegArgs = [
@@ -123,23 +124,6 @@ export async function transcodeFile(
     let leftover = '';
     let errorLog = '';
     let cancelled = false;
-
-    // ── Stall detector ─────────────────────────────────────────────────────────
-    // When ffmpeg finishes encoding the last frame it does a silent post-processing
-    // step (e.g. +faststart rewrites the entire MP4 to move the index atom to the
-    // front). On a NAS/SMB share this can take 1-3 min with zero output, so to the
-    // UI it looks frozen at 99%. We detect the silence and emit a 'finalizing' phase
-    // so the user sees a clear message instead of a stuck progress bar.
-    let lastProgressTime = Date.now();
-    let latestProgress   = 0;
-    let finalizingFired  = false;
-    const finalizingInterval = setInterval(() => {
-      if (!finalizingFired && latestProgress >= 99 && Date.now() - lastProgressTime > 8_000) {
-        finalizingFired = true;
-        onProgress({ progress: 99, phase: 'finalizing' });
-      }
-    }, 2_000);
-    // ──────────────────────────────────────────────────────────────────────────
 
     const onAbort = () => {
       cancelled = true;
@@ -164,19 +148,13 @@ export async function transcodeFile(
       leftover = parts.pop() ?? '';
       for (const line of parts) {
         const update = parseProgressLine(line, duration);
-        if (update) {
-          lastProgressTime = Date.now();
-          latestProgress   = update.progress ?? 0;
-          finalizingFired  = false; // reset if fresh progress arrives
-          onProgress(update);
-        }
+        if (update) onProgress(update);
       }
     };
 
     proc.stderr.on('data', handleData);
     proc.stdout.on('data', handleData);
     proc.on('close', code => {
-      clearInterval(finalizingInterval);
       if (signal) signal.removeEventListener('abort', onAbort);
       if (cancelled) {
         // Clean up the partial tmp file immediately so it doesn't linger on disk
@@ -190,28 +168,22 @@ export async function transcodeFile(
         reject(new Error(`ffmpeg exited ${code}: ${lastLines}`));
       }
     });
-    proc.on('error', (err) => { clearInterval(finalizingInterval); reject(err); });
+    proc.on('error', reject);
   });
 
   // ─── Atomic swap ──────────────────────────────────────────────────────────
-  // Signal the 'swapping' phase BEFORE touching the filesystem, then yield
-  // to the event loop so the async sendProgress fetch can actually execute.
-  // Without the yield, the synchronous rename below blocks the event loop and
-  // the 'swapping' notification never reaches Main until the rename finishes.
   onProgress({ progress: 99, phase: 'swapping' });
-  await new Promise<void>(r => setImmediate(r)); // flush pending I/O / microtasks
 
   const bakPath = inputPath + '.bak';
-  // Use async renames so the event loop stays responsive during slow NAS/SMB ops.
-  await fs.promises.rename(inputPath, bakPath);   // 1. rename original → .bak
+  fs.renameSync(inputPath, bakPath);   // 1. rename original → .bak
   try {
-    await fs.promises.rename(tmpPath, finalPath); // 2. rename tmp → final
-    await fs.promises.unlink(bakPath);            // 3. delete .bak
+    fs.renameSync(tmpPath, finalPath); // 2. rename tmp → final
+    fs.unlinkSync(bakPath);            // 3. delete .bak
   } catch (swapErr) {
     // Rollback: restore original from .bak so we don't lose the source file
     try {
       if (fs.existsSync(bakPath)) {
-        await fs.promises.rename(bakPath, inputPath);
+        fs.renameSync(bakPath, inputPath);
         console.error('[Worker] Swap failed — restored backup from .bak');
       }
     } catch (restoreErr) {

@@ -16,7 +16,7 @@ const RecipeSchema = z.object({
   icon:           z.string(),
   color:          z.string(),
   estimatedReduction: z.number().optional(),
-  ffmpegArgs:     z.array(z.string()).optional(),
+  ffmpegArgs:     z.array(z.string()).max(200).optional(),
   sourceUrl:      z.string().url().optional(),
 });
 
@@ -35,7 +35,7 @@ export const JobPayloadSchema = z.object({
   recipe:        RecipeSchema,
   mainHost:      z.string().min(1),
   mainPort:      z.number().int().min(1).max(65535),
-  callbackToken: z.string().min(16),
+  callbackToken: z.string().min(16),  // 64 chars for crypto.randomBytes(32).toString('hex'); min(16) for backwards compat
   transferMode:  z.enum(['smb', 'wireless']),
   downloadUrl:   z.string().url().optional(),
   uploadUrl:     z.string().url().optional(),

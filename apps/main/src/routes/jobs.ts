@@ -104,6 +104,9 @@ function smartRetryJob(jobId: string): void {
   });
 }
 
+// Simple in-memory rate limiter for the manual enqueue endpoint — max 10 per IP per minute
+const enqueueRateMap = new Map<string, { count: number; resetAt: number }>();
+
 export async function jobsRoutes(app: FastifyInstance) {
   // GET /api/jobs
   app.get<{ Querystring: { limit?: string; offset?: string; status?: string } }>('/', async (req) => {
@@ -141,6 +144,15 @@ export async function jobsRoutes(app: FastifyInstance) {
 
   // POST /api/jobs — manually enqueue a file
   app.post<{ Body: { filePath: string; recipe: string } }>('/', async (req, reply) => {
+    // Rate limit: max 10 manual enqueues per IP per minute
+    const ip = req.ip ?? 'unknown';
+    const now = Date.now();
+    let rateEntry = enqueueRateMap.get(ip) ?? { count: 0, resetAt: now + 60_000 };
+    if (now > rateEntry.resetAt) rateEntry = { count: 0, resetAt: now + 60_000 };
+    rateEntry.count++;
+    enqueueRateMap.set(ip, rateEntry);
+    if (rateEntry.count > 10) return reply.status(429).send({ error: 'Rate limit exceeded — max 10 manual enqueues per minute' });
+
     const job = enqueueFile(req.body.filePath, req.body.recipe, true);
     if (!job) return reply.status(400).send({ error: 'Could not enqueue file (already queued, skipped, or unreadable)' });
     dispatchNext().catch(() => {});
@@ -322,6 +334,55 @@ export async function jobsRoutes(app: FastifyInstance) {
     dispatchNext().catch(() => {});
     broadcast('stats:update', getStats());
     return { ok: true, retried: failedIds.length };
+  });
+
+  // POST /api/jobs/pause-all — pause all queued jobs + signal workers to cancel active ones
+  app.post('/pause-all', async () => {
+    const db = getDb();
+    const now = Math.floor(Date.now() / 1000);
+
+    // Pause all queued jobs (not yet dispatched — no worker to signal)
+    db.prepare("UPDATE jobs SET status = 'paused', updated_at = ? WHERE status = 'queued'").run(now);
+
+    // Signal workers to cancel active jobs; worker cleanup callback will release them
+    const activeJobs = db.prepare(
+      "SELECT id, worker_id FROM jobs WHERE status IN ('dispatched','transcoding','receiving','sending','swapping')"
+    ).all() as any[];
+
+    for (const job of activeJobs) {
+      if (job.worker_id) {
+        const workerRow = db.prepare('SELECT host, port FROM workers WHERE id = ?').get(job.worker_id) as any;
+        if (workerRow) {
+          fetch(`http://${workerRow.host}:${workerRow.port}/job`, {
+            method: 'DELETE',
+            signal: AbortSignal.timeout(5_000),
+          }).catch(() => {});
+        }
+      }
+      db.prepare(
+        'UPDATE jobs SET status = ?, worker_id = NULL, phase = NULL, progress = 0, callback_token = NULL, dispatched_at = NULL, fps = NULL, eta = NULL, error = NULL, updated_at = ? WHERE id = ?'
+      ).run('paused', now, job.id);
+      const updated = getJob(job.id);
+      broadcast('job:paused', updated);
+    }
+
+    broadcast('stats:update', getStats());
+    return { ok: true };
+  });
+
+  // POST /api/jobs/resume-all — un-pause all paused jobs and trigger dispatch
+  app.post('/resume-all', async () => {
+    const db = getDb();
+    const now = Math.floor(Date.now() / 1000);
+    const pausedIds = (db.prepare("SELECT id FROM jobs WHERE status = 'paused'").all() as any[]).map(r => r.id);
+    for (const id of pausedIds) {
+      db.prepare("UPDATE jobs SET status = 'queued', error = NULL, updated_at = ? WHERE id = ?").run(now, id);
+      const updated = getJob(id);
+      broadcast('job:queued', updated);
+    }
+    dispatchNext().catch(() => {});
+    broadcast('stats:update', getStats());
+    return { ok: true, resumed: pausedIds.length };
   });
 
   // PATCH /api/jobs/reorder — drag-to-reorder; body: { orderedIds: string[] }

@@ -111,11 +111,12 @@ export function addWatchedPath(watchPath: string, recipe: string, triggerScan = 
 
 // Yield the Node.js event loop so other I/O (WebSocket pings, progress callbacks)
 // can be processed between file analyses. Without this, synchronous ffprobe calls
-// (execFileSync, ~200ms each) block the entire server for multi-hundred-file scans.
+// (~200ms each) block the entire server for multi-hundred-file scans.
 const yieldToEventLoop = () => new Promise<void>(r => setImmediate(r));
 
 // Helper to manually scan a directory recursively, broadcasting a summary when done.
 // Runs asynchronously and yields between files so the server stays responsive.
+// Symlink cycle detection prevents infinite recursion on looped symlinks.
 export async function manualScanDirectory(dir: string, recipe: string): Promise<void> {
   if (!fs.existsSync(dir)) {
     broadcast('scan:summary', { dir, recipe, enqueued: 0, skipped: 0, alreadyActive: 0, error: 'Directory not found' });
@@ -124,8 +125,16 @@ export async function manualScanDirectory(dir: string, recipe: string): Promise<
 
   const stats = { enqueued: 0, skipped: 0, alreadyActive: 0, total: 0 };
   const sessionId = Math.random().toString(36).slice(2, 10);
+  // Track resolved real paths to break symlink cycles
+  const visitedRealPaths = new Set<string>();
 
   const scan = async (current: string) => {
+    // Resolve the real path to detect symlink loops
+    let realCurrent: string;
+    try { realCurrent = fs.realpathSync(current); } catch { return; }
+    if (visitedRealPaths.has(realCurrent)) return;
+    visitedRealPaths.add(realCurrent);
+
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
@@ -134,14 +143,19 @@ export async function manualScanDirectory(dir: string, recipe: string): Promise<
       return;
     }
 
-    // Recurse into subdirectories first (breadth of structure, then files)
+    // Recurse into subdirectories first
     for (const entry of entries) {
-      if (entry.isDirectory()) {
-        await scan(path.join(current, entry.name));
+      if (entry.isDirectory() || entry.isSymbolicLink()) {
+        const fullPath = path.join(current, entry.name);
+        // Only recurse into symlinks that point to directories
+        try {
+          const stat = fs.statSync(fullPath); // follows symlinks
+          if (stat.isDirectory()) await scan(fullPath);
+        } catch { /* broken symlink — skip */ }
       }
     }
 
-    // Process files — yield the event loop between each ffprobe call so the
+    // Process files — yield the event loop between each ffprobe so the
     // server can handle WebSocket messages / progress callbacks mid-scan.
     for (const entry of entries) {
       if (entry.isFile()) {
@@ -185,6 +199,7 @@ export async function manualScanDirectory(dir: string, recipe: string): Promise<
 
   const msg = `Scan complete for "${path.basename(dir)}": ${stats.enqueued} queued, ${stats.skipped} already optimized, ${stats.alreadyActive} in progress (${stats.total} total files found)`;
   console.log(`  📊 ${msg}`);
+  // Update last_scan_at for the matching watched_path
   try {
     getDb().prepare('UPDATE watched_paths SET last_scan_at = ? WHERE path = ?').run(Math.floor(Date.now() / 1000), dir);
   } catch { /* non-critical */ }

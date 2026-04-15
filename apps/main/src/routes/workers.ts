@@ -8,6 +8,7 @@ import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared
 import { ProgressUpdateSchema, JobCompletePayloadSchema } from '@transcodarr/shared';
 import fs from 'fs';
 import path from 'path';
+import { pipeline } from 'stream/promises';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
@@ -303,15 +304,28 @@ export async function workersRoutes(app: FastifyInstance) {
           const oldExt = path.extname(targetDbPath);
           if (newExt && newExt !== oldExt) {
             targetDbPath = targetDbPath.slice(0, -oldExt.length) + newExt;
+          }
+        }
+
+        // Wrap all DB writes atomically — a crash can't leave the worker active but the job incomplete
+        db.exec('BEGIN');
+        try {
+          if (targetDbPath && targetDbPath !== jobRow?.file_path) {
             db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
               .run(targetDbPath, path.basename(targetDbPath), req.params.jobId);
           }
+          db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
+            .run('complete', sizeBefore ?? null, sizeAfter ?? null, jobFull?.fps ?? null, elapsed, now, now, req.params.jobId);
+          db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
+          // Persist fingerprint so "Clear All" doesn't re-queue this file
+          if (jobFull) recordProcessedFile(jobFull.file_path, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
+          db.exec('COMMIT');
+        } catch (txErr) {
+          db.exec('ROLLBACK');
+          throw txErr;
         }
-        db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
-          .run('complete', sizeBefore ?? null, sizeAfter ?? null, jobFull?.fps ?? null, elapsed, now, now, req.params.jobId);
-        // Persist fingerprint so "Clear All" doesn't re-queue this file
-        if (jobFull) recordProcessedFile(jobFull.file_path, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
-        // Post-processing: move file if the source watched path has move_to configured
+
+        // Post-processing: move file if the source watched path has move_to configured (fs op outside transaction)
         if (targetDbPath && fs.existsSync(targetDbPath)) {
           const moveTo = (db.prepare(
             "SELECT move_to FROM watched_paths WHERE ? LIKE path || '%' AND move_to IS NOT NULL ORDER BY LENGTH(path) DESC LIMIT 1"
@@ -319,10 +333,15 @@ export async function workersRoutes(app: FastifyInstance) {
           if (moveTo) {
             try {
               fs.mkdirSync(moveTo, { recursive: true });
-              const dest = path.join(moveTo, path.basename(targetDbPath));
-              fs.renameSync(targetDbPath, dest);
-              db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
-                .run(dest, path.basename(dest), req.params.jobId);
+              // Validate destination is inside move_to to prevent path traversal
+              const dest = path.resolve(path.join(moveTo, path.basename(targetDbPath)));
+              if (!dest.startsWith(path.resolve(moveTo) + path.sep) && dest !== path.resolve(moveTo)) {
+                console.warn(`⚠️  move_to path traversal blocked — dest "${dest}" is outside "${moveTo}"`);
+              } else {
+                fs.renameSync(targetDbPath, dest);
+                db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
+                  .run(dest, path.basename(dest), req.params.jobId);
+              }
             } catch (moveErr: any) {
               console.warn(`⚠️  move_to failed: ${moveErr.message}`);
             }
@@ -333,15 +352,19 @@ export async function workersRoutes(app: FastifyInstance) {
         broadcast('stats:update', getStats());
         fireWebhooks('job:complete', { jobId: req.params.jobId, fileName: completeName ?? '', sizeBefore, sizeAfter });
       } else {
-        db.prepare('UPDATE jobs SET status = ?, phase = NULL, error = ?, updated_at = ? WHERE id = ?')
-          .run('failed', error ?? 'Unknown error', now, req.params.jobId);
+        db.exec('BEGIN');
+        try {
+          db.prepare('UPDATE jobs SET status = ?, phase = NULL, error = ?, updated_at = ? WHERE id = ?')
+            .run('failed', error ?? 'Unknown error', now, req.params.jobId);
+          db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
+          db.exec('COMMIT');
+        } catch (txErr) { db.exec('ROLLBACK'); throw txErr; }
         const failedName = jobFull?.file_path ? path.basename(jobFull.file_path) : undefined;
         broadcast('job:failed', { jobId: req.params.jobId, error, fileName: failedName });
         broadcast('stats:update', getStats());
         fireWebhooks('job:failed', { jobId: req.params.jobId, fileName: failedName ?? '', error });
       }
 
-      db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
       // Trigger next job immediately rather than waiting for the 30s poll
       dispatchNext().catch(() => {});
       return { ok: true };
@@ -355,9 +378,10 @@ export async function workersRoutes(app: FastifyInstance) {
       const db = getDb();
       const job = db.prepare('SELECT file_path, worker_id, callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       if (!job) return reply.status(404).send({ error: 'Job not found' });
-      if (job.callback_token) {
-        const provided = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-        if (provided !== job.callback_token) return reply.status(401).send({ error: 'Unauthorized' });
+      // Always enforce token — skip means bypass (never allow when token is NULL)
+      const providedDownload = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+      if (!job.callback_token || providedDownload !== job.callback_token) {
+        return reply.status(401).send({ error: 'Unauthorized' });
       }
 
       const filePath = job.file_path;
@@ -386,9 +410,10 @@ export async function workersRoutes(app: FastifyInstance) {
       const db = getDb();
       const job = db.prepare('SELECT file_path, worker_id, callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       if (!job) return reply.status(404).send({ error: 'Job not found' });
-      if (job.callback_token) {
-        const provided = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-        if (provided !== job.callback_token) return reply.status(401).send({ error: 'Unauthorized' });
+      // Always enforce token — skip means bypass (never allow when token is NULL)
+      const providedUpload = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+      if (!job.callback_token || providedUpload !== job.callback_token) {
+        return reply.status(401).send({ error: 'Unauthorized' });
       }
 
       const origPath   = job.file_path;
@@ -405,45 +430,20 @@ export async function workersRoutes(app: FastifyInstance) {
         .run(Math.floor(Date.now() / 1000), req.params.jobId);
 
       try {
-        // Stream the upload body to a temp file
+        // Stream the upload body to a temp file using pipeline() for backpressure safety
         const writeStream = fs.createWriteStream(tmpPath);
-        await new Promise<void>((resolve, reject) => {
-          req.raw.pipe(writeStream);
-          writeStream.on('finish', resolve);
-          writeStream.on('error', reject);
-          req.raw.on('error', reject);
-        });
+        await pipeline(req.raw, writeStream);
 
         const sizeAfter = fs.statSync(tmpPath).size;
         const now = Math.floor(Date.now() / 1000);
         const jobMeta = db.prepare('SELECT file_path, recipe, fps, dispatched_at, content_key FROM jobs WHERE id = ?').get(req.params.jobId) as any;
         const elapsed = jobMeta?.dispatched_at ? now - jobMeta.dispatched_at : null;
-
-        // Atomic swap: original → .bak → tmp → final → delete .bak
-        const bakPath = origPath + '.bak';
-        try {
-          if (fs.existsSync(origPath)) fs.renameSync(origPath, bakPath);
-          fs.renameSync(tmpPath, finalPath);
-          if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
-        } catch (swapErr: any) {
-          // Rollback: restore .bak to original path so we don't lose the source file
-          try {
-            if (fs.existsSync(bakPath)) {
-              fs.renameSync(bakPath, origPath);
-              console.error('[Main] Swap failed — restored backup from .bak');
-            }
-          } catch (restoreErr) {
-            console.error('[Main] CRITICAL: swap failed AND restore failed — manual recovery needed:', restoreErr);
-          }
-          try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
-          throw swapErr;
-        }
-
-        // Wrap all DB writes atomically so a crash can't leave them half-applied
         const wirelessName = jobMeta?.file_path ? path.basename(jobMeta.file_path) : undefined;
+
+        // DB transaction FIRST — if swap fails after this the job shows 'complete' but original
+        // file is still present, which is recoverable. Inverse (file gone, job stuck transcoding) is not.
         db.exec('BEGIN');
         try {
-          // Update extension in DB if changed
           if (finalPath !== origPath) {
             db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
               .run(finalPath, path.basename(finalPath), req.params.jobId);
@@ -451,13 +451,33 @@ export async function workersRoutes(app: FastifyInstance) {
           db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
             .run('complete', sizeBefore, sizeAfter, jobMeta?.fps ?? null, elapsed, now, now, req.params.jobId);
           db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
-          // Persist fingerprint so "Clear All" doesn't re-queue this file
           if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore, jobMeta.recipe, jobMeta.content_key ?? undefined);
           db.exec('COMMIT');
         } catch (txErr) {
           db.exec('ROLLBACK');
           throw txErr;
         }
+
+        // File swap AFTER DB commit — original file preserved until rename succeeds
+        const bakPath = origPath + '.bak';
+        try {
+          if (fs.existsSync(origPath)) fs.renameSync(origPath, bakPath);
+          fs.renameSync(tmpPath, finalPath);
+          if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
+        } catch (swapErr: any) {
+          try {
+            if (fs.existsSync(bakPath)) {
+              fs.renameSync(bakPath, origPath);
+              console.error('[Main] Wireless swap failed — restored backup from .bak');
+            }
+          } catch (restoreErr) {
+            console.error('[Main] CRITICAL: wireless swap failed AND restore failed — manual recovery needed:', restoreErr);
+          }
+          try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+          // Don't throw — DB is already committed; log the swap failure and continue
+          console.error('[Main] Wireless swap error (DB already updated):', swapErr.message);
+        }
+
         recordJobEvent(req.params.jobId, 'complete', job.worker_id ? (getDb().prepare('SELECT name FROM workers WHERE id=?').get(job.worker_id) as any)?.name : undefined, { sizeBefore, sizeAfter });
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter, fileName: wirelessName });
         broadcast('stats:update', getStats());

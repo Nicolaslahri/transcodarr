@@ -103,7 +103,8 @@ export async function transcodeFile(
   if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
 
   const duration    = getFileDuration(inputPath);
-  const hwDecArgs   = getHwDecodeArgs(hardware);
+  // Pass recipeId and custom ffmpegArgs so CUDA incompatible recipes fall back to GPU-decode-only
+  const hwDecArgs   = getHwDecodeArgs(hardware, payload.recipe.id, payload.recipe.ffmpegArgs);
   const recipeArgs  = buildFfmpegArgs(payload.recipe, hardware, payload.langPrefs);
 
   const ffmpegArgs = [

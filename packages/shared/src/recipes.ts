@@ -167,8 +167,14 @@ function buildLangMaps(langs: LangPrefs | undefined): string[] {
 
 // ─── FFmpeg Args Builder ──────────────────────────────────────────────────────
 
+// CPU-only video filter patterns that are incompatible with zero-copy CUDA surface output.
+// Community recipes containing these patterns must not use -hwaccel_output_format cuda.
+const CUDA_INCOMPATIBLE_FILTER_PATTERNS = ['zscale=', 'zscale,', 'yadif', 'drawtext=', 'scale=', 'scale,'];
+
 export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: LangPrefs): string[] {
-  // Community/custom recipes supply their own args
+  // Community/custom recipes supply their own args — return them directly.
+  // For NVIDIA CUDA builds: detect CPU-only filters that can't run on CUDA surfaces
+  // and suppress zero-copy mode (handled in getHwDecodeArgs via recipeId check).
   if (recipe.ffmpegArgs && recipe.ffmpegArgs.length > 0) {
     return recipe.ffmpegArgs;
   }
@@ -293,9 +299,29 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
 
 // ─── Hardware Decode Args ─────────────────────────────────────────────────────
 
-export function getHwDecodeArgs(hw: HardwareProfile): string[] {
+// Recipes that use CPU-only video filters — cannot use zero-copy CUDA surface output.
+const CUDA_INCOMPATIBLE_RECIPES = new Set(['hdr-to-sdr', 'web-optimized', 'remux-to-mkv']);
+
+/**
+ * Returns hardware decode args for ffmpeg.
+ *
+ * @param hw        - Worker hardware profile
+ * @param recipeId  - Optional recipe ID; if the recipe or its ffmpegArgs contain CPU-only
+ *                    filters, zero-copy CUDA output is suppressed to avoid surface format errors.
+ * @param customArgs - Optional community recipe args to scan for CPU-incompatible filters
+ */
+export function getHwDecodeArgs(hw: HardwareProfile, recipeId?: string, customArgs?: string[]): string[] {
   if (hw.gpu === 'nvidia' && hw.hwaccels.includes('cuda')) {
-    return ['-hwaccel', 'auto'];
+    // Check if the recipe requires CPU-only filters (can't use zero-copy surface output)
+    const isCudaIncompat = (recipeId && CUDA_INCOMPATIBLE_RECIPES.has(recipeId))
+      || (customArgs && customArgs.some(a => CUDA_INCOMPATIBLE_FILTER_PATTERNS.some(p => a.includes(p))));
+
+    if (isCudaIncompat) {
+      // GPU decode only — frames will be copied to CPU before filtering
+      return ['-hwaccel', 'cuda'];
+    }
+    // Zero-copy: decode on GPU, keep frames as CUDA surfaces for NVENC
+    return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'];
   }
   if (hw.gpu === 'intel' && hw.hwaccels.includes('qsv')) {
     return ['-hwaccel', 'qsv'];

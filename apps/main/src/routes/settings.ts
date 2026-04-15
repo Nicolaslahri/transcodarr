@@ -8,6 +8,27 @@ import os from 'os';
 import { addWatchedPath, manualScanDirectory } from '../watcher.js';
 import { fireWebhooks } from '../webhooks.js';
 
+/**
+ * Returns true for URLs that resolve to private/loopback/link-local addresses.
+ * Used to block SSRF on recipe import and webhook delivery.
+ */
+function isPrivateUrl(urlStr: string): boolean {
+  try {
+    const { hostname, protocol } = new URL(urlStr);
+    if (!['http:', 'https:'].includes(protocol)) return true; // block non-HTTP schemes
+    const lower = hostname.toLowerCase();
+    if (['localhost', '127.0.0.1', '::1', '0.0.0.0', '[::1]'].includes(lower)) return true;
+    const parts = lower.split('.').map(Number);
+    if (parts.length === 4 && !parts.some(isNaN)) {
+      if (parts[0] === 10) return true;                                      // 10.x.x.x
+      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16-31.x.x
+      if (parts[0] === 192 && parts[1] === 168) return true;                 // 192.168.x.x
+      if (parts[0] === 169 && parts[1] === 254) return true;                 // link-local
+    }
+    return false;
+  } catch { return true; } // unparseable URL treated as private
+}
+
 export async function settingsRoutes(app: FastifyInstance) {
   // ─── Recipes ────────────────────────────────────────────────────────────────
   const getCustomRecipes = () => {
@@ -22,6 +43,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post<{ Body: { url: string } }>('/recipes/import', async (req, reply) => {
     const { url } = req.body;
     if (!url) return reply.status(400).send({ error: 'url is required' });
+    if (isPrivateUrl(url)) return reply.status(400).send({ error: 'URL must be a public internet address' });
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) return reply.status(400).send({ error: `Fetch failed: ${res.status}` });
@@ -203,6 +225,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post<{ Body: { url: string; events?: string[]; secret?: string } }>('/webhooks', async (req, reply) => {
     const { url, events = ['job:complete', 'job:failed'], secret } = req.body;
     if (!url) return reply.status(400).send({ error: 'url is required' });
+    if (isPrivateUrl(url)) return reply.status(400).send({ error: 'Webhook URL must be a public internet address' });
     const id = nanoid();
     getDb().prepare('INSERT INTO webhooks (id, url, events, secret) VALUES (?,?,?,?)').run(id, url, JSON.stringify(events), secret ?? null);
     return getDb().prepare('SELECT * FROM webhooks WHERE id = ?').get(id);
@@ -210,6 +233,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.put<{ Params: { id: string }; Body: { url?: string; events?: string[]; secret?: string; enabled?: boolean } }>('/webhooks/:id', async (req, reply) => {
     const { url, events, secret, enabled } = req.body;
+    if (url !== undefined && isPrivateUrl(url)) return reply.status(400).send({ error: 'Webhook URL must be a public internet address' });
     const fields: string[] = [];
     const vals: any[] = [];
     if (url !== undefined) { fields.push('url = ?'); vals.push(url); }

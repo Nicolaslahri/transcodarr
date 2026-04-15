@@ -16,7 +16,7 @@ const RecipeSchema = z.object({
   icon:           z.string(),
   color:          z.string(),
   estimatedReduction: z.number().optional(),
-  ffmpegArgs:     z.array(z.string()).optional(),
+  ffmpegArgs:     z.array(z.string()).max(200).optional(),
   sourceUrl:      z.string().url().optional(),
 });
 
@@ -35,7 +35,7 @@ export const JobPayloadSchema = z.object({
   recipe:        RecipeSchema,
   mainHost:      z.string().min(1),
   mainPort:      z.number().int().min(1).max(65535),
-  callbackToken: z.string().min(16),
+  callbackToken: z.string().min(16),  // 64 chars for crypto.randomBytes(32).toString('hex'); min(16) for backwards compat
   transferMode:  z.enum(['smb', 'wireless']),
   downloadUrl:   z.string().url().optional(),
   uploadUrl:     z.string().url().optional(),
@@ -51,8 +51,8 @@ export const ProgressUpdateSchema = z.object({
   workerId: z.string().min(1),
   progress: z.number().int().min(0).max(100),
   fps:      z.number().min(0).optional(),
-  eta:      z.number().int().optional(),
-  phase:    z.enum(['receiving', 'transcoding', 'sending', 'swapping']),
+  eta:      z.number().optional(),          // ms timestamp — may be a float
+  phase:    z.enum(['receiving', 'transcoding', 'sending', 'swapping', 'finalizing']),
 });
 
 export type ProgressUpdateInput = z.infer<typeof ProgressUpdateSchema>;

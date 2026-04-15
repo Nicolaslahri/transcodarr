@@ -4,7 +4,26 @@
       "Bash(node --input-type=module --eval \"import\\('./apps/main/src/dispatcher.js'\\).catch\\(\\(\\) => {}\\)\")",
       "Bash(gh pr create --title 'refactor: tech debt overhaul — bug fixes, unified ports, event dispatch, UX/a11y' --body ':*)",
       "Read(//c/Users/Nicolas/Documents/Transcodarr/packages/shared/**)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(sed -i 's/\"version\": \"1.0.20\"/\"version\": \"1.0.21\"/' package.json apps/main/package.json apps/worker/package.json)",
+      "Bash(node -e \"console.log\\(require\\('./package.json'\\).version, require\\('./apps/main/package.json'\\).version, require\\('./apps/worker/package.json'\\).version\\)\")",
+      "Bash(npx tsc:*)",
+      "Bash(sed -i 's/\"version\": \"1.0.21\"/\"version\": \"1.0.22\"/' package.json apps/main/package.json apps/worker/package.json)",
+      "Bash(node -e \"console.log\\(require\\('./package.json'\\).version\\)\")",
+      "Bash(grep -oP \"\\(?<=['\\\\\"]\\)[^'\\\\\"]{10,}\\(?=['\\\\\"]\\)\" \"C:\\\\Users\\\\Nicolas\\\\Documents\\\\Transcodarr\\\\.claude\\\\worktrees\\\\kind-hodgkin\\\\apps\\\\web\\\\app\\\\queue\\\\page.tsx\")",
+      "Bash(grep -oP \"\\(?<=['\\\\\"]\\)[^'\\\\\"]{10,}\\(?=['\\\\\"]\\)\" \"C:\\\\Users\\\\Nicolas\\\\Documents\\\\Transcodarr\\\\.claude\\\\worktrees\\\\kind-hodgkin\\\\apps\\\\web\\\\app\\\\settings\\\\page.tsx\")",
+      "Bash(npm install:*)",
+      "Bash(node -e \"const lock = JSON.parse\\(require\\('fs'\\).readFileSync\\('package-lock.json','utf8'\\)\\); const n = lock.packages['node_modules/@types/node'] || lock.packages['apps/main/node_modules/@types/node']; console.log\\('@types/node resolved:', n?.version\\)\")",
+      "Bash(node -e \"const lock = JSON.parse\\(require\\('fs'\\).readFileSync\\('package-lock.json','utf8'\\)\\); const n = lock.packages['node_modules/@types/node']; console.log\\('@types/node resolved:', n?.version\\)\")",
+      "Bash(sed -i 's/\"version\": \"1.0.31\"/\"version\": \"1.0.32\"/g' package.json apps/main/package.json apps/worker/package.json)",
+      "Bash(sed -i 's/\"version\": \"1.0.12\"/\"version\": \"1.0.32\"/g' apps/web/package.json)",
+      "Bash(cmd /c \"cd C:\\\\Users\\\\Nicolas\\\\Documents\\\\Transcodarr && npx tsc --noEmit -p apps/web/tsconfig.json 2>&1\")",
+      "Bash(cmd /c \"cd /d C:\\\\Users\\\\Nicolas\\\\Documents\\\\Transcodarr && npx tsc --noEmit -p apps/web/tsconfig.json 2>&1 | more\")",
+      "Bash(xargs grep:*)",
+      "Bash(grep -l \"hardware\\\\|HARDWARE\\\\|PROFILE\" apps/web/components/*.tsx)",
+      "Bash(node -e ':*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)"
     ]
   }
 }

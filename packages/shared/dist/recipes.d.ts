@@ -1,7 +1,15 @@
 import type { HardwareProfile, LangPrefs, Recipe } from './types.js';
 export declare const BUILT_IN_RECIPES: Recipe[];
 export declare function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: LangPrefs): string[];
-export declare function getHwDecodeArgs(hw: HardwareProfile): string[];
+/**
+ * Returns hardware decode args for ffmpeg.
+ *
+ * @param hw        - Worker hardware profile
+ * @param recipeId  - Optional recipe ID; if the recipe or its ffmpegArgs contain CPU-only
+ *                    filters, zero-copy CUDA output is suppressed to avoid surface format errors.
+ * @param customArgs - Optional community recipe args to scan for CPU-incompatible filters
+ */
+export declare function getHwDecodeArgs(hw: HardwareProfile, recipeId?: string, customArgs?: string[]): string[];
 /**
  * Determines if a file should be skipped for a given recipe.
  *

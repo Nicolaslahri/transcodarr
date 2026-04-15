@@ -109,8 +109,15 @@ export function addWatchedPath(watchPath: string, recipe: string, triggerScan = 
   }
 }
 
-// Helper to manually scan a directory recursively, broadcasting a summary when done
-export function manualScanDirectory(dir: string, recipe: string) {
+// Yield the Node.js event loop so other I/O (WebSocket pings, progress callbacks)
+// can be processed between file analyses. Without this, synchronous ffprobe calls
+// (~200ms each) block the entire server for multi-hundred-file scans.
+const yieldToEventLoop = () => new Promise<void>(r => setImmediate(r));
+
+// Helper to manually scan a directory recursively, broadcasting a summary when done.
+// Runs asynchronously and yields between files so the server stays responsive.
+// Symlink cycle detection prevents infinite recursion on looped symlinks.
+export async function manualScanDirectory(dir: string, recipe: string): Promise<void> {
   if (!fs.existsSync(dir)) {
     broadcast('scan:summary', { dir, recipe, enqueued: 0, skipped: 0, alreadyActive: 0, error: 'Directory not found' });
     return;
@@ -118,49 +125,77 @@ export function manualScanDirectory(dir: string, recipe: string) {
 
   const stats = { enqueued: 0, skipped: 0, alreadyActive: 0, total: 0 };
   const sessionId = Math.random().toString(36).slice(2, 10);
+  // Track resolved real paths to break symlink cycles
+  const visitedRealPaths = new Set<string>();
 
-  const scan = (current: string) => {
+  const scan = async (current: string) => {
+    // Resolve the real path to detect symlink loops
+    let realCurrent: string;
+    try { realCurrent = fs.realpathSync(current); } catch { return; }
+    if (visitedRealPaths.has(realCurrent)) return;
+    visitedRealPaths.add(realCurrent);
+
+    let entries: fs.Dirent[];
     try {
-      const entries = fs.readdirSync(current, { withFileTypes: true });
-      for (const entry of entries) {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (err) {
+      console.error(`Failed to read ${current}:`, err);
+      return;
+    }
+
+    // Recurse into subdirectories first
+    for (const entry of entries) {
+      if (entry.isDirectory() || entry.isSymbolicLink()) {
         const fullPath = path.join(current, entry.name);
-        if (entry.isDirectory()) {
-          scan(fullPath);
-        } else {
-          const ext = path.extname(fullPath).toLowerCase();
-          if (SUPPORTED_EXTENSIONS.includes(ext)) {
-            stats.total++;
+        // Only recurse into symlinks that point to directories
+        try {
+          const stat = fs.statSync(fullPath); // follows symlinks
+          if (stat.isDirectory()) await scan(fullPath);
+        } catch { /* broken symlink — skip */ }
+      }
+    }
+
+    // Process files — yield the event loop between each ffprobe so the
+    // server can handle WebSocket messages / progress callbacks mid-scan.
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        const fullPath = path.join(current, entry.name);
+        const ext = path.extname(fullPath).toLowerCase();
+        if (SUPPORTED_EXTENSIONS.includes(ext)) {
+          // Yield before each ffprobe so the event loop can breathe
+          await yieldToEventLoop();
+
+          stats.total++;
+          try {
             const job = enqueueFile(fullPath, recipe);
             if (job) {
               stats.enqueued++;
               console.log(`📥 Queued: ${path.basename(fullPath)}`);
               broadcast('job:queued', job);
             } else {
-              // Check if in-progress vs genuinely skipped (already optimal)
               const existing = getDb().prepare(
-                "SELECT status FROM jobs WHERE file_path = ?"
+                'SELECT status FROM jobs WHERE file_path = ?'
               ).get(fullPath) as any;
-
               if (existing && ['transcoding', 'dispatched', 'swapping'].includes(existing.status)) {
                 stats.alreadyActive++;
               } else {
                 stats.skipped++;
               }
             }
+          } catch (err) {
+            console.error(`Failed to analyse ${fullPath}:`, err);
+          }
 
-            // Emit progress every 10 files
-            if (stats.total % 10 === 0) {
-              broadcast('scan:progress', { sessionId, dir, checked: stats.total, queued: stats.enqueued, skipped: stats.skipped });
-            }
+          // Emit progress every 10 files
+          if (stats.total % 10 === 0) {
+            broadcast('scan:progress', { sessionId, dir, checked: stats.total, queued: stats.enqueued, skipped: stats.skipped });
           }
         }
       }
-    } catch (err) {
-      console.error(`Failed to scan ${current}:`, err);
     }
   };
 
-  scan(dir);
+  await scan(dir);
 
   const msg = `Scan complete for "${path.basename(dir)}": ${stats.enqueued} queued, ${stats.skipped} already optimized, ${stats.alreadyActive} in progress (${stats.total} total files found)`;
   console.log(`  📊 ${msg}`);

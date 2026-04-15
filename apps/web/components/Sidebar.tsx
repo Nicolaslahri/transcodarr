@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, ListVideo, Cpu, Film, Settings, Zap, Radio } from 'lucide-react';
+import { LayoutDashboard, ListVideo, Cpu, Film, Settings, Zap, Radio, X } from 'lucide-react';
 import { useAppState } from '@/hooks/useTranscodarrSocket';
+import { useEffect } from 'react';
 
 const mainNav = [
   { href: '/overview', icon: LayoutDashboard, label: 'Overview' },
@@ -19,15 +20,24 @@ const workerNav = [
   { href: '/settings', icon: Settings,   label: 'Settings' },
 ];
 
-export function Sidebar() {
-  const pathname = usePathname();
+interface SidebarProps {
+  /** Mobile drawer open state — irrelevant on desktop where sidebar is always visible */
+  mobileOpen?: boolean;
+  onClose?: () => void;
+}
+
+export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
+  const pathname  = usePathname();
   const { meta, connected } = useAppState();
 
-  const nav = meta.mode === 'worker' ? workerNav : mainNav;
+  const nav       = meta.mode === 'worker' ? workerNav : mainNav;
   const isLoading = meta.mode === 'loading';
 
-  return (
-    <aside className="w-60 shrink-0 h-screen sticky top-0 flex flex-col border-r border-border bg-surface">
+  // Close drawer on route change
+  useEffect(() => { onClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const inner = (
+    <aside className="w-60 shrink-0 h-full flex flex-col border-r border-border bg-surface">
       {/* Logo */}
       <div className="px-6 py-7 border-b border-border">
         <div className="flex items-center gap-2.5">
@@ -45,6 +55,16 @@ export function Sidebar() {
               {isLoading ? '…' : meta.mode === 'worker' ? 'Worker Node' : 'Main Node'}
             </p>
           </div>
+          {/* Close button — mobile only */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="lg:hidden ml-1 p-1 rounded-lg text-textMuted hover:text-white hover:bg-white/10 transition-colors"
+              aria-label="Close menu"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -79,5 +99,30 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+  );
+
+  return (
+    <>
+      {/* Desktop sidebar — always visible lg+ */}
+      <div className="hidden lg:flex h-screen sticky top-0">
+        {inner}
+      </div>
+
+      {/* Mobile drawer — slide in from left */}
+      {mobileOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="lg:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+            onClick={onClose}
+            aria-hidden
+          />
+          {/* Panel */}
+          <div className="lg:hidden fixed inset-y-0 left-0 z-50 flex h-full animate-in slide-in-from-left duration-300">
+            {inner}
+          </div>
+        </>
+      )}
+    </>
   );
 }

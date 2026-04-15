@@ -19,6 +19,13 @@ body {
 ::-webkit-scrollbar-thumb { background: #2a2a35; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #3a3a45; }
 
+/* ─── Scrollbar none — hide scrollbar but keep scrolling functional ──────────*/
+.scrollbar-none {
+  scrollbar-width: none;         /* Firefox */
+  -ms-overflow-style: none;      /* IE/Edge */
+}
+.scrollbar-none::-webkit-scrollbar { display: none; } /* Chrome/Safari/WebKit */
+
 /* ─── Button microinteraction — every button presses down slightly ───────────*/
 button:not(:disabled):active,
 a[role="button"]:active {

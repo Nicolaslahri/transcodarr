@@ -73,21 +73,21 @@ export default function OverviewPage() {
   const acceptedWorkers = workers.filter(w => w.status !== 'pending');
 
   return (
-    <div ref={containerRef} className="p-10 max-w-7xl mx-auto space-y-10">
+    <div ref={containerRef} className="p-4 md:p-6 lg:p-10 max-w-7xl mx-auto space-y-6 lg:space-y-10">
       {/* Header */}
-      <header className="flex justify-between items-end">
+      <header className="flex justify-between items-start md:items-end gap-3">
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-white mb-1">Overview</h1>
-          <p className="text-textMuted">Monitor your fleet and transcoding queue.</p>
+          <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-1">Overview</h1>
+          <p className="text-textMuted text-sm">Monitor your fleet and transcoding queue.</p>
         </div>
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2 mt-1 md:mb-1 shrink-0">
           <span className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
           <span className="text-sm text-textMuted">{connected ? 'Live' : 'Offline'}</span>
         </div>
       </header>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 stagger-list">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-5 stagger-list">
         <StatCard icon={<Activity className="text-primary w-5 h-5" />}    label="Jobs Today"     value={stats.jobsToday}    suffix="" />
         <StatCard icon={<HardDrive className="text-green-400 w-5 h-5" />} label="Space Saved"    value={stats.gbSaved}      suffix=" GB" />
         <StatCard icon={<Cpu className="text-purple-400 w-5 h-5" />}      label="Workers Online" value={stats.workersOnline} suffix="" />
@@ -127,7 +127,7 @@ export default function OverviewPage() {
               Manage <ArrowRight className="w-3 h-3" />
             </a>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 stagger-list">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4 stagger-list">
             {acceptedWorkers.map(w => {
               const activeJob = activeJobs.find(j => j.workerId === w.id);
               return <WorkerCard key={w.id} worker={w} activeJob={activeJob ?? null} />;
@@ -136,7 +136,7 @@ export default function OverviewPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
         {/* Recent Activity */}
         <div className="card-hover bg-surface border border-border rounded-2xl overflow-hidden">
           <div className="px-6 py-4 border-b border-border flex items-center justify-between">
@@ -331,13 +331,13 @@ function PerfRow({ icon, label, value }: { icon: React.ReactNode; label: string;
 
 function StatCard({ icon, label, value, suffix }: { icon: React.ReactNode; label: string; value: number; suffix: string }) {
   return (
-    <div className="stat-card card-hover bg-surface border border-border rounded-2xl p-5 flex items-start gap-4">
-      <div className="p-2.5 bg-background rounded-xl border border-border/50 shrink-0">{icon}</div>
+    <div className="stat-card card-hover bg-surface border border-border rounded-2xl p-4 md:p-5 flex items-start gap-3 md:gap-4">
+      <div className="p-2 md:p-2.5 bg-background rounded-xl border border-border/50 shrink-0">{icon}</div>
       <div>
         <p className="text-xs text-textMuted font-medium mb-1">{label}</p>
-        <p className="text-3xl font-bold text-white flex items-baseline gap-1">
+        <p className="text-2xl md:text-3xl font-bold text-white flex items-baseline gap-1">
           <span className="stat-value" data-value={value}>{value}</span>
-          {suffix && <span className="text-base text-textMuted font-normal">{suffix}</span>}
+          {suffix && <span className="text-sm md:text-base text-textMuted font-normal">{suffix}</span>}
         </p>
       </div>
     </div>

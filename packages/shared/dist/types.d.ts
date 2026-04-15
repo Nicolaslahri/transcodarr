@@ -176,11 +176,139 @@ export interface GpuStats {
     vramTotalMB: number;
 }
 export type WsEventType = 'worker:discovered' | 'worker:accepted' | 'worker:updated' | 'worker:offline' | 'worker:progress' | 'worker:stats' | 'job:queued' | 'job:paused' | 'job:progress' | 'job:complete' | 'job:failed' | 'job:removed' | 'job:cleared' | 'scan:summary' | 'scan:progress' | 'stats:update' | 'system:warning';
+/** @deprecated Use WsMessage discriminated union instead */
 export interface WsEvent<T = unknown> {
     event: WsEventType;
     data: T;
     timestamp: number;
 }
+/**
+ * Discriminated union of all WebSocket messages from Main → Browser.
+ * Switch on `msg.event` to get a narrowed `msg.data` type without any type assertions.
+ * For combined fallthrough cases (job:progress | job:complete | job:failed), use `data as any`.
+ */
+export type WsMessage = {
+    event: 'job:queued';
+    data: Job;
+    timestamp: number;
+} | {
+    event: 'job:paused';
+    data: Job;
+    timestamp: number;
+} | {
+    event: 'job:progress';
+    data: {
+        jobId: string;
+        workerId?: string;
+        progress?: number;
+        fps?: number;
+        eta?: number;
+        phase?: string;
+        status?: string;
+        workerName?: string;
+        sizeBefore?: number;
+        sizeAfter?: number;
+        error?: string;
+    };
+    timestamp: number;
+} | {
+    event: 'job:complete';
+    data: {
+        jobId: string;
+        sizeBefore?: number;
+        sizeAfter?: number;
+        fileName?: string;
+    };
+    timestamp: number;
+} | {
+    event: 'job:failed';
+    data: {
+        jobId: string;
+        error?: string;
+        fileName?: string;
+    };
+    timestamp: number;
+} | {
+    event: 'job:removed';
+    data: {
+        id: string;
+    };
+    timestamp: number;
+} | {
+    event: 'job:cleared';
+    data: Record<string, never>;
+    timestamp: number;
+} | {
+    event: 'worker:discovered';
+    data: WorkerInfo;
+    timestamp: number;
+} | {
+    event: 'worker:accepted';
+    data: WorkerInfo;
+    timestamp: number;
+} | {
+    event: 'worker:updated';
+    data: WorkerInfo;
+    timestamp: number;
+} | {
+    event: 'worker:offline';
+    data: {
+        id: string;
+        name?: string;
+    };
+    timestamp: number;
+} | {
+    event: 'worker:progress';
+    data: {
+        workerId: string;
+        progress: number;
+        fps?: number;
+        eta?: number;
+        phase?: string;
+    };
+    timestamp: number;
+} | {
+    event: 'worker:stats';
+    data: {
+        workerId: string;
+        gpuStats?: GpuStats;
+    };
+    timestamp: number;
+} | {
+    event: 'scan:summary';
+    data: {
+        sessionId?: string;
+        dir: string;
+        recipe: string;
+        enqueued: number;
+        skipped: number;
+        total: number;
+        alreadyActive: number;
+        error?: string;
+        message: string;
+    };
+    timestamp: number;
+} | {
+    event: 'scan:progress';
+    data: {
+        sessionId: string;
+        dir: string;
+        checked: number;
+        queued: number;
+        skipped: number;
+    };
+    timestamp: number;
+} | {
+    event: 'stats:update';
+    data: DashboardStats;
+    timestamp: number;
+} | {
+    event: 'system:warning';
+    data: {
+        message: string;
+    };
+    timestamp: number;
+};
 export interface DashboardStats {
     jobsToday: number;
     jobsTotal: number;

@@ -22,6 +22,7 @@ export function initDb(): void {
   db = new DatabaseSync(DB_PATH);
   // node:sqlite executes pragmas with .exec() not .pragma() directly unless via exec
   db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA foreign_keys = ON;');
 
   db.exec(`
@@ -133,4 +134,18 @@ export function initDb(): void {
   migrate(`ALTER TABLE workers ADD COLUMN version TEXT`);
   // v8 migrations — post-processing
   migrate(`ALTER TABLE watched_paths ADD COLUMN move_to TEXT`);
+  // v9 migrations — performance indexes
+  migrate(`CREATE INDEX IF NOT EXISTS idx_jobs_callback_token ON jobs(callback_token) WHERE callback_token IS NOT NULL`);
+  migrate(`CREATE INDEX IF NOT EXISTS idx_jobs_dispatched_at ON jobs(dispatched_at) WHERE dispatched_at IS NOT NULL`);
+  migrate(`CREATE INDEX IF NOT EXISTS idx_jobs_completed_at ON jobs(completed_at) WHERE completed_at IS NOT NULL`);
+  // v10 migrations — job event timeline
+  migrate(`CREATE TABLE IF NOT EXISTS job_events (
+    id          TEXT PRIMARY KEY,
+    job_id      TEXT NOT NULL,
+    event       TEXT NOT NULL,
+    worker_name TEXT,
+    detail      TEXT,
+    created_at  INTEGER DEFAULT (unixepoch())
+  )`);
+  migrate(`CREATE INDEX IF NOT EXISTS idx_job_events_job ON job_events(job_id, created_at)`);
 }

@@ -149,12 +149,20 @@ export default function WorkersPage() {
           Fleet ({activeWorkers.length})
         </h2>
         {activeWorkers.length === 0 && pendingWorkers.length === 0 ? (
-          <div className="bg-surface border border-border rounded-2xl p-12 flex flex-col items-center text-center">
-            <Server className="w-10 h-10 text-textMuted mb-3" />
-            <h3 className="text-lg font-medium text-white mb-2">No Workers Discovered</h3>
-            <p className="text-textMuted text-sm max-w-sm">
-              Start the Transcodarr Worker on any machine on your network. It&apos;ll appear here automatically.
-            </p>
+          <div className="bg-surface border border-dashed border-border rounded-2xl p-12 flex flex-col items-center text-center gap-4">
+            <Server className="w-10 h-10 text-textMuted/40" />
+            <div>
+              <h3 className="text-base font-semibold text-white mb-1">No workers yet</h3>
+              <p className="text-textMuted text-sm max-w-sm mb-4">
+                Start the Transcodarr Worker on any machine on your network — it&apos;ll appear here automatically.
+              </p>
+              <button
+                onClick={() => setAddModalOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary border border-primary/20 rounded-xl text-sm font-medium hover:bg-primary/20 transition-colors"
+              >
+                <Plus className="w-4 h-4" /> Add Worker Manually
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 stagger-list">
@@ -230,7 +238,7 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
 
   return (
     <div className={`card-hover relative overflow-hidden bg-surface border rounded-2xl
-      ${isPending ? 'border-yellow-500/50 shadow-[0_0_30px_rgba(234,179,8,0.07)]' : 'border-border'}`}
+      ${isPending ? 'border-yellow-500/50 worker-pending' : isActive ? 'border-primary/40 worker-active' : 'border-border'}`}
     >
       {/* Active job progress — top stripe */}
       {isActive && (

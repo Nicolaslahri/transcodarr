@@ -2,9 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { getDb } from '../db.js';
 import { broadcast } from '../server.js';
 import { dispatchNext } from '../dispatcher.js';
-import { getStats, recordProcessedFile, getJob } from '../queue.js';
+import { getStats, recordProcessedFile, getJob, recordJobEvent } from '../queue.js';
 import { fireWebhooks } from '../webhooks.js';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
+import { ProgressUpdateSchema, JobCompletePayloadSchema } from '@transcodarr/shared';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
@@ -212,7 +213,9 @@ export async function workersRoutes(app: FastifyInstance) {
   app.post<{ Params: { jobId: string }; Headers: { authorization?: string }; Body: { workerId: string; progress: number; fps?: number; eta?: number; phase: string; gpuStats?: { utilPct: number; tempC: number; vramUsedMB: number; vramTotalMB: number } } }>(
     '/jobs/:jobId/progress',
     async (req, reply) => {
-      const { workerId, progress, fps, eta, phase, gpuStats } = req.body;
+      const parsed = ProgressUpdateSchema.safeParse({ ...req.body, jobId: req.params.jobId });
+      if (!parsed.success) return reply.status(400).send({ error: 'Invalid progress payload', details: parsed.error.flatten() });
+      const { workerId, progress, fps, eta, phase, gpuStats } = { ...req.body, ...parsed.data } as any;
       const db = getDb();
       const jobRow = db.prepare('SELECT callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       if (jobRow?.callback_token) {
@@ -252,7 +255,9 @@ export async function workersRoutes(app: FastifyInstance) {
   app.post<{ Params: { jobId: string }; Body: { workerId: string; callbackToken: string; success: boolean; outputPath?: string; sizeBefore?: number; sizeAfter?: number; error?: string } }>(
     '/jobs/:jobId/complete',
     async (req, reply) => {
-      const { workerId, callbackToken, success, outputPath, sizeBefore, sizeAfter, error } = req.body;
+      const parsedComplete = JobCompletePayloadSchema.safeParse({ ...req.body, jobId: req.params.jobId });
+      if (!parsedComplete.success) return reply.status(400).send({ error: 'Invalid complete payload', details: parsedComplete.error.flatten() });
+      const { workerId, callbackToken, success, outputPath, sizeBefore, sizeAfter, error } = parsedComplete.data;
       const db = getDb();
       const jobRow = db.prepare('SELECT file_path, callback_token, status FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       if (jobRow?.callback_token && callbackToken !== jobRow.callback_token) {
@@ -396,22 +401,39 @@ export async function workersRoutes(app: FastifyInstance) {
 
         // Atomic swap: original → .bak → tmp → final → delete .bak
         const bakPath = origPath + '.bak';
-        if (fs.existsSync(origPath)) fs.renameSync(origPath, bakPath);
-        fs.renameSync(tmpPath, finalPath);
-        if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
-
-        // Update extension in DB if changed
-        if (finalPath !== origPath) {
-          db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
-            .run(finalPath, path.basename(finalPath), req.params.jobId);
+        try {
+          if (fs.existsSync(origPath)) fs.renameSync(origPath, bakPath);
+          fs.renameSync(tmpPath, finalPath);
+          if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
+        } catch (swapErr: any) {
+          // Rollback: restore .bak to original path so we don't lose the source file
+          try {
+            if (fs.existsSync(bakPath)) {
+              fs.renameSync(bakPath, origPath);
+              console.error('[Main] Swap failed — restored backup from .bak');
+            }
+          } catch (restoreErr) {
+            console.error('[Main] CRITICAL: swap failed AND restore failed — manual recovery needed:', restoreErr);
+          }
+          try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+          throw swapErr;
         }
 
-        db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
-          .run('complete', sizeBefore, sizeAfter, jobMeta?.fps ?? null, elapsed, now, now, req.params.jobId);
-        db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
-        // Persist fingerprint so "Clear All" doesn't re-queue this file
-        if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore, jobMeta.recipe, jobMeta.content_key ?? undefined);
+        // Wrap all DB writes in a transaction so a crash can't leave them half-applied
         const wirelessName = jobMeta?.file_path ? path.basename(jobMeta.file_path) : undefined;
+        db.transaction(() => {
+          // Update extension in DB if changed
+          if (finalPath !== origPath) {
+            db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
+              .run(finalPath, path.basename(finalPath), req.params.jobId);
+          }
+          db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
+            .run('complete', sizeBefore, sizeAfter, jobMeta?.fps ?? null, elapsed, now, now, req.params.jobId);
+          db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
+          // Persist fingerprint so "Clear All" doesn't re-queue this file
+          if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore, jobMeta.recipe, jobMeta.content_key ?? undefined);
+        })();
+        recordJobEvent(req.params.jobId, 'complete', job.worker_id ? (getDb().prepare('SELECT name FROM workers WHERE id=?').get(job.worker_id) as any)?.name : undefined, { sizeBefore, sizeAfter });
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter, fileName: wirelessName });
         broadcast('stats:update', getStats());
         fireWebhooks('job:complete', { jobId: req.params.jobId, fileName: wirelessName ?? '', sizeBefore, sizeAfter });
@@ -426,6 +448,7 @@ export async function workersRoutes(app: FastifyInstance) {
         db.prepare('UPDATE jobs SET status = ?, phase = NULL, error = ?, updated_at = ? WHERE id = ?')
           .run('failed', err.message, now, req.params.jobId);
         db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
+        recordJobEvent(req.params.jobId, 'failed', undefined, { error: err.message });
         broadcast('job:failed', { jobId: req.params.jobId, error: err.message });
         broadcast('stats:update', getStats());
         fireWebhooks('job:failed', { jobId: req.params.jobId, error: err.message });

@@ -1,5 +1,5 @@
 import { getDb } from './db.js';
-import { getJobsByStatus, updateJobStatus, getJob } from './queue.js';
+import { getJobsByStatus, updateJobStatus, getJob, recordJobEvent } from './queue.js';
 import { broadcast } from './server.js';
 import type { WorkerInfo, JobPayload, SmbMapping, ConnectionMode, LangPrefs } from '@transcodarr/shared';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
@@ -69,14 +69,18 @@ export function startDispatcher(): void {
 // Re-entrancy guard: prevents concurrent dispatchNext() calls from racing each other
 let dispatching = false;
 
+// Circuit breaker: track consecutive dispatch failures per worker
+// After 3 failures, mark the worker offline until it re-registers
+const workerFailCount = new Map<string, number>();
+
 // Exported so routes/jobs.ts, watcher.ts, and workers.ts can trigger dispatch immediately.
 // Loops until no more idle workers or no more queued jobs (handles max_concurrent_jobs).
 export async function dispatchNext(): Promise<void> {
   if (dispatching) return; // already running — new jobs will be picked up by the ongoing loop
   dispatching = true;
   try {
-    // Safety cap: max 20 iterations per call (avoids infinite loop on bugs)
-    for (let i = 0; i < 20; i++) {
+    // Loop until no more idle workers or no more queued jobs
+    while (true) {
       const dispatched = await dispatchOne();
       if (!dispatched) break;
     }
@@ -227,14 +231,27 @@ async function dispatchOne(): Promise<boolean> {
       throw new Error(`Worker returned ${res.status}: ${text}`);
     }
 
+    recordJobEvent(job.id, 'dispatched', worker.name);
     broadcast('job:progress', { ...getJob(job.id), workerName: worker.name });
     console.log(`✅ Dispatched successfully → ${worker.name}`);
+    workerFailCount.delete(worker.id); // reset failure counter on success
     return true;
   } catch (err: any) {
     // Roll back the optimistic status update so the job re-queues on next dispatch attempt
     updateJobStatus(job.id, 'queued', { worker_id: null, callback_token: null, dispatched_at: null });
     getDb().prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(worker.id);
     console.error(`❌ Failed to dispatch to ${worker.name} (${worker.host}:${worker.port}):`, err.message);
+
+    // Circuit breaker: mark worker offline after 3 consecutive failures
+    const fails = (workerFailCount.get(worker.id) ?? 0) + 1;
+    workerFailCount.set(worker.id, fails);
+    if (fails >= 3) {
+      getDb().prepare("UPDATE workers SET status = 'offline' WHERE id = ?").run(worker.id);
+      broadcast('worker:offline', { id: worker.id, name: worker.name });
+      workerFailCount.delete(worker.id);
+      console.warn(`⚠️  Worker ${worker.name} marked offline after 3 consecutive dispatch failures`);
+    }
+
     return false;
   }
 }

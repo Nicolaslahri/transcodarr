@@ -515,7 +515,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                 Browse
               </button>
             </div>
-            <p className="text-[11px] text-textMuted/50 mt-1">
+            <p className="text-xs text-textMuted/50 mt-1">
               After transcoding completes, the output file will be moved to this directory.
             </p>
           </div>

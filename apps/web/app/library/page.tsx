@@ -87,7 +87,7 @@ function StatCard({ icon, label, value, sub, highlight }: {
     <div className={`card-hover p-4 rounded-xl border ${highlight ? 'bg-primary/5 border-primary/20' : 'bg-surface border-border'}`}>
       <div className="flex items-center gap-2 mb-2">{icon}<span className="text-xs text-textMuted">{label}</span></div>
       <p className={`text-2xl font-bold ${highlight ? 'text-primary' : 'text-white'}`}>{value}</p>
-      <p className="text-[11px] text-textMuted mt-0.5">{sub}</p>
+      <p className="text-xs text-textMuted mt-0.5">{sub}</p>
     </div>
   );
 }
@@ -137,12 +137,12 @@ function LibraryRow({ job }: { job: Job }) {
           </p>
         )}
         {savedBytes > 0 && (
-          <p className="text-[11px] text-green-400 font-medium">{formatBytes(savedBytes)} saved</p>
+          <p className="text-xs text-green-400 font-medium">{formatBytes(savedBytes)} saved</p>
         )}
       </div>
 
       {job.completedAt != null && (
-        <p className="text-[11px] text-textMuted shrink-0 hidden md:block w-24 text-right">
+        <p className="text-xs text-textMuted shrink-0 hidden md:block w-24 text-right">
           {formatDate(job.completedAt)}
         </p>
       )}
@@ -293,10 +293,12 @@ export default function LibraryPage() {
           <p className="text-textMuted text-sm">Loading history…</p>
         </div>
       ) : (
-        <div className="p-12 bg-surface border border-border border-dashed rounded-2xl text-center space-y-3">
-          <Film className="w-10 h-10 text-textMuted mx-auto opacity-40" />
-          <p className="text-white font-medium">No completed transcodes yet</p>
-          <p className="text-textMuted text-sm">Finished jobs will appear here with savings stats.</p>
+        <div className="p-12 bg-surface border border-dashed border-border rounded-2xl flex flex-col items-center text-center gap-3">
+          <Film className="w-10 h-10 text-textMuted/40" />
+          <div>
+            <p className="text-base font-semibold text-white mb-1">No completed jobs yet</p>
+            <p className="text-textMuted text-sm">Completed transcodes will appear here with size savings and performance stats.</p>
+          </div>
         </div>
       )}
     </div>

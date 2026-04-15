@@ -1,6 +1,25 @@
 import { createHmac } from 'crypto';
 import { getDb } from './db.js';
 
+async function deliverWithRetry(
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  attempt = 1,
+): Promise<void> {
+  try {
+    const res = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err: any) {
+    if (attempt >= 3) {
+      console.warn(`[Webhooks] Delivery failed after 3 attempts (${url}):`, err.message);
+      return;
+    }
+    // Exponential backoff: 5s, 10s
+    setTimeout(() => deliverWithRetry(url, headers, body, attempt + 1), attempt * 5_000);
+  }
+}
+
 export async function fireWebhooks(event: string, data: unknown): Promise<void> {
   let hooks: any[];
   try {
@@ -21,7 +40,7 @@ export async function fireWebhooks(event: string, data: unknown): Promise<void> 
       headers['X-Transcodarr-Signature'] = `sha256=${sig}`;
     }
 
-    fetch(hook.url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) })
-      .catch((err) => console.warn(`Webhook delivery failed (${hook.url}):`, err.message));
+    // Fire-and-forget with retry — don't await so we don't block the caller
+    deliverWithRetry(hook.url, headers, body).catch(() => {});
   }
 }

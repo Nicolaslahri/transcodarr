@@ -52,7 +52,7 @@ export const ProgressUpdateSchema = z.object({
   progress: z.number().int().min(0).max(100),
   fps:      z.number().min(0).optional(),
   eta:      z.number().optional(),          // ms timestamp — may be a float
-  phase:    z.enum(['receiving', 'transcoding', 'sending', 'swapping']),
+  phase:    z.enum(['receiving', 'transcoding', 'sending', 'swapping', 'finalizing']),
 });
 
 export type ProgressUpdateInput = z.infer<typeof ProgressUpdateSchema>;

@@ -248,7 +248,11 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
     case 'downscale-1080p': {
       args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h265');
-      args.push('-vf', 'scale=1920:1080:flags=lanczos', '-c:v', enc);
+      // scale_cuda keeps frames in VRAM (zero-copy to NVENC); interp_algo=lanczos ≈ lanczos flag
+      const scaleFilter = hw.gpu === 'nvidia' && hw.hwaccels.includes('cuda')
+        ? 'scale_cuda=1920:1080:interp_algo=lanczos'
+        : 'scale=1920:1080:flags=lanczos';
+      args.push('-vf', scaleFilter, '-c:v', enc);
       if (enc === 'libx265') args.push('-crf', '22', '-preset', 'slow');
       else args.push('-qp', '22', '-preset', 'p4');
       args.push('-c:a', 'copy');
@@ -257,7 +261,10 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
     case 'downscale-720p': {
       args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h265');
-      args.push('-vf', 'scale=1280:720:flags=lanczos', '-c:v', enc);
+      const scaleFilter = hw.gpu === 'nvidia' && hw.hwaccels.includes('cuda')
+        ? 'scale_cuda=1280:720:interp_algo=lanczos'
+        : 'scale=1280:720:flags=lanczos';
+      args.push('-vf', scaleFilter, '-c:v', enc);
       if (enc === 'libx265') args.push('-crf', '24', '-preset', 'fast');
       else args.push('-qp', '24', '-preset', 'p3');
       args.push('-c:a', 'aac', '-b:a', '128k', '-c:s', 'mov_text');
@@ -293,9 +300,21 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
 
 // ─── Hardware Decode Args ─────────────────────────────────────────────────────
 
-export function getHwDecodeArgs(hw: HardwareProfile): string[] {
+// Recipes that use CPU-only video filters (zscale, loudnorm-on-video etc.) and therefore
+// cannot keep frames in VRAM as CUDA surfaces. They still benefit from GPU decode, just
+// without the zero-copy path to the encoder.
+const CUDA_INCOMPATIBLE_RECIPES = new Set(['hdr-to-sdr', 'web-optimized']);
+
+export function getHwDecodeArgs(hw: HardwareProfile, recipeId?: string): string[] {
   if (hw.gpu === 'nvidia' && hw.hwaccels.includes('cuda')) {
-    return ['-hwaccel', 'auto'];
+    // Full zero-copy pipeline: NVDEC → CUDA surface → NVENC (no CPU involvement)
+    // Skip for recipes that use CPU-only filters which can't read CUDA surfaces.
+    if (!recipeId || !CUDA_INCOMPATIBLE_RECIPES.has(recipeId)) {
+      return ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'];
+    }
+    // GPU decode only — frames are downloaded to CPU memory before the CPU filter runs,
+    // then NVENC re-uploads them. Still faster than pure software decode.
+    return ['-hwaccel', 'cuda'];
   }
   if (hw.gpu === 'intel' && hw.hwaccels.includes('qsv')) {
     return ['-hwaccel', 'qsv'];

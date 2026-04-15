@@ -103,7 +103,7 @@ export async function transcodeFile(
   if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
 
   const duration    = getFileDuration(inputPath);
-  const hwDecArgs   = getHwDecodeArgs(hardware);
+  const hwDecArgs   = getHwDecodeArgs(hardware, payload.recipe.id);
   const recipeArgs  = buildFfmpegArgs(payload.recipe, hardware, payload.langPrefs);
 
   const ffmpegArgs = [

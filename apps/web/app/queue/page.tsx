@@ -562,6 +562,7 @@ function JobRow({
     }
   }, [job.phase]);
 
+
   const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'finalizing', 'swapping'].includes(displayStatus);
   const showWorkerPicker = ['queued', 'dispatched'].includes(displayStatus) && idleWorkers.length > 0;
 

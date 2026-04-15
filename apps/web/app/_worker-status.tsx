@@ -143,13 +143,14 @@ export default function WorkerStatusPage() {
             </h1>
           </div>
 
-          {/* Encoder badges */}
+          {/* Encoder badges — vendor-filtered so we only show what this GPU actually supports */}
           {hw?.encoders && hw.encoders.length > 0 && (
             <div className="ws-block flex flex-wrap justify-center gap-2">
-              {hw.encoders.some((e: string) => e.includes('nvenc'))  && <HWBadge label="NVENC"      color="green"  />}
-              {hw.encoders.some((e: string) => e.includes('av1'))    && <HWBadge label="AV1"        color="purple" />}
-              {hw.encoders.some((e: string) => e.includes('amf'))    && <HWBadge label="AMD AMF"    color="red"    />}
-              {hw.encoders.some((e: string) => e.includes('qsv'))    && <HWBadge label="QuickSync"  color="blue"   />}
+              {vendor === 'nvidia' && <HWBadge label="NVENC"      color="green"  />}
+              {vendor === 'amd'    && <HWBadge label="AMD AMF"    color="red"    />}
+              {vendor === 'intel'  && <HWBadge label="QuickSync"  color="blue"   />}
+              {hw.encoders.some((e: string) => e.startsWith('av1_')) && <HWBadge label="AV1" color="purple" />}
+              {hw.encoders.some((e: string) => e.startsWith('hevc_') || e.startsWith('h265_')) && <HWBadge label="HEVC" color="amber" />}
             </div>
           )}
           {(!hw?.encoders || hw.encoders.length === 0) && (
@@ -238,10 +239,11 @@ export default function WorkerStatusPage() {
           {/* Hardware badges strip */}
           {hw?.encoders && hw.encoders.length > 0 && (
             <div className="ws-block flex flex-wrap justify-center gap-2 opacity-60">
-              {hw.encoders.some((e: string) => e.includes('nvenc'))  && <HWBadge label="NVENC"      color="green"  />}
-              {hw.encoders.some((e: string) => e.includes('av1'))    && <HWBadge label="AV1"        color="purple" />}
-              {hw.encoders.some((e: string) => e.includes('amf'))    && <HWBadge label="AMD AMF"    color="red"    />}
-              {hw.encoders.some((e: string) => e.includes('qsv'))    && <HWBadge label="QuickSync"  color="blue"   />}
+              {vendor === 'nvidia' && <HWBadge label="NVENC"      color="green"  />}
+              {vendor === 'amd'    && <HWBadge label="AMD AMF"    color="red"    />}
+              {vendor === 'intel'  && <HWBadge label="QuickSync"  color="blue"   />}
+              {hw.encoders.some((e: string) => e.startsWith('av1_'))  && <HWBadge label="AV1"  color="purple" />}
+              {hw.encoders.some((e: string) => e.startsWith('hevc_') || e.startsWith('h265_')) && <HWBadge label="HEVC" color="amber" />}
             </div>
           )}
         </div>
@@ -268,12 +270,13 @@ export default function WorkerStatusPage() {
 
 // ─── HW Badge ─────────────────────────────────────────────────────────────────
 
-function HWBadge({ label, color }: { label: string; color: 'green' | 'purple' | 'red' | 'blue' | 'gray' }) {
+function HWBadge({ label, color }: { label: string; color: 'green' | 'purple' | 'red' | 'blue' | 'gray' | 'amber' }) {
   const styles = {
     green:  'bg-green-900/30 text-green-400 border-green-500/30',
     purple: 'bg-purple-900/30 text-purple-400 border-purple-500/30',
     red:    'bg-red-900/30 text-red-400 border-red-500/30',
     blue:   'bg-blue-900/30 text-blue-400 border-blue-500/30',
+    amber:  'bg-amber-900/30 text-amber-400 border-amber-500/30',
     gray:   'bg-background text-textMuted border-border',
   };
   return (

@@ -91,8 +91,20 @@ export async function dispatchNext(): Promise<void> {
 
 // Dispatch a single job-worker pair. Returns true if a job was dispatched, false if nothing to do.
 async function dispatchOne(): Promise<boolean> {
-  const queuedJobs = getJobsByStatus('queued');
+  let queuedJobs = getJobsByStatus('queued');
   if (queuedJobs.length === 0) return false;
+
+  // Apply queue strategy ordering (default: fifo = sort_order / created_at from DB)
+  const strategyRow = getDb().prepare("SELECT value FROM settings WHERE key = 'queueStrategy'").get() as any;
+  const strategy = strategyRow?.value ?? 'fifo';
+  if (strategy === 'largest') {
+    queuedJobs = [...queuedJobs].sort((a, b) => (b.fileSize ?? 0) - (a.fileSize ?? 0));
+  } else if (strategy === 'smallest') {
+    queuedJobs = [...queuedJobs].sort((a, b) => (a.fileSize ?? 0) - (b.fileSize ?? 0));
+  } else if (strategy === 'oldest') {
+    queuedJobs = [...queuedJobs].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+  }
+  // 'fifo' uses the default sort_order/created_at ordering already applied by getJobsByStatus
 
   // Enforce max_concurrent_jobs setting
   const maxRow = getDb().prepare("SELECT value FROM settings WHERE key = 'max_concurrent_jobs'").get() as any;

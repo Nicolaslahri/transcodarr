@@ -419,9 +419,10 @@ export async function workersRoutes(app: FastifyInstance) {
           throw swapErr;
         }
 
-        // Wrap all DB writes in a transaction so a crash can't leave them half-applied
+        // Wrap all DB writes atomically so a crash can't leave them half-applied
         const wirelessName = jobMeta?.file_path ? path.basename(jobMeta.file_path) : undefined;
-        db.transaction(() => {
+        db.exec('BEGIN');
+        try {
           // Update extension in DB if changed
           if (finalPath !== origPath) {
             db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
@@ -432,7 +433,11 @@ export async function workersRoutes(app: FastifyInstance) {
           db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
           // Persist fingerprint so "Clear All" doesn't re-queue this file
           if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore, jobMeta.recipe, jobMeta.content_key ?? undefined);
-        })();
+          db.exec('COMMIT');
+        } catch (txErr) {
+          db.exec('ROLLBACK');
+          throw txErr;
+        }
         recordJobEvent(req.params.jobId, 'complete', job.worker_id ? (getDb().prepare('SELECT name FROM workers WHERE id=?').get(job.worker_id) as any)?.name : undefined, { sizeBefore, sizeAfter });
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter, fileName: wirelessName });
         broadcast('stats:update', getStats());

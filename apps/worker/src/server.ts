@@ -274,7 +274,7 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
     const phaseStr = phase === 'transcoding' ? 'Transcoding' : phase === 'receiving' ? 'Downloading' : phase === 'sending' ? 'Uploading' : phase;
     const bar = '█'.repeat(Math.floor(progress / 5)) + '░'.repeat(20 - Math.floor(progress / 5));
     process.stdout.write(`\r   ${phaseStr} [${bar}] ${progress}%${fpsStr}   `);
-    if (progress >= 99 || phase === 'swapping') process.stdout.write('\n');
+    if (progress >= 99 || phase === 'swapping' || phase === 'finalizing') process.stdout.write('\n');
 
     const now = Date.now();
     if (!force && now - lastProgressSent < 500) return;
@@ -325,7 +325,7 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
         { ...payload, smbPath: localInput, filePath: localInput },
         hardware,
         async (update) => {
-          const force = update.phase === 'swapping';
+          const force = update.phase === 'swapping' || update.phase === 'finalizing';
           await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding', force);
         },
         cancelController?.signal,
@@ -377,9 +377,9 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
 
   try {
     const result = await transcodeFile(payload, hardware, async (update) => {
-      // Force-send the swapping notification — it must not be dropped by the 500ms rate
-      // limiter, since it signals the start of a potentially long file-rename operation.
-      const force = update.phase === 'swapping';
+      // Force-send swapping/finalizing — must not be dropped by the 500ms rate limiter
+      // since both signal a potentially long silent operation the UI needs to reflect.
+      const force = update.phase === 'swapping' || update.phase === 'finalizing';
       await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding', force);
     }, cancelController?.signal);
 

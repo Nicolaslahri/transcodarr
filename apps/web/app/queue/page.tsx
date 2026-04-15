@@ -3,8 +3,7 @@
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
 import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
-import { useEffect, useRef, useState, useCallback } from 'react';
-import gsap from 'gsap';
+import { useEffect, useState, useCallback } from 'react';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 import {
   DndContext,
@@ -530,7 +529,6 @@ function JobRow({
 
   const isProcessing = ['dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(phaseKey);
   const isPaused = displayStatus === 'paused';
-  const waveRef = useRef<HTMLDivElement>(null);
 
   // dnd-kit sortable hook — only active for draggable rows
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -538,15 +536,6 @@ function JobRow({
     disabled: !draggable,
   });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
-
-  useEffect(() => {
-    if (!isProcessing || !waveRef.current) return;
-    const bars = waveRef.current.children;
-    const ctx  = gsap.context(() => {
-      gsap.to(bars, { scaleY: 1, duration: 0.4, stagger: { each: 0.1, repeat: -1, yoyo: true }, ease: 'sine.inOut' });
-    }, waveRef);
-    return () => ctx.revert();
-  }, [isProcessing]);
 
   const [, forceUpdate] = useState(0);
   useEffect(() => {
@@ -581,50 +570,79 @@ function JobRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`card-hover bg-surface border border-border border-l-2 ${cfg.border} rounded-xl overflow-hidden ${isProcessing ? 'shadow-lg' : ''} ${isDragging ? 'z-50 !transform-none' : ''}`}
+      className={`card-hover bg-surface border border-l-2 ${cfg.border} ${isProcessing ? 'border-border/80 shadow-lg' : 'border-border'} rounded-xl overflow-hidden ${isDragging ? 'z-50 !transform-none' : ''}`}
     >
-      {/* Progress bar — top of card when active */}
-      {isProcessing && job.progress > 0 && (
-        <div className="h-0.5 w-full bg-background relative overflow-hidden">
+      {/* Thin accent line at top — shows progress subtly */}
+      {isProcessing && (
+        <div className="h-[2px] w-full bg-background overflow-hidden">
           <div
-            className={`absolute inset-y-0 left-0 ${cfg.barBg} transition-all duration-700 ease-out`}
-            style={{ width: `${job.progress}%` }}
-          />
-          <div
-            className="absolute inset-y-0 w-24 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"
-            style={{ left: `calc(${job.progress}% - 48px)` }}
+            className={`h-full ${cfg.barBg} transition-all duration-700 ease-out ${job.phase === 'swapping' ? 'w-full animate-pulse opacity-60' : ''}`}
+            style={job.phase !== 'swapping' ? { width: `${job.progress}%` } : undefined}
           />
         </div>
       )}
 
-      <div className="p-3 md:p-4 flex items-center gap-2 md:gap-3">
-        {/* Drag handle — hidden on mobile, visible md+ */}
+      <div className="p-3.5 md:p-4 flex gap-2.5 md:gap-3">
+        {/* Drag handle — desktop only */}
         {draggable && (
           <div
             {...attributes}
             {...listeners}
-            className="hidden md:flex p-1 text-textMuted/40 hover:text-textMuted cursor-grab active:cursor-grabbing shrink-0 touch-none"
+            className="hidden md:flex items-center p-1 text-textMuted/25 hover:text-textMuted/60 cursor-grab active:cursor-grabbing shrink-0 touch-none"
           >
             <GripVertical className="w-4 h-4" />
           </div>
         )}
 
-        {/* Icon */}
-        <div className={`p-2.5 rounded-xl shrink-0 ${isProcessing ? cfg.chip : 'bg-background border border-border'}`}>
-          {isProcessing
-            ? <Icon className={`w-4 h-4 ${cfg.accent}`} />
-            : <Film className="w-4 h-4 text-textMuted" />
-          }
+        {/* Phase icon */}
+        <div className={`p-2 rounded-lg shrink-0 self-start mt-0.5 ${isProcessing ? cfg.chip : 'bg-background border border-border'}`}>
+          <Icon className={`w-4 h-4 ${isProcessing ? cfg.accent : 'text-textMuted'}`} />
         </div>
 
-        {/* Info */}
+        {/* Info column — takes all remaining space */}
         <div className="flex-1 min-w-0">
-          <h3 className="text-white font-semibold truncate text-sm leading-tight mb-1.5">{job.fileName}</h3>
-          {/* Badge row: status chip + file metadata + fps (inline, no layout shift) + conversion + subtitle warning */}
+
+          {/* Row 1: filename + action buttons inline */}
+          <div className="flex items-start gap-2 mb-2">
+            <h3 className="text-white font-semibold text-sm leading-snug flex-1 min-w-0 truncate">{job.fileName}</h3>
+            <div className="flex items-center gap-0.5 shrink-0 -mt-0.5 -mr-1">
+              {isProcessing ? (
+                <button
+                  onClick={() => { setOverrideStatus('paused'); onCancel(); }}
+                  title="Pause — keeps job in queue"
+                  className="p-1.5 rounded-lg text-textMuted/50 hover:text-amber-400 hover:bg-background transition-colors"
+                >
+                  <PauseCircle className="w-4 h-4" />
+                </button>
+              ) : isPaused ? (
+                <>
+                  <button onClick={() => { setOverrideStatus(null); onResume(); }} title="Resume"
+                    className="p-1.5 rounded-lg text-textMuted/50 hover:text-green-400 hover:bg-background transition-colors">
+                    <PlayCircle className="w-4 h-4" />
+                  </button>
+                  <button onClick={onRemove} title="Remove"
+                    className="p-1.5 rounded-lg text-textMuted/50 hover:text-red-400 hover:bg-background transition-colors">
+                    <XCircle className="w-4 h-4" />
+                  </button>
+                </>
+              ) : (
+                <button onClick={onRemove} disabled={!canRemove} title="Remove"
+                  className="p-1.5 rounded-lg text-textMuted/50 hover:text-red-400 hover:bg-background transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
+                  <XCircle className="w-4 h-4" />
+                </button>
+              )}
+              <button onClick={toggleTimeline} title="Job timeline"
+                className={`p-1.5 rounded-lg transition-colors ${showTimeline ? 'text-primary' : 'text-textMuted/25 hover:text-textMuted/60'}`}>
+                <History className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Row 2: status chip + metadata badges */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
               <Icon className="w-2.5 h-2.5" />
-              {cfg.label}
+              {job.phase === 'swapping' ? 'Finalizing' : cfg.label}
             </span>
             {job.resolution && <ResolutionBadge resolution={job.resolution} />}
             {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
@@ -636,88 +654,52 @@ function JobRow({
             )}
             <SubtitleWarning job={job} />
           </div>
-          {/* Worker picker row — only for queued/dispatched + idle workers available */}
+
+          {/* Row 3: full-width progress bar (active jobs only) */}
+          {isProcessing && (
+            <div className="mt-3">
+              {job.phase === 'swapping' ? (
+                /* Finalizing — indeterminate pulsing bar, no percentage */
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-textMuted/60 flex items-center gap-1">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60 animate-pulse" />
+                      Finalizing — moving file to destination…
+                    </span>
+                  </div>
+                  <div className="h-1 bg-background rounded-full overflow-hidden">
+                    <div className={`h-full w-full ${cfg.barBg} opacity-40 rounded-full animate-pulse`} />
+                  </div>
+                </div>
+              ) : (
+                /* Normal progress */
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-textMuted/60 tabular-nums">
+                      {job.eta && job.eta > Date.now()
+                        ? <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{formatEta(job.eta)} remaining</span>
+                        : <span className="opacity-0">–</span>
+                      }
+                    </span>
+                    <span className={`text-xs font-bold tabular-nums ${cfg.accent}`}>{job.progress}%</span>
+                  </div>
+                  <div className="h-1 bg-background rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ease-out ${cfg.barBg}`}
+                      style={{ width: `${job.progress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Row 4: worker picker (queued/dispatched only) */}
           {showWorkerPicker && (
-            <div className="mt-1.5">
+            <div className="mt-2">
               <WorkerPicker job={job} workers={idleWorkers} apiUrl={apiUrl} />
             </div>
           )}
-        </div>
-
-        {/* Progress + controls */}
-        <div className="flex items-center gap-3 shrink-0">
-          {isProcessing && (
-            <div ref={waveRef} className={`flex items-end gap-[2px] h-5 w-6 ${cfg.accent}`}>
-              <div className="w-1 h-1.5 rounded-sm bg-current transform scale-y-50 origin-bottom opacity-70" />
-              <div className="w-1 h-3 rounded-sm bg-current transform scale-y-50 origin-bottom" />
-              <div className="w-1 h-5 rounded-sm bg-current transform scale-y-50 origin-bottom" />
-              <div className="w-1 h-2 rounded-sm bg-current transform scale-y-50 origin-bottom opacity-70" />
-            </div>
-          )}
-
-          <div className="w-20 md:w-28 space-y-1.5">
-            <div className="flex items-center justify-end gap-1.5">
-              {job.eta && job.eta > Date.now() && (
-                <span className="text-[10px] text-textMuted flex items-center gap-0.5 shrink-0">
-                  <Clock className="w-2.5 h-2.5" />
-                  {formatEta(job.eta)}
-                </span>
-              )}
-              <span className={`text-xs font-semibold tabular-nums shrink-0 ${isProcessing ? cfg.accent : 'text-textMuted'}`}>
-                {job.progress}%
-              </span>
-            </div>
-            <div className="h-1.5 bg-background rounded-full overflow-hidden border border-border/60">
-              <div
-                className={`h-full rounded-full transition-all duration-700 ease-out ${cfg.barBg}`}
-                style={{ width: `${job.progress}%` }}
-              />
-            </div>
-          </div>
-
-          {isProcessing ? (
-            <button
-              onClick={() => { setOverrideStatus('paused'); onCancel(); }}
-              title="Pause — stops transcoding, keeps job in queue"
-              className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-amber-400 transition-colors"
-            >
-              <PauseCircle className="w-4 h-4" />
-            </button>
-          ) : isPaused ? (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => { setOverrideStatus(null); onResume(); }}
-                title="Resume — put back in queue"
-                className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-green-400 transition-colors"
-              >
-                <PlayCircle className="w-4 h-4" />
-              </button>
-              <button
-                onClick={onRemove}
-                title="Remove"
-                className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors"
-              >
-                <XCircle className="w-4 h-4" />
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={onRemove}
-              disabled={!canRemove}
-              className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
-            >
-              <XCircle className="w-4 h-4" />
-            </button>
-          )}
-
-          {/* Timeline toggle */}
-          <button
-            onClick={toggleTimeline}
-            title="Show job timeline"
-            className={`p-2 hover:bg-background rounded-lg transition-colors ${showTimeline ? 'text-primary' : 'text-textMuted/40 hover:text-textMuted'}`}
-          >
-            <History className="w-3.5 h-3.5" />
-          </button>
         </div>
       </div>
 

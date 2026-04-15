@@ -312,11 +312,13 @@ function GpuMetric({ icon, label, value, heat }: { icon: React.ReactNode; label:
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatEta(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+function formatEta(etaMs: number): string {
+  const secs = Math.max(0, Math.round((etaMs - Date.now()) / 1000));
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 function PerfRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {

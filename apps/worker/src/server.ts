@@ -325,7 +325,8 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
         { ...payload, smbPath: localInput, filePath: localInput },
         hardware,
         async (update) => {
-          await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding');
+          const force = update.phase === 'swapping';
+          await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding', force);
         },
         cancelController?.signal,
       );
@@ -376,7 +377,10 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
 
   try {
     const result = await transcodeFile(payload, hardware, async (update) => {
-      await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding');
+      // Force-send the swapping notification — it must not be dropped by the 500ms rate
+      // limiter, since it signals the start of a potentially long file-rename operation.
+      const force = update.phase === 'swapping';
+      await sendProgress(update.progress ?? 0, update.fps, update.eta, update.phase ?? 'transcoding', force);
     }, cancelController?.signal);
 
     await sendProgress(100, undefined, undefined, 'swapping', true);

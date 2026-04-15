@@ -3,7 +3,7 @@
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
 import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 import {
   DndContext,
@@ -537,12 +537,23 @@ function JobRow({
   });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
 
+  // Tick every second for ETA countdown and swapping elapsed timer
   const [, forceUpdate] = useState(0);
   useEffect(() => {
-    if (!job.eta) return;
+    if (!job.eta && job.phase !== 'swapping') return;
     const id = setInterval(() => forceUpdate(n => n + 1), 1000);
     return () => clearInterval(id);
-  }, [job.eta]);
+  }, [job.eta, job.phase]);
+
+  // Track when swapping started so we can show elapsed time
+  const swappingStartRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (job.phase === 'swapping' && swappingStartRef.current === null) {
+      swappingStartRef.current = Date.now();
+    } else if (job.phase !== 'swapping') {
+      swappingStartRef.current = null;
+    }
+  }, [job.phase]);
 
   const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'swapping'].includes(displayStatus);
   const showWorkerPicker = ['queued', 'dispatched'].includes(displayStatus) && idleWorkers.length > 0;
@@ -642,7 +653,7 @@ function JobRow({
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
               <Icon className="w-2.5 h-2.5" />
-              {job.phase === 'swapping' ? 'Finalizing' : cfg.label}
+              {job.phase === 'swapping' ? 'Saving' : cfg.label}
             </span>
             {job.resolution && <ResolutionBadge resolution={job.resolution} />}
             {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
@@ -659,13 +670,22 @@ function JobRow({
           {isProcessing && (
             <div className="mt-3">
               {job.phase === 'swapping' ? (
-                /* Finalizing — indeterminate pulsing bar, no percentage */
+                /* Finalizing — indeterminate pulsing bar with elapsed timer */
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-textMuted/60 flex items-center gap-1">
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60 animate-pulse" />
-                      Finalizing — moving file to destination…
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-textMuted/60 flex items-center gap-1.5">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60 animate-pulse shrink-0" />
+                      Renaming file to final path…
                     </span>
+                    {swappingStartRef.current && (() => {
+                      const secs = Math.floor((Date.now() - swappingStartRef.current) / 1000);
+                      const m = Math.floor(secs / 60), s = secs % 60;
+                      return (
+                        <span className="text-xs text-textMuted/50 tabular-nums shrink-0">
+                          {m > 0 ? `${m}m ${s}s` : `${s}s`}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="h-1 bg-background rounded-full overflow-hidden">
                     <div className={`h-full w-full ${cfg.barBg} opacity-40 rounded-full animate-pulse`} />

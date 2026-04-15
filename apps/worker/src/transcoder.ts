@@ -171,18 +171,24 @@ export async function transcodeFile(
   });
 
   // ─── Atomic swap ──────────────────────────────────────────────────────────
+  // Signal the 'swapping' phase BEFORE touching the filesystem, then yield
+  // to the event loop so the async sendProgress fetch can actually execute.
+  // Without the yield, the synchronous rename below blocks the event loop and
+  // the 'swapping' notification never reaches Main until the rename finishes.
   onProgress({ progress: 99, phase: 'swapping' });
+  await new Promise<void>(r => setImmediate(r)); // flush pending I/O / microtasks
 
   const bakPath = inputPath + '.bak';
-  fs.renameSync(inputPath, bakPath);   // 1. rename original → .bak
+  // Use async renames so the event loop stays responsive during slow NAS/SMB ops.
+  await fs.promises.rename(inputPath, bakPath);   // 1. rename original → .bak
   try {
-    fs.renameSync(tmpPath, finalPath); // 2. rename tmp → final
-    fs.unlinkSync(bakPath);            // 3. delete .bak
+    await fs.promises.rename(tmpPath, finalPath); // 2. rename tmp → final
+    await fs.promises.unlink(bakPath);            // 3. delete .bak
   } catch (swapErr) {
     // Rollback: restore original from .bak so we don't lose the source file
     try {
       if (fs.existsSync(bakPath)) {
-        fs.renameSync(bakPath, inputPath);
+        await fs.promises.rename(bakPath, inputPath);
         console.error('[Worker] Swap failed — restored backup from .bak');
       }
     } catch (restoreErr) {

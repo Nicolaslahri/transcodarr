@@ -295,6 +295,32 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
       throw new Error(`Unknown recipe: ${recipe.id}`);
   }
 
+  // ── NVIDIA zero-copy pixel format fix ──────────────────────────────────────
+  // With -hwaccel_output_format cuda, NVDEC outputs CUDA surfaces whose bit
+  // depth matches the source (NV12 for 8-bit, P010LE for 10-bit HDR/WebRip).
+  // H264/HEVC NVENC only accepts NV12 by default, so 10-bit sources trigger
+  // "Could not open encoder — Invalid argument" at frame 0.
+  // scale_cuda=format=nv12 converts on the GPU (essentially free) and keeps
+  // the zero-copy chain intact.  Skip for remux (no encoder) and CPU-filter
+  // recipes (already excluded from zero-copy in getHwDecodeArgs).
+  const needsCudaFmtFix = hw.gpu === 'nvidia'
+    && hw.hwaccels.includes('cuda')
+    && !CUDA_INCOMPATIBLE_RECIPES.has(recipe.id)
+    && recipe.id !== 'remux-to-mkv';
+
+  if (needsCudaFmtFix) {
+    const vfIdx = args.indexOf('-vf');
+    if (vfIdx !== -1) {
+      // Append to existing scale_cuda filter (downscale recipes)
+      args[vfIdx + 1] += ':format=nv12';
+    } else {
+      // Insert passthrough format-conversion filter before -c:v
+      const cvIdx = args.indexOf('-c:v');
+      const insertAt = cvIdx !== -1 ? cvIdx : args.length;
+      args.splice(insertAt, 0, '-vf', 'scale_cuda=format=nv12');
+    }
+  }
+
   return args;
 }
 

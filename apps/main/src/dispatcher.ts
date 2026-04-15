@@ -94,8 +94,12 @@ async function dispatchOne(): Promise<boolean> {
   const queuedJobs = getJobsByStatus('queued');
   if (queuedJobs.length === 0) return false;
 
-  // Enforce max_concurrent_jobs setting
-  const maxRow = getDb().prepare("SELECT value FROM settings WHERE key = 'max_concurrent_jobs'").get() as any;
+  // Enforce max_concurrent_jobs setting.
+  // The UI saves it as 'maxConcurrentJobs' (camelCase) — check both keys for back-compat.
+  const maxRow = (
+    getDb().prepare("SELECT value FROM settings WHERE key = 'max_concurrent_jobs'").get() ??
+    getDb().prepare("SELECT value FROM settings WHERE key = 'maxConcurrentJobs'").get()
+  ) as any;
   const maxConcurrent = maxRow ? parseInt(maxRow.value, 10) : 0;
   if (maxConcurrent > 0) {
     const activeCount = (getDb().prepare(

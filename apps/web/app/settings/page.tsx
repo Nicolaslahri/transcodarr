@@ -1011,14 +1011,17 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
 // ─── General ─────────────────────────────────────────────────────────────────
 
 function GeneralPanel() {
-  const { apiUrl, meta } = useAppState();
+  const { apiUrl, meta, workers } = useAppState();
   const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '', preferred_audio_lang: '', preferred_subtitle_lang: '' });
   const [saved, setSaved] = useState(false);
+
+  const onlineWorkers = workers.filter(w => w.status === 'idle' || w.status === 'active').length;
 
   useEffect(() => {
     fetch(`${apiUrl}/api/settings/general`).then(r => r.json()).then(data => {
       setSettings(s => ({
         nodeName:               data.nodeName               ?? s.nodeName,
+        // Read both key names for back-compat; save will always use snake_case going forward
         maxConcurrentJobs:      data.max_concurrent_jobs    ?? data.maxConcurrentJobs ?? s.maxConcurrentJobs,
         queueStrategy:          data.queueStrategy          ?? s.queueStrategy,
         autoAcceptWorkers:      data.autoAcceptWorkers      ?? s.autoAcceptWorkers,
@@ -1030,9 +1033,11 @@ function GeneralPanel() {
   }, [apiUrl]);
 
   const save = async () => {
+    // Always save with snake_case key so the dispatcher can find it
+    const payload = { ...settings, max_concurrent_jobs: settings.maxConcurrentJobs };
     await fetch(`${apiUrl}/api/settings/general`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
+      body: JSON.stringify(payload),
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -1058,7 +1063,16 @@ function GeneralPanel() {
           />
         </Field>
 
-        <Field label="Max Simultaneous Jobs">
+        <Field
+          label="Max Simultaneous Jobs"
+          hint={
+            onlineWorkers === 0
+              ? 'No workers online — connect a worker to enable parallel processing'
+              : parseInt(settings.maxConcurrentJobs) > onlineWorkers
+              ? `⚠ You have ${onlineWorkers} worker${onlineWorkers !== 1 ? 's' : ''} online — add more workers to reach this limit`
+              : `${onlineWorkers} worker${onlineWorkers !== 1 ? 's' : ''} online — each worker handles 1 job at a time`
+          }
+        >
           <select
             value={settings.maxConcurrentJobs}
             onChange={e => setSettings(s => ({ ...s, maxConcurrentJobs: e.target.value }))}
@@ -1382,11 +1396,12 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
       <label className="text-xs text-textMuted font-medium mb-1.5 block">{label}</label>
       {children}
+      {hint && <p className="text-xs text-textMuted/60 mt-1.5">{hint}</p>}
     </div>
   );
 }

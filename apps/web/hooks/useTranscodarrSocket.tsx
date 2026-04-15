@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useRef, useState, ReactNode, useCallback } from 'react';
-import type { WsEvent, DashboardStats, WorkerInfo, Job } from '@transcodarr/shared';
+import type { WsMessage, DashboardStats, WorkerInfo, Job } from '@transcodarr/shared';
 import { useToast } from './useToast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
     ws.onmessage = (msg) => {
       try {
-        const { event, data } = JSON.parse(msg.data) as WsEvent<any>;
+        const { event, data } = JSON.parse(msg.data) as WsMessage;
         switch (event) {
           case 'stats:update':
             // Merge instead of replace — backend may omit fields we derive locally
@@ -136,7 +136,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
           case 'worker:progress':
             setWorkers(prev => prev.map(w =>
               w.id === data.workerId
-                ? { ...w, currentProgress: data.progress, currentFps: data.fps, currentPhase: data.phase }
+                ? { ...w, currentProgress: data.progress, currentFps: data.fps, currentPhase: data.phase as import('@transcodarr/shared').TransferPhase | undefined }
                 : w,
             ));
             break;
@@ -181,7 +181,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             break;
           case 'job:progress':
           case 'job:complete':
-          case 'job:failed':
+          case 'job:failed': {
+            // Combined fallthrough — use `d` as any since TypeScript can't narrow across cases
+            const d = data as any;
             // Browser notification when tab is not focused
             if (event === 'job:complete' || event === 'job:failed') {
               const notifEnabled = typeof localStorage !== 'undefined'
@@ -189,33 +191,34 @@ export function SocketProvider({ children }: { children: ReactNode }) {
                 : true;
               if (notifEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.visibilityState === 'hidden') {
                 const title = event === 'job:complete' ? 'Transcode complete' : 'Transcode failed';
-                const body  = data.fileName ?? (event === 'job:complete' ? 'Job finished successfully' : 'A job encountered an error');
-                new Notification(title, { body, icon: '/favicon.ico', tag: data.jobId });
+                const body  = d.fileName ?? (event === 'job:complete' ? 'Job finished successfully' : 'A job encountered an error');
+                new Notification(title, { body, icon: '/favicon.ico', tag: d.jobId });
               }
             }
             setJobs(prev => {
-              const idx = prev.findIndex(j => j.id === (data.jobId ?? data.id));
+              const idx = prev.findIndex(j => j.id === (d.jobId ?? d.id));
               if (idx === -1) return prev;
               const next = [...prev];
-              // Map snake_case progress-event fields → Job fields
+              // Map progress-event fields → Job fields
               next[idx] = {
                 ...next[idx],
-                ...(data.progress !== undefined  ? { progress: data.progress }  : {}),
-                ...(data.fps      !== undefined  ? { fps: data.fps }             : {}),
-                ...(data.eta      !== undefined  ? { eta: data.eta }             : {}),
-                ...(data.phase    !== undefined  ? { phase: data.phase }         : {}),
-                ...(data.status   !== undefined  ? { status: data.status }       : {}),
-                ...(data.workerName !== undefined ? { workerName: data.workerName } : {}),
-                ...(data.sizeBefore !== undefined ? { sizeBefore: data.sizeBefore } : {}),
-                ...(data.sizeAfter  !== undefined ? { sizeAfter: data.sizeAfter }   : {}),
-                ...(data.error      !== undefined ? { error: data.error }           : {}),
+                ...(d.progress   !== undefined ? { progress:   d.progress   } : {}),
+                ...(d.fps        !== undefined ? { fps:        d.fps        } : {}),
+                ...(d.eta        !== undefined ? { eta:        d.eta        } : {}),
+                ...(d.phase      !== undefined ? { phase:      d.phase      } : {}),
+                ...(d.status     !== undefined ? { status:     d.status     } : {}),
+                ...(d.workerName !== undefined ? { workerName: d.workerName } : {}),
+                ...(d.sizeBefore !== undefined ? { sizeBefore: d.sizeBefore } : {}),
+                ...(d.sizeAfter  !== undefined ? { sizeAfter:  d.sizeAfter  } : {}),
+                ...(d.error      !== undefined ? { error:      d.error      } : {}),
                 // job:complete resets phase
-                ...(event === 'job:complete' ? { phase: undefined, progress: 100, status: 'complete' } : {}),
-                ...(event === 'job:failed'   ? { phase: undefined, status: 'failed' }                  : {}),
+                ...(event === 'job:complete' ? { phase: undefined, progress: 100, status: 'complete' as const } : {}),
+                ...(event === 'job:failed'   ? { phase: undefined, status: 'failed' as const }                  : {}),
               };
               return next;
             });
             break;
+          }
           case 'scan:progress':
             setScanProgress(data);
             break;
@@ -224,7 +227,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             setScanProgress(null); // clear in-progress banner on completion
             break;
           case 'system:warning':
-            addToast({ type: 'warning', title: data.title, message: data.message });
+            addToast({ type: 'warning', title: 'Warning', message: data.message });
             break;
         }
       } catch { /* ignore */ }

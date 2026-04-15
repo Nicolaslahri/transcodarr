@@ -1,7 +1,7 @@
 'use client';
 
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
-import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle } from 'lucide-react';
+import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import gsap from 'gsap';
@@ -313,8 +313,12 @@ export default function QueuePage() {
           <SortableContext items={draggableIds} strategy={verticalListSortingStrategy}>
             <div className="space-y-2 stagger-list">
               {activeJobs.length === 0 ? (
-                <div className="p-6 bg-surface border border-border border-dashed rounded-xl text-center text-textMuted text-sm">
-                  No active jobs. Add a folder in Settings to get started.
+                <div className="p-10 bg-surface border border-dashed border-border rounded-xl flex flex-col items-center text-center gap-3">
+                  <Film className="w-8 h-8 text-textMuted/40" />
+                  <div>
+                    <p className="text-sm font-medium text-white mb-1">Nothing queued</p>
+                    <p className="text-xs text-textMuted">Add a watched folder in <a href="/settings" className="text-primary hover:underline">Settings</a> to start transcoding automatically.</p>
+                  </div>
                 </div>
               ) : (
                 activeJobs.map(job => (
@@ -553,6 +557,25 @@ function JobRow({
   const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'swapping'].includes(displayStatus);
   const showWorkerPicker = ['queued', 'dispatched'].includes(displayStatus) && idleWorkers.length > 0;
 
+  // Timeline state
+  const [showTimeline, setShowTimeline] = useState(false);
+  const [timelineEvents, setTimelineEvents] = useState<Array<{ id: string; event: string; workerName?: string; detail?: any; createdAt: number }>>([]);
+
+  const toggleTimeline = async () => {
+    if (!showTimeline) {
+      try {
+        const res = await fetch(`${apiUrl}/api/jobs/${job.id}/events`);
+        if (res.ok) setTimelineEvents(await res.json());
+      } catch { /* ignore */ }
+    }
+    setShowTimeline(s => !s);
+  };
+
+  const EVENT_LABEL: Record<string, string> = {
+    queued: 'Added to queue', dispatched: 'Dispatched', paused: 'Paused', resumed: 'Resumed',
+    complete: 'Completed', failed: 'Failed',
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -685,8 +708,42 @@ function JobRow({
               <XCircle className="w-4 h-4" />
             </button>
           )}
+
+          {/* Timeline toggle */}
+          <button
+            onClick={toggleTimeline}
+            title="Show job timeline"
+            className={`p-2 hover:bg-background rounded-lg transition-colors ${showTimeline ? 'text-primary' : 'text-textMuted/40 hover:text-textMuted'}`}
+          >
+            <History className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
+
+      {/* Timeline drawer */}
+      {showTimeline && (
+        <div className="border-t border-border/50 px-4 py-3 space-y-1.5 bg-background/40">
+          {timelineEvents.length === 0 ? (
+            <p className="text-xs text-textMuted/50 italic">No events recorded yet.</p>
+          ) : (
+            timelineEvents.map(e => (
+              <div key={e.id} className="flex items-center gap-2 text-xs">
+                <span className="text-textMuted/50 tabular-nums w-20 shrink-0 font-mono">
+                  {new Date(e.createdAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  e.event === 'complete' ? 'bg-green-400' :
+                  e.event === 'failed'   ? 'bg-red-400' :
+                  e.event === 'paused'   ? 'bg-amber-400' :
+                  'bg-primary/60'
+                }`} />
+                <span className="text-textMuted">{EVENT_LABEL[e.event] ?? e.event}</span>
+                {e.workerName && <span className="text-textMuted/50">via {e.workerName}</span>}
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }

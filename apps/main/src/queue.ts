@@ -6,9 +6,14 @@ import { getFfprobePath } from './ffmpeg.js';
 import path from 'path';
 import type { Job, JobStatus, FileAnalysis } from '@transcodarr/shared';
 
-/** Content-based fingerprint: encodes duration (rounded to nearest second) + file size. Survives renames and path changes. */
-function computeContentKey(durationSecs: number, fileSizeBytes: number): string {
-  return `${Math.round(durationSecs)}:${fileSizeBytes}`;
+/**
+ * Content-based fingerprint: duration + file size + filename stem (first 16 chars).
+ * Adding the stem dramatically reduces false-positive collisions between different files
+ * that happen to share the same duration and size, while still surviving renames/moves.
+ */
+function computeContentKey(durationSecs: number, fileSizeBytes: number, filePath: string): string {
+  const stem = path.basename(filePath, path.extname(filePath)).slice(0, 16);
+  return `${Math.round(durationSecs)}:${fileSizeBytes}:${stem}`;
 }
 
 // ─── ffprobe analysis ─────────────────────────────────────────────────────────
@@ -47,6 +52,16 @@ export function analyzeFile(filePath: string): ExtendedFileAnalysis | null {
   }
 }
 
+// ─── Job event timeline ───────────────────────────────────────────────────────
+
+/** Record a job lifecycle event for the timeline view. Best-effort — errors are silently swallowed. */
+export function recordJobEvent(jobId: string, event: string, workerName?: string, detail?: Record<string, unknown>): void {
+  try {
+    getDb().prepare('INSERT INTO job_events (id, job_id, event, worker_name, detail) VALUES (?,?,?,?,?)')
+      .run(nanoid(8), jobId, event, workerName ?? null, detail ? JSON.stringify(detail) : null);
+  } catch { /* ignore — events table may not exist yet on old DBs */ }
+}
+
 // ─── Queue CRUD ───────────────────────────────────────────────────────────────
 
 /** Record a file as processed so it won't be re-queued even after "Clear All". */
@@ -76,7 +91,7 @@ export function enqueueFile(filePath: string, recipeId: string, force = false, p
   const analysis = analyzeFile(filePath);
   if (!analysis) return null;
 
-  const contentKey = computeContentKey(analysis.duration, analysis.fileSize);
+  const contentKey = computeContentKey(analysis.duration, analysis.fileSize, filePath);
 
   // Prevent duplicates natively.
   // If not forced (auto-scanned by Watcher), reject if ANY record of the file exists.
@@ -119,6 +134,7 @@ export function enqueueFile(filePath: string, recipeId: string, force = false, p
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(id, filePath, path.basename(filePath), analysis.fileSize, analysis.codec, analysis.resolution, recipeId, 'queued', analysis.hasSubtitles ? 1 : 0, sortOrder, pinnedWorkerId ?? null, contentKey, now, now);
 
+  recordJobEvent(id, 'queued');
   return getJob(id);
 }
 

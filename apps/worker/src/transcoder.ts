@@ -127,6 +127,10 @@ export async function transcodeFile(
     const onAbort = () => {
       cancelled = true;
       proc.kill('SIGTERM');
+      // Escalate to SIGKILL if SIGTERM is ignored
+      setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch { /* already gone */ }
+      }, 5000);
     };
     if (signal) {
       if (signal.aborted) { proc.kill('SIGTERM'); }
@@ -176,8 +180,15 @@ export async function transcodeFile(
     fs.unlinkSync(bakPath);            // 3. delete .bak
   } catch (swapErr) {
     // Rollback: restore original from .bak so we don't lose the source file
-    try { fs.renameSync(bakPath, inputPath); } catch { /* best effort */ }
-    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* best effort */ }
+    try {
+      if (fs.existsSync(bakPath)) {
+        fs.renameSync(bakPath, inputPath);
+        console.error('[Worker] Swap failed — restored backup from .bak');
+      }
+    } catch (restoreErr) {
+      console.error('[Worker] CRITICAL: swap failed AND restore failed — manual recovery needed:', restoreErr);
+    }
+    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
     throw swapErr;
   }
 

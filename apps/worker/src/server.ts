@@ -6,6 +6,7 @@ import fs from 'fs';
 import { execFile } from 'child_process';
 import { fileURLToPath } from 'url';
 import type { JobPayload, HardwareProfile, GpuStats } from '@transcodarr/shared';
+import { JobPayloadSchema } from '@transcodarr/shared';
 import { transcodeFile } from './transcoder.js';
 import { downloadFile, uploadFile } from './transfer.js';
 
@@ -15,7 +16,7 @@ let hardware: HardwareProfile;
 let workerId: string;
 let mainUrl: string;
 export let currentJob: { jobId: string; fileName: string; progress: number; fps?: number; phase?: string } | null = null;
-let cancelController: AbortController | null = null;
+export let cancelController: AbortController | null = null;
 
 // ─── GPU Stats ────────────────────────────────────────────────────────────────
 // Polled every 3 s via nvidia-smi (NVIDIA only); null on non-NVIDIA workers.
@@ -86,7 +87,17 @@ export async function createWorkerServer(port: number) {
 
   // POST /job — receive a job from Main
   app.post<{ Body: JobPayload }>('/job', async (req, reply) => {
-    const payload = req.body;
+    // Guard: reject if already processing a job
+    if (currentJob !== null) {
+      return reply.status(409).send({ error: 'Worker already busy', activeJobId: currentJob.jobId });
+    }
+
+    // Validate incoming payload
+    const parsed = JobPayloadSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid job payload', details: parsed.error.flatten() });
+    }
+    const payload = parsed.data as JobPayload;
     const mode = payload.transferMode ?? (payload.smbPath ? 'smb' : 'wireless');
     console.log(`\n📥 Job received: ${payload.jobId}`);
     console.log(`   File: ${payload.smbPath ?? payload.filePath}`);

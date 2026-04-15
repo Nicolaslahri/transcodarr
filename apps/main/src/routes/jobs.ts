@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import { getJobs, getJob, enqueueFile, updateJobStatus, getStats, deleteJob, clearQueue, analyzeFile } from '../queue.js';
+import { getJobs, getJob, enqueueFile, updateJobStatus, getStats, deleteJob, clearQueue, analyzeFile, recordJobEvent } from '../queue.js';
 import { broadcast } from '../server.js';
 import { dispatchNext } from '../dispatcher.js';
 import { getDb } from '../db.js';
 import fs from 'fs';
 import path from 'path';
+
+export { recordJobEvent };
 
 // ─── Smart retry helpers ──────────────────────────────────────────────────────
 
@@ -72,7 +74,8 @@ function smartRetryJob(jobId: string): void {
     // Re-run ffprobe on the (potentially relocated) file to refresh all metadata
     const analysis = analyzeFile(resolvedPath);
     if (analysis) {
-      const contentKey = `${Math.round(analysis.duration)}:${analysis.fileSize}`;
+      const stem = path.basename(resolvedPath, path.extname(resolvedPath)).slice(0, 16);
+      const contentKey = `${Math.round(analysis.duration)}:${analysis.fileSize}:${stem}`;
       db.prepare(`
         UPDATE jobs
         SET file_path = ?, file_size = ?, codec_in = ?, resolution = ?,
@@ -118,6 +121,22 @@ export async function jobsRoutes(app: FastifyInstance) {
     const job = getJob(req.params.id);
     if (!job) return reply.status(404).send({ error: 'Not found' });
     return job;
+  });
+
+  // GET /api/jobs/:id/events — job timeline
+  app.get<{ Params: { id: string } }>('/:id/events', async (req, reply) => {
+    const job = getJob(req.params.id);
+    if (!job) return reply.status(404).send({ error: 'Not found' });
+    const events = getDb()
+      .prepare('SELECT id, event, worker_name, detail, created_at FROM job_events WHERE job_id = ? ORDER BY created_at ASC')
+      .all(req.params.id) as any[];
+    return events.map(e => ({
+      id:         e.id,
+      event:      e.event,
+      workerName: e.worker_name ?? undefined,
+      detail:     e.detail ? JSON.parse(e.detail) : undefined,
+      createdAt:  e.created_at,
+    }));
   });
 
   // POST /api/jobs — manually enqueue a file
@@ -181,6 +200,7 @@ export async function jobsRoutes(app: FastifyInstance) {
     ).run('paused', now, req.params.id);
 
     const updated = getJob(req.params.id);
+    recordJobEvent(req.params.id, 'paused');
     broadcast('job:paused', updated);
     broadcast('stats:update', getStats());
     return updated;
@@ -195,6 +215,7 @@ export async function jobsRoutes(app: FastifyInstance) {
     getDb().prepare('UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?')
       .run('queued', now, req.params.id);
     const updated = getJob(req.params.id);
+    recordJobEvent(req.params.id, 'resumed');
     broadcast('job:queued', updated);
     broadcast('stats:update', getStats());
     dispatchNext().catch(() => {});

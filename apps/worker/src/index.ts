@@ -2,7 +2,7 @@ import os from 'os';
 import { nanoid } from 'nanoid';
 import { ensureFfmpeg, detectHardware } from './hardware.js';
 import { broadcastWorkerMdns, stopMdns } from './mdns.js';
-import { createWorkerServer, initWorkerServer, startGpuStatsPoller, latestGpuStats } from './server.js';
+import { createWorkerServer, initWorkerServer, startGpuStatsPoller, latestGpuStats, cancelController } from './server.js';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
@@ -98,7 +98,19 @@ function getLocalIp(): string {
   return '127.0.0.1';
 }
 
-process.on('SIGINT', () => { stopMdns(); process.exit(0); });
-process.on('SIGTERM', () => { stopMdns(); process.exit(0); });
+async function gracefulShutdown(signal: string): Promise<void> {
+  console.log(`\n[Worker] ${signal} received — shutting down gracefully`);
+  stopMdns();
+  // If a job is currently running, abort it and give ffmpeg 3 seconds to clean up
+  if (cancelController) {
+    console.log('[Worker] Aborting active job before exit…');
+    cancelController.abort();
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+  process.exit(0);
+}
+
+process.on('SIGINT',  () => gracefulShutdown('SIGINT').catch(() => process.exit(1)));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM').catch(() => process.exit(1)));
 
 main().catch(err => { console.error('Fatal:', err); process.exit(1); });

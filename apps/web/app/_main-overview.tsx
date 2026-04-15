@@ -54,12 +54,11 @@ export default function OverviewPage() {
       gsap.from('.stat-card', { y: 20, opacity: 0, duration: 0.7, stagger: 0.08, ease: 'power3.out' });
       gsap.utils.toArray<HTMLElement>('.stat-value').forEach((el) => {
         const end = parseFloat(el.dataset.value || '0');
-        gsap.fromTo(el, { innerText: '0' }, {
-          duration: 1.4, ease: 'power2.out',
-          onUpdate() {
-            const val = end * this.progress();
-            el.innerText = end % 1 !== 0 ? val.toFixed(1) : Math.round(val).toString();
-          },
+        // Use a proxy object rather than setting innerText inside onUpdate to avoid hydration warnings
+        const proxy = { val: 0 };
+        gsap.to(proxy, {
+          val: end, duration: 1.4, ease: 'power2.out',
+          onUpdate() { el.innerText = end % 1 !== 0 ? proxy.val.toFixed(1) : Math.round(proxy.val).toString(); },
           onComplete() { el.innerText = end % 1 !== 0 ? end.toFixed(1) : end.toString(); }
         });
       });
@@ -215,7 +214,7 @@ function WorkerCard({ worker, activeJob }: { worker: WorkerInfo; activeJob: Job 
 
   return (
     <div className={`card-hover bg-surface border rounded-2xl p-5 ${
-      isActive ? 'border-primary/40' : 'border-border'
+      isActive ? 'border-primary/40 worker-active' : 'border-border'
     }`}>
       {/* Worker name + status */}
       <div className="flex items-center gap-3 mb-4">
@@ -287,7 +286,7 @@ function WorkerCard({ worker, activeJob }: { worker: WorkerInfo; activeJob: Job 
 
       {/* Last seen */}
       {worker.lastSeen > 0 && (
-        <p className="text-[11px] text-textMuted/40 text-right mt-2">
+        <p className="text-xs text-textMuted/40 text-right mt-2">
           {lastSeenLabel(worker.lastSeen)}
         </p>
       )}
@@ -306,7 +305,7 @@ function GpuMetric({ icon, label, value, heat }: { icon: React.ReactNode; label:
     <div className="flex flex-col items-center gap-0.5">
       <span className={`${tempColor}`}>{icon}</span>
       <span className={`text-xs font-medium ${heat != null ? tempColor : 'text-white'}`}>{value}</span>
-      <span className="text-[10px] text-textMuted/60">{label}</span>
+      <span className="text-xs text-textMuted/60">{label}</span>
     </div>
   );
 }

@@ -10,6 +10,8 @@ import path from 'path';
 import os from 'os';
 import https from 'https';
 import http from 'http';
+import { pipeline } from 'stream/promises';
+import { Transform } from 'stream';
 
 export interface TransferProgress {
   bytes: number;
@@ -47,19 +49,25 @@ export async function downloadFile(
       let bytes = 0;
 
       const dest = fs.createWriteStream(localPath);
-      res.on('data', (chunk: Buffer) => {
-        bytes += chunk.length;
-        if (total > 0) {
-          onProgress({ bytes, total, progress: Math.min(99, Math.round((bytes / total) * 100)) });
-        }
+
+      // Use a Transform passthrough to track progress while pipeline handles backpressure
+      const progress$ = new Transform({
+        transform(chunk: Buffer, _enc, cb) {
+          bytes += chunk.length;
+          if (total > 0) {
+            onProgress({ bytes, total, progress: Math.min(99, Math.round((bytes / total) * 100)) });
+          }
+          cb(null, chunk);
+        },
       });
-      res.pipe(dest);
-      dest.on('finish', () => {
-        onProgress({ bytes, total: bytes, progress: 100 });
-        resolve();
-      });
-      dest.on('error', reject);
-      res.on('error', reject);
+
+      // pipeline() properly propagates backpressure — no unbounded buffering on slow disks
+      pipeline(res, progress$, dest)
+        .then(() => {
+          onProgress({ bytes, total: bytes, progress: 100 });
+          resolve();
+        })
+        .catch(reject);
     });
     req.on('error', reject);
   });
@@ -110,6 +118,11 @@ export async function uploadFile(
           reject(new Error(`Upload failed: HTTP ${res.statusCode}`));
         }
       });
+    });
+
+    // Prevent indefinite hang if Main is unresponsive or connection stalls
+    req.setTimeout(300_000, () => {
+      req.destroy(new Error('Upload timed out after 5 minutes'));
     });
 
     req.on('error', reject);

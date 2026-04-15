@@ -170,7 +170,7 @@ function LiveStrip({ jobs }: { jobs: Job[] }) {
   if (jobs.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-6 px-5 py-3 bg-surface border border-border rounded-xl text-xs">
+    <div className="flex items-center flex-wrap gap-3 md:gap-6 px-4 py-3 bg-surface border border-border rounded-xl text-xs">
       <span className="flex items-center gap-1.5">
         <span className={`w-2 h-2 rounded-full ${active.length > 0 ? 'bg-primary animate-pulse' : 'bg-border'}`} />
         <span className={active.length > 0 ? 'text-primary font-semibold' : 'text-textMuted'}>{active.length} active</span>
@@ -283,19 +283,20 @@ export default function QueuePage() {
   const idleWorkers = workers.filter(w => ['idle', 'active'].includes(w.status));
 
   return (
-    <div className="p-10 max-w-7xl mx-auto space-y-6">
-      <header className="animate-section flex items-start justify-between">
+    <div className="p-4 md:p-6 lg:p-10 max-w-7xl mx-auto space-y-4 md:space-y-6">
+      <header className="animate-section flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-white mb-2">Queue</h1>
-          <p className="text-textMuted">Active transcodes and processing history.</p>
+          <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-1 md:mb-2">Queue</h1>
+          <p className="text-textMuted text-sm">Active transcodes and processing history.</p>
         </div>
         <button
           onClick={clearHistory}
           disabled={!canClear}
-          className="flex items-center gap-2 px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent"
+          className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-xs md:text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent shrink-0"
         >
           <Trash2 className="w-4 h-4" />
-          Clear History
+          <span className="hidden sm:inline">Clear History</span>
+          <span className="sm:hidden">Clear</span>
         </button>
       </header>
 
@@ -596,13 +597,13 @@ function JobRow({
         </div>
       )}
 
-      <div className="p-4 flex items-center gap-3">
-        {/* Drag handle */}
+      <div className="p-3 md:p-4 flex items-center gap-2 md:gap-3">
+        {/* Drag handle — hidden on mobile, visible md+ */}
         {draggable && (
           <div
             {...attributes}
             {...listeners}
-            className="p-1 text-textMuted/40 hover:text-textMuted cursor-grab active:cursor-grabbing shrink-0 touch-none"
+            className="hidden md:flex p-1 text-textMuted/40 hover:text-textMuted cursor-grab active:cursor-grabbing shrink-0 touch-none"
           >
             <GripVertical className="w-4 h-4" />
           </div>
@@ -654,7 +655,7 @@ function JobRow({
             </div>
           )}
 
-          <div className="w-28 space-y-1.5">
+          <div className="w-20 md:w-28 space-y-1.5">
             <div className="flex items-center justify-end gap-1.5">
               {job.eta && job.eta > Date.now() && (
                 <span className="text-[10px] text-textMuted flex items-center gap-0.5 shrink-0">

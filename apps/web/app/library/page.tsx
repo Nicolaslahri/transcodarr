@@ -207,16 +207,16 @@ export default function LibraryPage() {
   }, [history, search, recipeFilter]);
 
   return (
-    <div className="p-10 max-w-7xl mx-auto space-y-6">
-      <header className="animate-section flex items-start justify-between">
+    <div className="p-4 md:p-6 lg:p-10 max-w-7xl mx-auto space-y-5 md:space-y-6">
+      <header className="animate-section flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-white mb-2">Library</h1>
-          <p className="text-textMuted">History of all completed transcodes and space savings.</p>
+          <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-1 md:mb-2">Library</h1>
+          <p className="text-textMuted text-sm md:text-base">History of all completed transcodes and space savings.</p>
         </div>
         <button
           onClick={() => fetchPage(0, true)}
           disabled={loading}
-          className="flex items-center gap-1.5 px-4 py-2 bg-surface border border-border rounded-xl text-sm text-textMuted hover:text-white transition-colors disabled:opacity-40"
+          className="flex items-center gap-1.5 px-4 py-2 bg-surface border border-border rounded-xl text-sm text-textMuted hover:text-white transition-colors disabled:opacity-40 self-start sm:self-auto shrink-0"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh
@@ -229,7 +229,7 @@ export default function LibraryPage() {
 
           {/* Filters row */}
           <div className="flex gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-48">
+            <div className="relative flex-1 min-w-0 sm:min-w-48">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-textMuted pointer-events-none" />
               <input
                 type="text"

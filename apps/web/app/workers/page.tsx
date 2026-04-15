@@ -107,24 +107,24 @@ export default function WorkersPage() {
   };
 
   return (
-    <div className="p-10 max-w-7xl mx-auto space-y-10">
-      <header className="animate-section flex items-center justify-between">
+    <div className="p-4 md:p-6 lg:p-10 max-w-7xl mx-auto space-y-6 lg:space-y-10">
+      <header className="animate-section flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
         <div>
-          <h1 className="text-4xl font-bold tracking-tight text-white mb-1">Fleet</h1>
-          <p className="text-textMuted">Manage transcoding nodes and their connection to your media.</p>
+          <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-1">Fleet</h1>
+          <p className="text-textMuted text-sm">Manage transcoding nodes and their connection to your media.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <button
             onClick={async () => { await fetch(`${apiUrl}/api/workers/scan`, { method: 'POST' }); }}
-            className="px-4 py-2 bg-surface border border-border rounded-xl text-sm font-medium text-textMuted hover:text-white transition-colors"
+            className="px-3 md:px-4 py-2 bg-surface border border-border rounded-xl text-xs md:text-sm font-medium text-textMuted hover:text-white transition-colors"
           >
-            Refresh Fleet
+            Refresh
           </button>
           <button
             onClick={() => setAddModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-background rounded-xl text-sm font-bold hover:bg-primary/90 transition-colors"
+            className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-primary text-background rounded-xl text-xs md:text-sm font-bold hover:bg-primary/90 transition-colors"
           >
-            <Plus className="w-4 h-4" /> Add Worker…
+            <Plus className="w-4 h-4" /> <span>Add Worker</span>
           </button>
         </div>
       </header>
@@ -135,7 +135,7 @@ export default function WorkersPage() {
           <h2 className="text-xs font-bold uppercase tracking-widest text-yellow-500 mb-4 flex items-center gap-2">
             <ShieldAlert className="w-3.5 h-3.5" /> Awaiting Approval ({pendingWorkers.length})
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 stagger-list">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 stagger-list">
             {pendingWorkers.map(w => (
               <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={handleAccept} onReject={rejectWorker} />
             ))}
@@ -165,7 +165,7 @@ export default function WorkersPage() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 stagger-list">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 stagger-list">
             {activeWorkers.map(w => (
               <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={handleAccept} onReject={rejectWorker} />
             ))}

@@ -49,24 +49,24 @@ export default function SettingsPage() {
     : mainTabs;
 
   return (
-    <div className="p-10 max-w-5xl mx-auto space-y-8">
+    <div className="p-4 md:p-6 lg:p-10 max-w-5xl mx-auto space-y-5 md:space-y-8">
       <header className="animate-section">
-        <h1 className="text-4xl font-bold tracking-tight text-white mb-1">Settings</h1>
-        <p className="text-textMuted">
+        <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-1">Settings</h1>
+        <p className="text-textMuted text-sm">
           {meta.mode === 'worker' ? 'Configure worker preferences' : 'Configure scanning, filters, and preferences.'}
         </p>
       </header>
 
-      {/* Tab bar */}
-      <div className="flex gap-1 bg-surface p-1 rounded-xl border border-border w-fit flex-wrap">
+      {/* Tab bar — scrollable on mobile */}
+      <div className="flex gap-1 bg-surface p-1 rounded-xl border border-border overflow-x-auto scrollbar-none">
         {tabs.map(({ id, icon: Icon, label }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150
+            className={`flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium transition-all duration-150 whitespace-nowrap shrink-0
               ${tab === id ? 'bg-background text-white shadow-sm' : 'text-textMuted hover:text-white'}`}
           >
-            <Icon className="w-4 h-4" />
+            <Icon className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
             {label}
           </button>
         ))}

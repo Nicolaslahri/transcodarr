@@ -124,6 +124,23 @@ export async function transcodeFile(
     let errorLog = '';
     let cancelled = false;
 
+    // ── Stall detector ─────────────────────────────────────────────────────────
+    // When ffmpeg finishes encoding the last frame it does a silent post-processing
+    // step (e.g. +faststart rewrites the entire MP4 to move the index atom to the
+    // front). On a NAS/SMB share this can take 1-3 min with zero output, so to the
+    // UI it looks frozen at 99%. We detect the silence and emit a 'finalizing' phase
+    // so the user sees a clear message instead of a stuck progress bar.
+    let lastProgressTime = Date.now();
+    let latestProgress   = 0;
+    let finalizingFired  = false;
+    const finalizingInterval = setInterval(() => {
+      if (!finalizingFired && latestProgress >= 99 && Date.now() - lastProgressTime > 8_000) {
+        finalizingFired = true;
+        onProgress({ progress: 99, phase: 'finalizing' });
+      }
+    }, 2_000);
+    // ──────────────────────────────────────────────────────────────────────────
+
     const onAbort = () => {
       cancelled = true;
       proc.kill('SIGTERM');
@@ -147,13 +164,19 @@ export async function transcodeFile(
       leftover = parts.pop() ?? '';
       for (const line of parts) {
         const update = parseProgressLine(line, duration);
-        if (update) onProgress(update);
+        if (update) {
+          lastProgressTime = Date.now();
+          latestProgress   = update.progress ?? 0;
+          finalizingFired  = false; // reset if fresh progress arrives
+          onProgress(update);
+        }
       }
     };
 
     proc.stderr.on('data', handleData);
     proc.stdout.on('data', handleData);
     proc.on('close', code => {
+      clearInterval(finalizingInterval);
       if (signal) signal.removeEventListener('abort', onAbort);
       if (cancelled) {
         // Clean up the partial tmp file immediately so it doesn't linger on disk
@@ -167,7 +190,7 @@ export async function transcodeFile(
         reject(new Error(`ffmpeg exited ${code}: ${lastLines}`));
       }
     });
-    proc.on('error', reject);
+    proc.on('error', (err) => { clearInterval(finalizingInterval); reject(err); });
   });
 
   // ─── Atomic swap ──────────────────────────────────────────────────────────

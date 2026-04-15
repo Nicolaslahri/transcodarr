@@ -67,6 +67,7 @@ const PHASE_CONFIG: Record<string, {
   transcoding: { label: 'Transcoding',       Icon: Zap,             accent: 'text-primary',     border: 'border-l-primary/70',        barBg: 'bg-primary',    chip: 'bg-primary/10 border-primary/30 text-primary',          sortPriority: 0 },
   receiving:   { label: 'Downloading File',  Icon: ArrowDownToLine, accent: 'text-sky-400',     border: 'border-l-sky-500/60',        barBg: 'bg-sky-400',    chip: 'bg-sky-500/10 border-sky-500/30 text-sky-400',          sortPriority: 1 },
   sending:     { label: 'Uploading Result',  Icon: Upload,          accent: 'text-violet-400',  border: 'border-l-violet-500/60',     barBg: 'bg-violet-400', chip: 'bg-violet-500/10 border-violet-500/30 text-violet-400', sortPriority: 2 },
+  finalizing:  { label: 'Finalizing',        Icon: RefreshCw,       accent: 'text-amber-400',   border: 'border-l-amber-500/60',      barBg: 'bg-amber-400',  chip: 'bg-amber-500/10 border-amber-500/30 text-amber-400',    sortPriority: 3 },
   swapping:    { label: 'Finishing Up',      Icon: RefreshCw,       accent: 'text-orange-400',  border: 'border-l-orange-500/60',     barBg: 'bg-orange-400', chip: 'bg-orange-500/10 border-orange-500/30 text-orange-400', sortPriority: 3 },
   dispatched:  { label: 'Ready to Dispatch', Icon: Timer,           accent: 'text-yellow-400',  border: 'border-l-yellow-500/40',     barBg: 'bg-yellow-500', chip: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400', sortPriority: 4 },
   queued:      { label: 'Queued',            Icon: Clock,           accent: 'text-blue-400',    border: 'border-l-blue-500/40',       barBg: 'bg-blue-500',   chip: 'bg-blue-500/10 border-blue-500/30 text-blue-400',       sortPriority: 5 },
@@ -154,7 +155,7 @@ function ScanBanner({ summary, onDismiss }: { summary: ScanSummary; onDismiss: (
 // ─── Live Summary Strip ───────────────────────────────────────────────────────
 
 function LiveStrip({ jobs }: { jobs: Job[] }) {
-  const active    = jobs.filter(j => ['receiving', 'transcoding', 'sending', 'swapping'].includes(j.phase ?? j.status));
+  const active    = jobs.filter(j => ['receiving', 'transcoding', 'finalizing', 'sending', 'swapping'].includes(j.phase ?? j.status));
   const queued    = jobs.filter(j => j.status === 'queued' || j.status === 'dispatched');
   const completed = jobs.filter(j => j.status === 'complete');
   const savedBytes = completed.reduce((acc, j) => acc + ((j.sizeBefore ?? 0) - (j.sizeAfter ?? 0)), 0);
@@ -206,7 +207,7 @@ export default function QueuePage() {
 
   // Phase-aware sort for active jobs
   const rawActiveJobs = jobs
-    .filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));
+    .filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'finalizing', 'sending', 'swapping'].includes(j.status));
 
   const pausedJobs = jobs.filter(j => j.status === 'paused');
 
@@ -527,7 +528,7 @@ function JobRow({
   const cfg = PHASE_CONFIG[phaseKey] ?? PHASE_CONFIG['queued'];
   const { Icon } = cfg;
 
-  const isProcessing = ['dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(phaseKey);
+  const isProcessing = ['dispatched', 'receiving', 'transcoding', 'finalizing', 'sending', 'swapping'].includes(phaseKey);
   const isPaused = displayStatus === 'paused';
 
   // dnd-kit sortable hook — only active for draggable rows
@@ -537,25 +538,31 @@ function JobRow({
   });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
 
-  // Tick every second for ETA countdown and swapping elapsed timer
+  // Tick every second for ETA countdown and swapping/finalizing elapsed timer
   const [, forceUpdate] = useState(0);
   useEffect(() => {
-    if (!job.eta && job.phase !== 'swapping') return;
+    if (!job.eta && job.phase !== 'swapping' && job.phase !== 'finalizing') return;
     const id = setInterval(() => forceUpdate(n => n + 1), 1000);
     return () => clearInterval(id);
   }, [job.eta, job.phase]);
 
-  // Track when swapping started so we can show elapsed time
-  const swappingStartRef = useRef<number | null>(null);
+  // Track when swapping/finalizing started so we can show elapsed time
+  const swappingStartRef  = useRef<number | null>(null);
+  const finalizingStartRef = useRef<number | null>(null);
   useEffect(() => {
     if (job.phase === 'swapping' && swappingStartRef.current === null) {
       swappingStartRef.current = Date.now();
     } else if (job.phase !== 'swapping') {
       swappingStartRef.current = null;
     }
+    if (job.phase === 'finalizing' && finalizingStartRef.current === null) {
+      finalizingStartRef.current = Date.now();
+    } else if (job.phase !== 'finalizing') {
+      finalizingStartRef.current = null;
+    }
   }, [job.phase]);
 
-  const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'swapping'].includes(displayStatus);
+  const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'finalizing', 'swapping'].includes(displayStatus);
   const showWorkerPicker = ['queued', 'dispatched'].includes(displayStatus) && idleWorkers.length > 0;
 
   // Timeline state
@@ -587,8 +594,8 @@ function JobRow({
       {isProcessing && (
         <div className="h-[2px] w-full bg-background overflow-hidden">
           <div
-            className={`h-full ${cfg.barBg} transition-all duration-700 ease-out ${job.phase === 'swapping' ? 'w-full animate-pulse opacity-60' : ''}`}
-            style={job.phase !== 'swapping' ? { width: `${job.progress}%` } : undefined}
+            className={`h-full ${cfg.barBg} transition-all duration-700 ease-out ${(job.phase === 'swapping' || job.phase === 'finalizing') ? 'w-full animate-pulse opacity-60' : ''}`}
+            style={!(job.phase === 'swapping' || job.phase === 'finalizing') ? { width: `${job.progress}%` } : undefined}
           />
         </div>
       )}
@@ -653,7 +660,7 @@ function JobRow({
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
               <Icon className="w-2.5 h-2.5" />
-              {job.phase === 'swapping' ? 'Saving' : cfg.label}
+              {job.phase === 'swapping' ? 'Saving' : job.phase === 'finalizing' ? 'Finalizing' : cfg.label}
             </span>
             {job.resolution && <ResolutionBadge resolution={job.resolution} />}
             {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
@@ -669,8 +676,30 @@ function JobRow({
           {/* Row 3: full-width progress bar (active jobs only) */}
           {isProcessing && (
             <div className="mt-3">
-              {job.phase === 'swapping' ? (
-                /* Finalizing — indeterminate pulsing bar with elapsed timer */
+              {job.phase === 'finalizing' ? (
+                /* ffmpeg post-processing (MP4 faststart reindex etc.) — no progress, just elapsed time */
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-textMuted/60 flex items-center gap-1.5">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400/60 animate-pulse shrink-0" />
+                      Writing MP4 index…
+                    </span>
+                    {finalizingStartRef.current && (() => {
+                      const secs = Math.floor((Date.now() - finalizingStartRef.current) / 1000);
+                      const m = Math.floor(secs / 60), s = secs % 60;
+                      return (
+                        <span className="text-xs text-textMuted/50 tabular-nums shrink-0">
+                          {m > 0 ? `${m}m ${s}s` : `${s}s`}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <div className="h-1 bg-background rounded-full overflow-hidden">
+                    <div className="h-full w-full bg-amber-400 opacity-40 rounded-full animate-pulse" />
+                  </div>
+                </div>
+              ) : job.phase === 'swapping' ? (
+                /* Renaming the output file into its final location */
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs text-textMuted/60 flex items-center gap-1.5">

@@ -68,6 +68,7 @@ const PHASE_CONFIG: Record<string, {
   transcoding: { label: 'Transcoding',       Icon: Zap,             accent: 'text-primary',     border: 'border-l-primary/70',        barBg: 'bg-primary',    chip: 'bg-primary/10 border-primary/30 text-primary',          sortPriority: 0 },
   receiving:   { label: 'Downloading File',  Icon: ArrowDownToLine, accent: 'text-sky-400',     border: 'border-l-sky-500/60',        barBg: 'bg-sky-400',    chip: 'bg-sky-500/10 border-sky-500/30 text-sky-400',          sortPriority: 1 },
   sending:     { label: 'Uploading Result',  Icon: Upload,          accent: 'text-violet-400',  border: 'border-l-violet-500/60',     barBg: 'bg-violet-400', chip: 'bg-violet-500/10 border-violet-500/30 text-violet-400', sortPriority: 2 },
+  finalizing:  { label: 'Finalizing',        Icon: RefreshCw,       accent: 'text-amber-400',   border: 'border-l-amber-500/60',      barBg: 'bg-amber-400',  chip: 'bg-amber-500/10 border-amber-500/30 text-amber-400',    sortPriority: 3 },
   swapping:    { label: 'Finishing Up',      Icon: RefreshCw,       accent: 'text-orange-400',  border: 'border-l-orange-500/60',     barBg: 'bg-orange-400', chip: 'bg-orange-500/10 border-orange-500/30 text-orange-400', sortPriority: 3 },
   dispatched:  { label: 'Ready to Dispatch', Icon: Timer,           accent: 'text-yellow-400',  border: 'border-l-yellow-500/40',     barBg: 'bg-yellow-500', chip: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400', sortPriority: 4 },
   queued:      { label: 'Queued',            Icon: Clock,           accent: 'text-blue-400',    border: 'border-l-blue-500/40',       barBg: 'bg-blue-500',   chip: 'bg-blue-500/10 border-blue-500/30 text-blue-400',       sortPriority: 5 },
@@ -155,7 +156,7 @@ function ScanBanner({ summary, onDismiss }: { summary: ScanSummary; onDismiss: (
 // ─── Live Summary Strip ───────────────────────────────────────────────────────
 
 function LiveStrip({ jobs }: { jobs: Job[] }) {
-  const active    = jobs.filter(j => ['receiving', 'transcoding', 'sending', 'swapping'].includes(j.phase ?? j.status));
+  const active    = jobs.filter(j => ['receiving', 'transcoding', 'finalizing', 'sending', 'swapping'].includes(j.phase ?? j.status));
   const queued    = jobs.filter(j => j.status === 'queued' || j.status === 'dispatched');
   const completed = jobs.filter(j => j.status === 'complete');
   const savedBytes = completed.reduce((acc, j) => acc + ((j.sizeBefore ?? 0) - (j.sizeAfter ?? 0)), 0);
@@ -207,7 +208,7 @@ export default function QueuePage() {
 
   // Phase-aware sort for active jobs
   const rawActiveJobs = jobs
-    .filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));
+    .filter(j => ['queued', 'dispatched', 'receiving', 'transcoding', 'finalizing', 'sending', 'swapping'].includes(j.status));
 
   const pausedJobs = jobs.filter(j => j.status === 'paused');
 
@@ -528,7 +529,7 @@ function JobRow({
   const cfg = PHASE_CONFIG[phaseKey] ?? PHASE_CONFIG['queued'];
   const { Icon } = cfg;
 
-  const isProcessing = ['dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(phaseKey);
+  const isProcessing = ['dispatched', 'receiving', 'transcoding', 'finalizing', 'sending', 'swapping'].includes(phaseKey);
   const isPaused = displayStatus === 'paused';
   const waveRef = useRef<HTMLDivElement>(null);
 
@@ -555,7 +556,7 @@ function JobRow({
     return () => clearInterval(id);
   }, [job.eta]);
 
-  const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'swapping'].includes(displayStatus);
+  const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'finalizing', 'swapping'].includes(displayStatus);
   const showWorkerPicker = ['queued', 'dispatched'].includes(displayStatus) && idleWorkers.length > 0;
 
   // Timeline state

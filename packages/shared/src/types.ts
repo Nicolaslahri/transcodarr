@@ -53,7 +53,7 @@ export type ConnectionMode = 'smb' | 'wireless';
  *   'sending'     — worker is uploading the result back to Main (wireless only)
  *   'swapping'    — Main is atomically replacing the original file
  */
-export type TransferPhase = 'receiving' | 'transcoding' | 'sending' | 'swapping';
+export type TransferPhase = 'receiving' | 'transcoding' | 'sending' | 'swapping' | 'finalizing';
 
 // ─── Worker ──────────────────────────────────────────────────────────────────
 

@@ -186,10 +186,29 @@ export function detectHardware(): HardwareProfile {
     gpuName = 'Intel GPU (QuickSync)';
   }
 
-  const profile: HardwareProfile = { gpu, gpuName, encoders: gpuEncoders, decoders: gpuDecoders, hwaccels };
+  // Filter encoders/decoders to only those matching the detected vendor.
+  // ffmpeg lists ALL hardware codecs it was compiled with, regardless of whether
+  // the hardware is actually present. Without filtering, an NVIDIA machine would
+  // report amf and qsv encoders too, causing misleading badges in the UI.
+  const vendorEncoderFilter = (e: string): boolean => {
+    if (gpu === 'nvidia') return e.includes('nvenc');
+    if (gpu === 'amd')    return e.includes('amf');
+    if (gpu === 'intel')  return e.includes('qsv') || e.includes('vaapi');
+    return false; // cpu — no hardware encoders
+  };
+  const vendorDecoderFilter = (e: string): boolean => {
+    if (gpu === 'nvidia') return e.includes('cuvid') || e.includes('nvdec');
+    if (gpu === 'amd')    return e.includes('amf');
+    if (gpu === 'intel')  return e.includes('qsv');
+    return false;
+  };
+  const filteredEncoders = gpuEncoders.filter(vendorEncoderFilter);
+  const filteredDecoders = gpuDecoders.filter(vendorDecoderFilter);
+
+  const profile: HardwareProfile = { gpu, gpuName, encoders: filteredEncoders, decoders: filteredDecoders, hwaccels };
 
   console.log(`  GPU: ${gpuName} (${gpu.toUpperCase()})`);
-  console.log(`  Encoders: ${gpuEncoders.join(', ') || 'CPU only'}`);
+  console.log(`  Encoders: ${filteredEncoders.join(', ') || 'CPU only'}`);
 
   return profile;
 }

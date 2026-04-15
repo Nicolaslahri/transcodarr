@@ -78,9 +78,18 @@ export async function workersRoutes(app: FastifyInstance) {
       
       const workerVersion = meta.version ?? undefined;
       if (!existing) {
-        db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen, version) VALUES (?,?,?,?,'pending',?,?,?)`)
-          .run(workerId, meta.name, ip, port, JSON.stringify(meta.hardware ?? {}), Math.floor(Date.now() / 1000), workerVersion ?? null);
-        broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(workerId) as any));
+        const autoAccept = (db.prepare("SELECT value FROM settings WHERE key = 'autoAcceptWorkers'").get() as any)?.value === 'true';
+        const initialStatus = autoAccept ? 'idle' : 'pending';
+        const nowMs = Math.floor(Date.now() / 1000);
+        db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen, version) VALUES (?,?,?,?,?,?,?,?)`)
+          .run(workerId, meta.name, ip, port, initialStatus, JSON.stringify(meta.hardware ?? {}), nowMs, workerVersion ?? null);
+        if (autoAccept) {
+          db.prepare('UPDATE workers SET accepted_at = ? WHERE id = ?').run(nowMs, workerId);
+          broadcast('worker:accepted', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(workerId) as any));
+          dispatchNext().catch(() => {});
+        } else {
+          broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(workerId) as any));
+        }
       } else {
         // Update existing (might have changed port/IP)
         db.prepare('UPDATE workers SET host = ?, port = ?, last_seen = ?, version = ? WHERE id = ?')
@@ -128,10 +137,21 @@ export async function workersRoutes(app: FastifyInstance) {
           sanityCheck(id, name, version);
         }
       } else {
-        db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen, version) VALUES (?,?,?,?,'pending',?,?,?)`)
-          .run(id, name, realHost, port, JSON.stringify(hardware), Math.floor(Date.now() / 1000), version ?? null);
-        broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
-        console.log(`🔍 New worker registered (HTTP): ${name} v${version ?? '?'} (${realHost}:${port})`);
+        // Check if auto-accept is enabled — if so, skip the approval queue
+        const autoAccept = (db.prepare("SELECT value FROM settings WHERE key = 'autoAcceptWorkers'").get() as any)?.value === 'true';
+        const initialStatus = autoAccept ? 'idle' : 'pending';
+        const now = Math.floor(Date.now() / 1000);
+        db.prepare(`INSERT INTO workers (id, name, host, port, status, hardware, last_seen, version) VALUES (?,?,?,?,?,?,?,?)`)
+          .run(id, name, realHost, port, initialStatus, JSON.stringify(hardware), now, version ?? null);
+        if (autoAccept) {
+          db.prepare('UPDATE workers SET accepted_at = ? WHERE id = ?').run(now, id);
+          broadcast('worker:accepted', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
+          console.log(`✅ New worker auto-accepted: ${name} v${version ?? '?'} (${realHost}:${port})`);
+          dispatchNext().catch(() => {});
+        } else {
+          broadcast('worker:discovered', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
+          console.log(`🔍 New worker registered (HTTP): ${name} v${version ?? '?'} (${realHost}:${port})`);
+        }
       }
       return { ok: true, mainVersion: MAIN_VERSION };
     },

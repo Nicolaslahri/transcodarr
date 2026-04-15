@@ -168,14 +168,28 @@ export async function jobsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // POST /api/jobs/:id/cancel — pause an active job (sets status='paused', does NOT auto-re-dispatch)
-  // The worker's cleanup callback is the sole gate for releasing the worker.
+  // POST /api/jobs/:id/cancel — pause a job (queued or active → 'paused')
+  // For queued jobs: just updates DB (no worker involved).
+  // For active jobs: tells worker to kill ffmpeg; worker cleanup callback releases worker.
   // User must click Resume to put the job back in the dispatch queue.
   app.post<{ Params: { id: string } }>('/:id/cancel', async (req, reply) => {
     const job = getJob(req.params.id);
     if (!job) return reply.status(404).send({ error: 'Not found' });
-    if (!['dispatched', 'transcoding', 'receiving', 'sending', 'swapping'].includes(job.status)) {
-      return reply.status(400).send({ error: 'Job is not active' });
+    if (!['queued', 'dispatched', 'transcoding', 'receiving', 'sending', 'swapping'].includes(job.status)) {
+      return reply.status(400).send({ error: 'Job cannot be paused in its current state' });
+    }
+
+    // For queued jobs: no worker to contact — just pause in DB
+    if (job.status === 'queued') {
+      const now = Math.floor(Date.now() / 1000);
+      getDb().prepare(
+        'UPDATE jobs SET status = ?, phase = NULL, progress = 0, fps = NULL, eta = NULL, error = NULL, updated_at = ? WHERE id = ?'
+      ).run('paused', now, req.params.id);
+      const updated = getJob(req.params.id);
+      recordJobEvent(req.params.id, 'paused');
+      broadcast('job:paused', updated);
+      broadcast('stats:update', getStats());
+      return updated;
     }
 
     // Tell the worker to kill its ffmpeg process
@@ -234,6 +248,69 @@ export async function jobsRoutes(app: FastifyInstance) {
     broadcast('stats:update', getStats());
     dispatchNext().catch(() => {});
     return getJob(req.params.id);
+  });
+
+  // POST /api/jobs/pause-all — pause every queued/dispatched job at once.
+  // Active transcodes are also cancelled (worker kill + status → paused).
+  app.post('/pause-all', async () => {
+    const db = getDb();
+    const now = Math.floor(Date.now() / 1000);
+
+    // Queued jobs: just update DB — no worker involved
+    const queuedIds = (db.prepare("SELECT id FROM jobs WHERE status = 'queued'").all() as any[]).map(r => r.id);
+    if (queuedIds.length) {
+      db.prepare(
+        `UPDATE jobs SET status='paused', phase=NULL, progress=0, fps=NULL, eta=NULL, error=NULL, updated_at=?
+         WHERE status='queued'`
+      ).run(now);
+      for (const id of queuedIds) {
+        recordJobEvent(id, 'paused');
+        broadcast('job:paused', getJob(id));
+      }
+    }
+
+    // Active jobs: tell each worker to kill its ffmpeg, then set status=paused
+    const activeJobs = db.prepare(
+      "SELECT id, worker_id FROM jobs WHERE status IN ('dispatched','transcoding','receiving','sending','swapping','finalizing')"
+    ).all() as any[];
+
+    await Promise.allSettled(activeJobs.map(async (row) => {
+      if (row.worker_id) {
+        const workerRow = db.prepare('SELECT host, port FROM workers WHERE id = ?').get(row.worker_id) as any;
+        if (workerRow) {
+          try {
+            await fetch(`http://${workerRow.host}:${workerRow.port}/job`, {
+              method: 'DELETE', signal: AbortSignal.timeout(5_000),
+            });
+          } catch { /* unreachable — still pause */ }
+        }
+      }
+      db.prepare(
+        'UPDATE jobs SET status=?, worker_id=NULL, phase=NULL, progress=0, callback_token=NULL, dispatched_at=NULL, fps=NULL, eta=NULL, error=NULL, updated_at=? WHERE id=?'
+      ).run('paused', now, row.id);
+      recordJobEvent(row.id, 'paused');
+      broadcast('job:paused', getJob(row.id));
+    }));
+
+    broadcast('stats:update', getStats());
+    return { ok: true, paused: queuedIds.length + activeJobs.length };
+  });
+
+  // POST /api/jobs/resume-all — un-pause every paused job at once
+  app.post('/resume-all', async () => {
+    const db = getDb();
+    const now = Math.floor(Date.now() / 1000);
+    const pausedIds = (db.prepare("SELECT id FROM jobs WHERE status = 'paused'").all() as any[]).map(r => r.id);
+    if (pausedIds.length) {
+      db.prepare("UPDATE jobs SET status='queued', updated_at=? WHERE status='paused'").run(now);
+      for (const id of pausedIds) {
+        recordJobEvent(id, 'resumed');
+        broadcast('job:queued', getJob(id));
+      }
+    }
+    broadcast('stats:update', getStats());
+    dispatchNext().catch(() => {});
+    return { ok: true, resumed: pausedIds.length };
   });
 
   // POST /api/jobs/retry-all — smart-retry all failed jobs at once

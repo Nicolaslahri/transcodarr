@@ -109,8 +109,20 @@ function ScanProgressBanner({ progress }: { progress: ScanProgress }) {
 
 // ─── Scan Summary Banner ──────────────────────────────────────────────────────
 
-function ScanBanner({ summary, onDismiss }: { summary: ScanSummary; onDismiss: () => void }) {
+function ScanBanner({ summary, jobs, onDismiss }: { summary: ScanSummary; jobs: Job[]; onDismiss: () => void }) {
   const isError = !!summary.error;
+
+  // Auto-dismiss after 15s
+  useEffect(() => {
+    if (isError) return;
+    const t = setTimeout(onDismiss, 15_000);
+    return () => clearTimeout(t);
+  }, [isError, onDismiss]);
+
+  // Live counts from current jobs state (updates as jobs are paused/removed)
+  const liveQueued  = jobs.filter(j => ['queued', 'dispatched', 'paused'].includes(j.status)).length;
+  const liveActive  = jobs.filter(j => ['transcoding', 'receiving', 'sending', 'swapping', 'finalizing'].includes(j.phase ?? j.status)).length;
+
   return (
     <div className={`toast-enter flex items-start gap-4 p-4 rounded-xl border ${
       isError ? 'bg-red-500/10 border-red-500/30' : 'bg-primary/10 border-primary/30'
@@ -122,24 +134,21 @@ function ScanBanner({ summary, onDismiss }: { summary: ScanSummary; onDismiss: (
         <p className="text-white font-semibold text-sm">
           {isError ? 'Scan Failed' : `Scan Complete — "${summary.dir.split(/[\\/]/).pop()}"`}
         </p>
-        <p className="text-textMuted text-xs mt-0.5">{summary.error ?? summary.message}</p>
+        <p className="text-textMuted text-xs mt-0.5">
+          {summary.error ?? `${summary.total} files found · ${summary.skipped} already optimized`}
+        </p>
         {!isError && (
           <div className="flex items-center gap-4 mt-2">
             <span className="text-xs flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-primary inline-block" />
-              <span className="text-white font-medium">{summary.enqueued}</span>
-              <span className="text-textMuted">queued</span>
+              <span className="text-white font-medium">{liveQueued}</span>
+              <span className="text-textMuted">in queue</span>
             </span>
-            <span className="text-xs flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-              <span className="text-white font-medium">{summary.skipped}</span>
-              <span className="text-textMuted">already optimized</span>
-            </span>
-            {summary.alreadyActive > 0 && (
+            {liveActive > 0 && (
               <span className="text-xs flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
-                <span className="text-white font-medium">{summary.alreadyActive}</span>
-                <span className="text-textMuted">in progress</span>
+                <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse inline-block" />
+                <span className="text-white font-medium">{liveActive}</span>
+                <span className="text-textMuted">encoding now</span>
               </span>
             )}
           </div>
@@ -244,6 +253,8 @@ export default function QueuePage() {
 
   const clearHistory = () => fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
   const retryAll     = () => fetch(`${apiUrl}/api/jobs/retry-all`, { method: 'POST' });
+  const pauseAll     = () => fetch(`${apiUrl}/api/jobs/pause-all`,  { method: 'POST' });
+  const resumeAll    = () => fetch(`${apiUrl}/api/jobs/resume-all`, { method: 'POST' });
   const removeJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}`, { method: 'DELETE' });
   const cancelJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}/cancel`, { method: 'POST' });
   const resumeJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}/resume`, { method: 'POST' });
@@ -289,21 +300,45 @@ export default function QueuePage() {
           <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-1 md:mb-2">Queue</h1>
           <p className="text-textMuted text-sm">Active transcodes and processing history.</p>
         </div>
-        <button
-          onClick={clearHistory}
-          disabled={!canClear}
-          className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-xs md:text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent shrink-0"
-        >
-          <Trash2 className="w-4 h-4" />
-          <span className="hidden sm:inline">Clear History</span>
-          <span className="sm:hidden">Clear</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Pause All / Resume All — only shown when there's something to act on */}
+          {(activeJobs.length > 0 || pausedJobs.length > 0) && (
+            pausedJobs.length > 0 && activeJobs.length === 0 ? (
+              <button
+                onClick={resumeAll}
+                title="Resume all paused jobs"
+                className="flex items-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-green-400 hover:border-green-500/30 hover:bg-green-500/5 transition-all text-xs font-medium"
+              >
+                <PlayCircle className="w-4 h-4" />
+                <span className="hidden sm:inline">Resume All</span>
+              </button>
+            ) : (
+              <button
+                onClick={pauseAll}
+                title="Pause all queued and active jobs"
+                className="flex items-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-amber-400 hover:border-amber-500/30 hover:bg-amber-500/5 transition-all text-xs font-medium"
+              >
+                <PauseCircle className="w-4 h-4" />
+                <span className="hidden sm:inline">Pause All</span>
+              </button>
+            )
+          )}
+          <button
+            onClick={clearHistory}
+            disabled={!canClear}
+            className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-xs md:text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Clear History</span>
+            <span className="sm:hidden">Clear</span>
+          </button>
+        </div>
       </header>
 
       <LiveStrip jobs={jobs} />
 
       {scanProgress && <ScanProgressBanner progress={scanProgress} />}
-      {localScan && !scanProgress && <ScanBanner summary={localScan} onDismiss={() => setLocalScan(null)} />}
+      {localScan && !scanProgress && <ScanBanner summary={localScan} jobs={jobs} onDismiss={() => setLocalScan(null)} />}
 
       {/* Active & Queued */}
       <section>
@@ -626,29 +661,44 @@ function JobRow({
             <h3 className="text-white font-semibold text-sm leading-snug flex-1 min-w-0 truncate">{job.fileName}</h3>
             <div className="flex items-center gap-0.5 shrink-0 -mt-0.5 -mr-1">
               {isProcessing ? (
+                // Active job: pause stops the encode and holds it in the Paused section
                 <button
                   onClick={() => { setOverrideStatus('paused'); onCancel(); }}
-                  title="Pause — keeps job in queue"
+                  title="Pause — stops encoding and holds your spot. Click ▶ to resume later."
                   className="p-1.5 rounded-lg text-textMuted/50 hover:text-amber-400 hover:bg-background transition-colors"
                 >
                   <PauseCircle className="w-4 h-4" />
                 </button>
               ) : isPaused ? (
+                // Paused job: resume re-queues it, X removes it
                 <>
-                  <button onClick={() => { setOverrideStatus(null); onResume(); }} title="Resume"
+                  <button onClick={() => { setOverrideStatus(null); onResume(); }}
+                    title="Resume — puts job back in queue"
                     className="p-1.5 rounded-lg text-textMuted/50 hover:text-green-400 hover:bg-background transition-colors">
                     <PlayCircle className="w-4 h-4" />
                   </button>
-                  <button onClick={onRemove} title="Remove"
+                  <button onClick={onRemove}
+                    title="Remove from queue"
                     className="p-1.5 rounded-lg text-textMuted/50 hover:text-red-400 hover:bg-background transition-colors">
                     <XCircle className="w-4 h-4" />
                   </button>
                 </>
               ) : (
-                <button onClick={onRemove} disabled={!canRemove} title="Remove"
-                  className="p-1.5 rounded-lg text-textMuted/50 hover:text-red-400 hover:bg-background transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
-                  <XCircle className="w-4 h-4" />
-                </button>
+                // Queued (waiting): pause holds it; X removes it entirely
+                <>
+                  <button
+                    onClick={() => { setOverrideStatus('paused'); onCancel(); }}
+                    title="Hold — prevents dispatch until you resume"
+                    className="p-1.5 rounded-lg text-textMuted/30 hover:text-amber-400 hover:bg-background transition-colors"
+                  >
+                    <PauseCircle className="w-4 h-4" />
+                  </button>
+                  <button onClick={onRemove} disabled={!canRemove}
+                    title="Remove from queue permanently"
+                    className="p-1.5 rounded-lg text-textMuted/50 hover:text-red-400 hover:bg-background transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
+                    <XCircle className="w-4 h-4" />
+                  </button>
+                </>
               )}
               <button onClick={toggleTimeline} title="Job timeline"
                 className={`p-1.5 rounded-lg transition-colors ${showTimeline ? 'text-primary' : 'text-textMuted/25 hover:text-textMuted/60'}`}>

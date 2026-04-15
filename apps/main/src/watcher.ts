@@ -109,8 +109,14 @@ export function addWatchedPath(watchPath: string, recipe: string, triggerScan = 
   }
 }
 
-// Helper to manually scan a directory recursively, broadcasting a summary when done
-export function manualScanDirectory(dir: string, recipe: string) {
+// Yield the Node.js event loop so other I/O (WebSocket pings, progress callbacks)
+// can be processed between file analyses. Without this, synchronous ffprobe calls
+// (execFileSync, ~200ms each) block the entire server for multi-hundred-file scans.
+const yieldToEventLoop = () => new Promise<void>(r => setImmediate(r));
+
+// Helper to manually scan a directory recursively, broadcasting a summary when done.
+// Runs asynchronously and yields between files so the server stays responsive.
+export async function manualScanDirectory(dir: string, recipe: string): Promise<void> {
   if (!fs.existsSync(dir)) {
     broadcast('scan:summary', { dir, recipe, enqueued: 0, skipped: 0, alreadyActive: 0, error: 'Directory not found' });
     return;
@@ -119,52 +125,66 @@ export function manualScanDirectory(dir: string, recipe: string) {
   const stats = { enqueued: 0, skipped: 0, alreadyActive: 0, total: 0 };
   const sessionId = Math.random().toString(36).slice(2, 10);
 
-  const scan = (current: string) => {
+  const scan = async (current: string) => {
+    let entries: fs.Dirent[];
     try {
-      const entries = fs.readdirSync(current, { withFileTypes: true });
-      for (const entry of entries) {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (err) {
+      console.error(`Failed to read ${current}:`, err);
+      return;
+    }
+
+    // Recurse into subdirectories first (breadth of structure, then files)
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        await scan(path.join(current, entry.name));
+      }
+    }
+
+    // Process files — yield the event loop between each ffprobe call so the
+    // server can handle WebSocket messages / progress callbacks mid-scan.
+    for (const entry of entries) {
+      if (entry.isFile()) {
         const fullPath = path.join(current, entry.name);
-        if (entry.isDirectory()) {
-          scan(fullPath);
-        } else {
-          const ext = path.extname(fullPath).toLowerCase();
-          if (SUPPORTED_EXTENSIONS.includes(ext)) {
-            stats.total++;
+        const ext = path.extname(fullPath).toLowerCase();
+        if (SUPPORTED_EXTENSIONS.includes(ext)) {
+          // Yield before each ffprobe so the event loop can breathe
+          await yieldToEventLoop();
+
+          stats.total++;
+          try {
             const job = enqueueFile(fullPath, recipe);
             if (job) {
               stats.enqueued++;
               console.log(`📥 Queued: ${path.basename(fullPath)}`);
               broadcast('job:queued', job);
             } else {
-              // Check if in-progress vs genuinely skipped (already optimal)
               const existing = getDb().prepare(
-                "SELECT status FROM jobs WHERE file_path = ?"
+                'SELECT status FROM jobs WHERE file_path = ?'
               ).get(fullPath) as any;
-
               if (existing && ['transcoding', 'dispatched', 'swapping'].includes(existing.status)) {
                 stats.alreadyActive++;
               } else {
                 stats.skipped++;
               }
             }
+          } catch (err) {
+            console.error(`Failed to analyse ${fullPath}:`, err);
+          }
 
-            // Emit progress every 10 files
-            if (stats.total % 10 === 0) {
-              broadcast('scan:progress', { sessionId, dir, checked: stats.total, queued: stats.enqueued, skipped: stats.skipped });
-            }
+          // Emit progress every 10 files
+          if (stats.total % 10 === 0) {
+            broadcast('scan:progress', { sessionId, dir, checked: stats.total, queued: stats.enqueued, skipped: stats.skipped });
           }
         }
       }
-    } catch (err) {
-      console.error(`Failed to scan ${current}:`, err);
     }
   };
 
-  scan(dir);
+  await scan(dir);
 
   const msg = `Scan complete for "${path.basename(dir)}": ${stats.enqueued} queued, ${stats.skipped} already optimized, ${stats.alreadyActive} in progress (${stats.total} total files found)`;
   console.log(`  📊 ${msg}`);
-  // Update last_scan_at for the matching watched_path
   try {
     getDb().prepare('UPDATE watched_paths SET last_scan_at = ? WHERE path = ?').run(Math.floor(Date.now() / 1000), dir);
   } catch { /* non-critical */ }

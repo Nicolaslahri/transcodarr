@@ -144,11 +144,12 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   // ─── Manual Scans ───────────────────────────────────────────────────────────
   app.post<{ Params: { id: string } }>('/paths/:id/scan', async (req, reply) => {
-    const row = getDb().prepare('SELECT path, recipe FROM watched_paths WHERE id = ?').get(req.params.id) as any;
+    const row = getDb().prepare('SELECT path, recipe, exclude_patterns FROM watched_paths WHERE id = ?').get(req.params.id) as any;
     if (!row) return reply.status(404).send({ error: 'Path not found' });
-    
+    const excludePatterns = row.exclude_patterns ? (row.exclude_patterns as string).split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+
     // Start asynchronous full directory scan
-    manualScanDirectory(row.path, row.recipe);
+    manualScanDirectory(row.path, row.recipe, excludePatterns);
     return { ok: true, queued: true };
   });
 

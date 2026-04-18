@@ -11,14 +11,15 @@ export function startPeriodicScanPoller(): void {
   setInterval(() => {
     const now = Math.floor(Date.now() / 1000);
     const paths = getDb().prepare(
-      'SELECT id, path, recipe, scan_interval_hours, last_scan_at FROM watched_paths WHERE enabled = 1 AND scan_interval_hours > 0'
+      'SELECT id, path, recipe, scan_interval_hours, last_scan_at, exclude_patterns FROM watched_paths WHERE enabled = 1 AND scan_interval_hours > 0'
     ).all() as any[];
     for (const wp of paths) {
       const intervalSecs = wp.scan_interval_hours * 3600;
       const lastScan = wp.last_scan_at ?? 0;
       if (now - lastScan >= intervalSecs) {
         console.log(`🔄 Periodic scan triggered for: ${wp.path} (every ${wp.scan_interval_hours}h)`);
-        manualScanDirectory(wp.path, wp.recipe);
+        const excludePatterns = wp.exclude_patterns ? (wp.exclude_patterns as string).split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+        manualScanDirectory(wp.path, wp.recipe, excludePatterns);
         getDb().prepare('UPDATE watched_paths SET last_scan_at = ? WHERE id = ?').run(now, wp.id);
       }
     }
@@ -34,10 +35,17 @@ const pendingFiles = new Map<string, ReturnType<typeof setTimeout>>();
 let sharedWatcher: chokidar.FSWatcher | null = null;
 const activePaths: string[] = [];
 const pathToRecipe = new Map<string, string>();
+const pathToExcludePatterns = new Map<string, string[]>();
+
+/** Returns true if any exclude pattern (case-insensitive) matches the file path */
+function isExcluded(filePath: string, patterns: string[]): boolean {
+  const lower = filePath.toLowerCase();
+  return patterns.some(p => p && lower.includes(p.toLowerCase()));
+}
 
 export function startWatcher(): void {
   const db = getDb();
-  const watched = db.prepare("SELECT path, recipe FROM watched_paths WHERE enabled = 1").all() as { path: string; recipe: string }[];
+  const watched = db.prepare("SELECT path, recipe, exclude_patterns FROM watched_paths WHERE enabled = 1").all() as { path: string; recipe: string; exclude_patterns?: string }[];
 
   if (watched.length === 0) {
     console.log('  No watched paths configured yet. Add one in Settings.');
@@ -45,7 +53,8 @@ export function startWatcher(): void {
   }
 
   for (const w of watched) {
-    addWatchedPath(w.path, w.recipe, false); // false = don't trigger deep scan on startup (initial: false covers it)
+    const excludePatterns = w.exclude_patterns ? w.exclude_patterns.split(',').map(s => s.trim()).filter(Boolean) : [];
+    addWatchedPath(w.path, w.recipe, false, excludePatterns); // false = don't trigger deep scan on startup (initial: false covers it)
   }
 }
 
@@ -69,6 +78,10 @@ function initWatcher() {
     if (!watchedRoot) return;
     const recipe = pathToRecipe.get(watchedRoot) ?? 'space-saver';
 
+    // Check exclude patterns
+    const excludePatterns = pathToExcludePatterns.get(watchedRoot) ?? [];
+    if (excludePatterns.length > 0 && isExcluded(filePath, excludePatterns)) return;
+
     // Debounce — wait 3s of inactivity before enqueueing
     const existing = pendingFiles.get(filePath);
     if (existing) clearTimeout(existing);
@@ -88,11 +101,12 @@ function initWatcher() {
 }
 
 // Called from settings API when a new path is added — hot-reload watcher
-export function addWatchedPath(watchPath: string, recipe: string, triggerScan = true): void {
+export function addWatchedPath(watchPath: string, recipe: string, triggerScan = true, excludePatterns?: string[]): void {
   if (!activePaths.includes(watchPath)) {
     activePaths.push(watchPath);
   }
   pathToRecipe.set(watchPath, recipe);
+  if (excludePatterns) pathToExcludePatterns.set(watchPath, excludePatterns);
 
   if (!sharedWatcher) {
     initWatcher();
@@ -117,7 +131,7 @@ const yieldToEventLoop = () => new Promise<void>(r => setImmediate(r));
 // Helper to manually scan a directory recursively, broadcasting a summary when done.
 // Runs asynchronously and yields between files so the server stays responsive.
 // Symlink cycle detection prevents infinite recursion on looped symlinks.
-export async function manualScanDirectory(dir: string, recipe: string): Promise<void> {
+export async function manualScanDirectory(dir: string, recipe: string, excludePatterns: string[] = []): Promise<void> {
   if (!fs.existsSync(dir)) {
     broadcast('scan:summary', { dir, recipe, enqueued: 0, skipped: 0, alreadyActive: 0, error: 'Directory not found' });
     return;
@@ -161,7 +175,7 @@ export async function manualScanDirectory(dir: string, recipe: string): Promise<
       if (entry.isFile()) {
         const fullPath = path.join(current, entry.name);
         const ext = path.extname(fullPath).toLowerCase();
-        if (SUPPORTED_EXTENSIONS.includes(ext)) {
+        if (SUPPORTED_EXTENSIONS.includes(ext) && !isExcluded(fullPath, excludePatterns)) {
           // Yield before each ffprobe so the event loop can breathe
           await yieldToEventLoop();
 

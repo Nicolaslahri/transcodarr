@@ -6,7 +6,8 @@ import {
   FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight,
   Filter, Settings2, BookOpen, Info, ArrowLeftRight,
   Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell, Pencil, Clock, ArrowRightCircle,
-  AlertTriangle, RefreshCw,
+  AlertTriangle, RefreshCw, Eye, EyeOff, Shield, ChevronDown, Loader2, CheckCircle2,
+  Scan, Download, Upload,
 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
@@ -197,6 +198,7 @@ interface WatchedPath {
   extensions: string; priority: string; min_size_mb: number;
   preferred_audio_lang?: string; preferred_subtitle_lang?: string;
   scan_interval_hours?: number; last_scan_at?: number; move_to?: string;
+  exclude_patterns?: string | null;
 }
 
 const LANG_OPTIONS = [
@@ -213,7 +215,40 @@ const LANG_OPTIONS = [
   { value: 'ara', label: 'Arabic (ara)' },
 ];
 
-const BLANK_FORM = { path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100, preferredAudioLang: '', preferredSubtitleLang: '', scanIntervalHours: 0, moveTo: '' };
+const BLANK_FORM = { path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100, preferredAudioLang: '', preferredSubtitleLang: '', scanIntervalHours: 0, moveTo: '', excludePatterns: '' };
+
+function FolderStats({ id, apiUrl }: { id: string; apiUrl: string }) {
+  const [stats, setStats] = useState<{ total: number; queued: number; active: number; complete: number; failed: number; gbSaved: number } | null>(null);
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/settings/paths/${id}/stats`)
+      .then(r => r.json())
+      .then(setStats)
+      .catch(() => {});
+  }, [id, apiUrl]);
+
+  if (!stats || stats.total === 0) return null;
+
+  return (
+    <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border/50">
+      {stats.complete > 0 && (
+        <span className="text-xs text-green-400">✓ {stats.complete} done</span>
+      )}
+      {stats.active > 0 && (
+        <span className="text-xs text-primary animate-pulse">⟳ {stats.active} active</span>
+      )}
+      {stats.queued > 0 && (
+        <span className="text-xs text-textMuted">◷ {stats.queued} queued</span>
+      )}
+      {stats.failed > 0 && (
+        <span className="text-xs text-red-400">✗ {stats.failed} failed</span>
+      )}
+      {stats.gbSaved > 0.05 && (
+        <span className="text-xs text-textMuted/60">{stats.gbSaved.toFixed(2)} GB saved</span>
+      )}
+    </div>
+  );
+}
 
 function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   const [paths, setPaths]     = useState<WatchedPath[]>([]);
@@ -221,6 +256,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [scanningIds, setScanningIds] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [postAddId, setPostAddId] = useState<string | null>(null);
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [recipePickerOpen, setRecipePickerOpen] = useState(false);
   const [form, setForm]       = useState({ ...BLANK_FORM });
@@ -243,7 +279,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   }, []);
 
   const openEdit = (p: WatchedPath) => {
-    setForm({ path: p.path, recipe: p.recipe, recurse: p.recurse, extensions: p.extensions, priority: p.priority, minSizeMb: p.min_size_mb, preferredAudioLang: p.preferred_audio_lang ?? '', preferredSubtitleLang: p.preferred_subtitle_lang ?? '', scanIntervalHours: p.scan_interval_hours ?? 0, moveTo: p.move_to ?? '' });
+    setForm({ path: p.path, recipe: p.recipe, recurse: p.recurse, extensions: p.extensions, priority: p.priority, minSizeMb: p.min_size_mb, preferredAudioLang: p.preferred_audio_lang ?? '', preferredSubtitleLang: p.preferred_subtitle_lang ?? '', scanIntervalHours: p.scan_interval_hours ?? 0, moveTo: p.move_to ?? '', excludePatterns: p.exclude_patterns ?? '' });
     const found = allRecipes.find(r => r.id === p.recipe);
     setSelectedRecipe(found ?? null);
     setEditingId(p.id);
@@ -259,13 +295,14 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   };
 
   const save = async () => {
-    const { preferredAudioLang, preferredSubtitleLang, scanIntervalHours, moveTo, ...rest } = form;
+    const { preferredAudioLang, preferredSubtitleLang, scanIntervalHours, moveTo, excludePatterns, ...rest } = form;
     const payload = {
       ...rest,
       preferred_audio_lang:    preferredAudioLang || null,
       preferred_subtitle_lang: preferredSubtitleLang || null,
       scan_interval_hours:     scanIntervalHours,
       move_to:                 moveTo || null,
+      exclude_patterns:        excludePatterns || null,
     };
     if (editingId) {
       await fetch(`/api/settings/paths/${editingId}`, {
@@ -273,15 +310,19 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      closeForm();
+      load();
     } else {
-      await fetch('/api/settings/paths', {
+      const res = await fetch('/api/settings/paths', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      const newPath = await res.json().catch(() => null);
+      closeForm();
+      load();
+      if (newPath?.id) setPostAddId(newPath.id);
     }
-    closeForm();
-    load();
   };
 
   const toggle = async (p: WatchedPath) => {
@@ -352,6 +393,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                   </span>
                 )}
               </div>
+              <FolderStats id={p.id} apiUrl={apiUrl} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
@@ -514,6 +556,22 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
 
           <div>
             <label className="text-xs text-textMuted font-medium block mb-1.5">
+              Exclude patterns <span className="text-textMuted/60">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={form.excludePatterns}
+              onChange={e => setForm(f => ({ ...f, excludePatterns: e.target.value }))}
+              placeholder="sample, trailer, extras"
+              className="w-full bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/40 font-mono"
+            />
+            <p className="text-xs text-textMuted/50 mt-1">
+              Comma-separated keywords. Files whose path contains any of these will be skipped.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-xs text-textMuted font-medium block mb-1.5">
               Move completed files to <span className="text-textMuted/60">(optional)</span>
             </label>
             <div className="flex gap-2">
@@ -559,6 +617,33 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         >
           <Plus className="w-4 h-4" /> Add Watched Folder
         </button>
+      )}
+
+      {postAddId && (
+        <div className="flex items-start gap-4 p-4 bg-green-900/10 border border-green-500/20 rounded-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-white font-medium text-sm mb-1">Folder added successfully</p>
+            <p className="text-textMuted text-xs">Scan now to queue existing files for transcoding?</p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={async () => {
+                const id = postAddId;
+                setPostAddId(null);
+                setScanningIds(prev => new Set(prev).add(id));
+                try { await fetch(`/api/settings/paths/${id}/scan`, { method: 'POST' }); }
+                finally { setScanningIds(prev => { const s = new Set(prev); s.delete(id); return s; }); }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-bold rounded-lg hover:bg-green-500/30 transition-colors"
+            >
+              <Scan className="w-3.5 h-3.5" /> Scan Now
+            </button>
+            <button onClick={() => setPostAddId(null)} className="px-3 py-1.5 text-textMuted text-xs hover:text-white transition-colors">
+              Later
+            </button>
+          </div>
+        </div>
       )}
 
       <FileExplorerModal
@@ -622,20 +707,28 @@ function SmartFiltersPanel() {
     skipKeywords: ['REMUX', 'BDREMUX'],
     skipDolbyAtmos: true,
   });
-  const [saved, setSaved] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle'|'saving'|'saved'>('idle');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitialMount = useRef(true);
 
   useEffect(() => {
     fetch('/api/settings/filters').then(r => r.json()).then(setFilters).catch(() => {});
   }, []);
 
-  const save = async () => {
-    await fetch('/api/settings/filters', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(filters),
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  useEffect(() => {
+    if (isInitialMount.current) { isInitialMount.current = false; return; }
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setAutoSaveStatus('saving');
+    saveTimerRef.current = setTimeout(async () => {
+      await fetch('/api/settings/filters', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(filters),
+      });
+      setAutoSaveStatus('saved');
+      setTimeout(() => setAutoSaveStatus('idle'), 2000);
+    }, 800);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [filters]);
 
   const set = (key: keyof SmartFilters, val: any) => setFilters(f => ({ ...f, [key]: val }));
 
@@ -646,7 +739,12 @@ function SmartFiltersPanel() {
       <div className="card-hover bg-surface border border-border rounded-2xl divide-y divide-border overflow-hidden">
         <FilterRow title="Skip already in target codec" description="If the file is already in the recipe's target codec, skip it entirely." enabled={filters.skipAlreadyTargetCodec} onToggle={v => set('skipAlreadyTargetCodec', v)} />
         <FilterRow title="Skip low-bitrate files" description="Files already heavily compressed at this bitrate probably won't benefit from re-encoding." enabled={filters.skipBelowBitrateKbps !== null} onToggle={v => set('skipBelowBitrateKbps', v ? 500 : null)}>
-          {filters.skipBelowBitrateKbps !== null && <NumberInput label="Below (kbps)" value={filters.skipBelowBitrateKbps} onChange={v => set('skipBelowBitrateKbps', v)} />}
+          {filters.skipBelowBitrateKbps !== null && (
+            <>
+              <NumberInput label="Below (kbps)" value={filters.skipBelowBitrateKbps} onChange={v => set('skipBelowBitrateKbps', v)} />
+              <p className="text-xs text-textMuted/50 mt-1.5">Reference: 1080p H.264 ≈ 4,000 kbps · 1080p H.265 ≈ 2,000 kbps · 4K H.265 ≈ 8,000 kbps</p>
+            </>
+          )}
         </FilterRow>
         <FilterRow title="Skip low-resolution files" description="Don't waste GPU time on content below a certain height." enabled={filters.skipBelowHeightPx !== null} onToggle={v => set('skipBelowHeightPx', v ? 480 : null)}>
           {filters.skipBelowHeightPx !== null && <NumberInput label="Below (px height)" value={filters.skipBelowHeightPx} onChange={v => set('skipBelowHeightPx', v)} />}
@@ -654,22 +752,27 @@ function SmartFiltersPanel() {
         <FilterRow title="Skip small files" description="Skip files under a minimum size — likely already compact." enabled={filters.skipBelowSizeMb !== null} onToggle={v => set('skipBelowSizeMb', v ? 50 : null)}>
           {filters.skipBelowSizeMb !== null && <NumberInput label="Below (MB)" value={filters.skipBelowSizeMb} onChange={v => set('skipBelowSizeMb', v)} />}
         </FilterRow>
-        <FilterRow title="Skip Dolby Atmos / lossless audio" description="Preserve lossless audio tracks by skipping files containing them." enabled={filters.skipDolbyAtmos} onToggle={v => set('skipDolbyAtmos', v)} />
+        <FilterRow title="Preserve lossless audio (Dolby Atmos / TrueHD / DTS-HD MA)" description="Skip files with Dolby Atmos or lossless audio tracks. Re-encoding always degrades lossless audio — enable this to protect high-fidelity content." enabled={filters.skipDolbyAtmos} onToggle={v => set('skipDolbyAtmos', v)} />
         <FilterRow title="Skip by filename keywords" description="Skip files whose name contains any of these words (comma-separated)." enabled={filters.skipKeywords.length > 0} onToggle={v => set('skipKeywords', v ? ['REMUX'] : [])}>
           {filters.skipKeywords.length > 0 && (
-            <input
-              className="mt-3 w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-primary/40"
-              value={filters.skipKeywords.join(', ')}
-              onChange={e => set('skipKeywords', e.target.value.split(',').map(k => k.trim()).filter(Boolean))}
-              placeholder="REMUX, BDREMUX, BLURAY"
-            />
+            <>
+              <input
+                className="mt-3 w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-primary/40"
+                value={filters.skipKeywords.join(', ')}
+                onChange={e => set('skipKeywords', e.target.value.split(',').map(k => k.trim()).filter(Boolean))}
+                placeholder="REMUX, BDREMUX, BLURAY"
+              />
+              <p className="text-xs text-textMuted/50 mt-1">Case-insensitive — REMUX and remux both match.</p>
+            </>
           )}
         </FilterRow>
       </div>
 
-      <button onClick={save} className="px-5 py-2.5 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">
-        {saved ? '✓ Saved!' : 'Save Filters'}
-      </button>
+      <div className="flex items-center gap-2 text-xs text-textMuted">
+        {autoSaveStatus === 'saving' && <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Auto-saving…</>}
+        {autoSaveStatus === 'saved' && <><CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> <span className="text-green-400">Saved</span></>}
+        {autoSaveStatus === 'idle' && <span className="text-textMuted/40">Changes save automatically</span>}
+      </div>
     </div>
   );
 }
@@ -737,7 +840,14 @@ function RecipesPanel({ apiUrl }: { apiUrl: string }) {
         <div>
           <h3 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-4">Community Recipes ({community.length})</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {community.map(r => <RecipeCard key={r.id} recipe={r} community />)}
+            {community.map(r => (
+              <RecipeCard key={r.id} recipe={r} community
+                onDelete={async () => {
+                  await fetch(`${apiUrl}/api/settings/recipes/custom/${r.id}`, { method: 'DELETE' });
+                  load();
+                }}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -760,7 +870,7 @@ function RecipesPanel({ apiUrl }: { apiUrl: string }) {
   );
 }
 
-function RecipeCard({ recipe, community }: { recipe: Recipe; community?: boolean }) {
+function RecipeCard({ recipe, community, onDelete }: { recipe: Recipe; community?: boolean; onDelete?: () => void }) {
   return (
     <div className="card-hover bg-surface border border-border rounded-2xl p-5">
       <div className="flex items-start gap-3 mb-3">
@@ -780,6 +890,16 @@ function RecipeCard({ recipe, community }: { recipe: Recipe; community?: boolean
           <Badge label={`~${recipe.estimatedReduction}% smaller`} color="green" />
         )}
       </div>
+      {community && onDelete && (
+        <div className="flex justify-end mt-3 pt-3 border-t border-border">
+          <button
+            onClick={onDelete}
+            className="flex items-center gap-1.5 text-xs text-textMuted hover:text-red-400 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Remove recipe
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1054,6 +1174,8 @@ function GeneralPanel() {
   const { apiUrl, meta, workers } = useAppState();
   const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '', preferred_audio_lang: '', preferred_subtitle_lang: '' });
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [showDangerZone, setShowDangerZone] = useState(false);
 
   const onlineWorkers = workers.filter(w => w.status === 'idle' || w.status === 'active').length;
 
@@ -1073,14 +1195,18 @@ function GeneralPanel() {
   }, [apiUrl]);
 
   const save = async () => {
-    // Always save with snake_case key so the dispatcher can find it
-    const payload = { ...settings, max_concurrent_jobs: settings.maxConcurrentJobs };
-    await fetch(`${apiUrl}/api/settings/general`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setSaving(true);
+    try {
+      const payload = { ...settings, max_concurrent_jobs: settings.maxConcurrentJobs };
+      await fetch(`${apiUrl}/api/settings/general`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const resetSetup = async () => {
@@ -1113,16 +1239,26 @@ function GeneralPanel() {
               : `${onlineWorkers} worker${onlineWorkers !== 1 ? 's' : ''} online — each worker handles 1 job at a time`
           }
         >
-          <select
+          <input
+            type="number"
+            min={1}
+            max={32}
             value={settings.maxConcurrentJobs}
             onChange={e => setSettings(s => ({ ...s, maxConcurrentJobs: e.target.value }))}
-            className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
-          >
-            {[1,2,3,4,6,8].map(n => <option key={n} value={n}>{n} job{n > 1 ? 's' : ''}</option>)}
-          </select>
+            className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40"
+          />
         </Field>
 
-        <Field label="Queue Strategy">
+        <Field
+          label="Queue Strategy"
+          hint={
+            settings.queueStrategy === 'fifo'     ? 'Files are processed in the order they were discovered — first in, first out.'
+          : settings.queueStrategy === 'largest'  ? 'Prioritise large files first — maximises space savings per batch.'
+          : settings.queueStrategy === 'oldest'   ? 'Oldest files in your library get transcoded first.'
+          : settings.queueStrategy === 'smallest' ? 'Small files first — see completed jobs sooner while large ones process overnight.'
+          : undefined
+          }
+        >
           <select
             value={settings.queueStrategy}
             onChange={e => setSettings(s => ({ ...s, queueStrategy: e.target.value }))}
@@ -1145,6 +1281,14 @@ function GeneralPanel() {
               <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settings.autoAcceptWorkers === 'true' ? 'left-5' : 'left-1'}`} />
             </button>
           </div>
+          {settings.autoAcceptWorkers === 'true' && (
+            <div className="flex items-start gap-2.5 mt-2 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+              <Shield className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-400/80 leading-relaxed">
+                <strong className="text-amber-400">Security notice:</strong> Any device on your local network can join as a worker without approval. Only enable this on trusted networks.
+              </p>
+            </div>
+          )}
         </Field>
 
         {meta.mode !== 'worker' && (
@@ -1179,26 +1323,99 @@ function GeneralPanel() {
               placeholder="http://192.168.1.50:3001"
               className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40 font-mono"
             />
-            <p className="text-xs text-textMuted mt-1.5 ml-1">Requires a manual restart of the worker executable to apply.</p>
+            <div className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-400/80">Requires a manual restart of the worker to apply. Stop the process and relaunch.</p>
+            </div>
           </Field>
         )}
       </div>
 
       <div className="flex items-center gap-3">
-        <button onClick={save} className="px-5 py-2.5 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">
-          {saved ? '✓ Saved!' : 'Save Settings'}
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-5 py-2.5 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60 flex items-center gap-2"
+        >
+          {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : saved ? '✓ Saved!' : 'Save Settings'}
         </button>
       </div>
 
-      <div className="card-hover bg-surface border border-red-500/20 rounded-2xl p-6">
-        <h3 className="text-red-400 font-bold text-sm mb-1">Reset Setup</h3>
-        <p className="text-textMuted text-xs mb-4">Wipe this node's role configuration and restart the onboarding wizard. The server will restart automatically.</p>
+      {/* Backup & Restore */}
+      <div className="card-hover bg-surface border border-border rounded-2xl p-6 space-y-4">
+        <div>
+          <h3 className="text-white font-bold text-sm mb-1">Backup & Restore</h3>
+          <p className="text-textMuted text-xs">Export all settings as a JSON file, or restore from a previous backup.</p>
+        </div>
+        <div className="flex gap-3 flex-wrap">
+          <button
+            onClick={async () => {
+              try {
+                const [general, filters, paths, webhooks] = await Promise.all([
+                  fetch(`${apiUrl}/api/settings/general`).then(r => r.json()),
+                  fetch(`${apiUrl}/api/settings/filters`).then(r => r.json()),
+                  fetch(`${apiUrl}/api/settings/paths`).then(r => r.json()),
+                  fetch(`${apiUrl}/api/settings/webhooks`).then(r => r.json()),
+                ]);
+                const backup = { version: '1.0.38', exportedAt: new Date().toISOString(), general, filters, paths, webhooks };
+                const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `transcodarr-backup-${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+              } catch { /* ignore */ }
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-xl text-sm text-textMuted hover:text-white hover:border-primary/40 transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export settings
+          </button>
+          <label className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-xl text-sm text-textMuted hover:text-white hover:border-primary/40 transition-colors cursor-pointer">
+            <Upload className="w-4 h-4" />
+            Import settings
+            <input
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                try {
+                  const text = await file.text();
+                  const backup = JSON.parse(text);
+                  if (backup.general) await fetch(`${apiUrl}/api/settings/general`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup.general) });
+                  if (backup.filters) await fetch(`${apiUrl}/api/settings/filters`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup.filters) });
+                  alert('Settings restored. Reload the page to see changes.');
+                } catch { alert('Invalid backup file.'); }
+                e.target.value = '';
+              }}
+            />
+          </label>
+        </div>
+      </div>
+
+      {/* Danger Zone */}
+      <div className="space-y-3">
         <button
-          onClick={resetSetup}
-          className="px-5 py-2.5 bg-red-500/10 text-red-400 text-sm font-bold rounded-xl border border-red-500/30 hover:bg-red-500/20 transition-colors"
+          onClick={() => setShowDangerZone(s => !s)}
+          className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors"
         >
-          Reset Setup…
+          <ChevronDown className={`w-4 h-4 transition-transform ${showDangerZone ? 'rotate-180' : ''}`} />
+          {showDangerZone ? 'Hide danger zone' : 'Show danger zone'}
         </button>
+        {showDangerZone && (
+          <div className="card-hover bg-surface border border-red-500/20 rounded-2xl p-6">
+            <h3 className="text-red-400 font-bold text-sm mb-1">Reset Setup</h3>
+            <p className="text-textMuted text-xs mb-4">Wipe this node&apos;s role configuration and restart the onboarding wizard. The server will restart automatically.</p>
+            <button
+              onClick={resetSetup}
+              className="px-5 py-2.5 bg-red-500/10 text-red-400 text-sm font-bold rounded-xl border border-red-500/30 hover:bg-red-500/20 transition-colors"
+            >
+              Reset Setup…
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1292,8 +1509,11 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
   const [newUrl, setNewUrl] = useState('');
   const [newEvents, setNewEvents] = useState<string[]>(['job:complete', 'job:failed']);
   const [newSecret, setNewSecret] = useState('');
+  const [showSecret, setShowSecret] = useState(false);
   const [adding, setAdding] = useState(false);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
+  const [editingHookId, setEditingHookId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ url: '', events: [] as string[], secret: '' });
 
   const load = useCallback(async () => {
     const r = await fetch(`${apiUrl}/api/settings/webhooks`);
@@ -1366,9 +1586,13 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-sm font-medium truncate font-mono">{hook.url}</p>
                     <div className="flex flex-wrap gap-1 mt-2">
-                      {eventsArr.map(e => (
-                        <span key={e} className="px-1.5 py-0.5 text-xs rounded border bg-surface border-border text-textMuted">{e}</span>
-                      ))}
+                      {eventsArr.map(e => {
+                        const tagStyle = e === 'job:complete' ? 'bg-green-900/20 border-green-500/25 text-green-400'
+                                       : e === 'job:failed'   ? 'bg-red-900/20 border-red-500/25 text-red-400'
+                                       : e === 'job:queued'   ? 'bg-sky-900/20 border-sky-500/25 text-sky-400'
+                                       : 'bg-surface border-border text-textMuted';
+                        return <span key={e} className={`px-1.5 py-0.5 text-xs rounded border ${tagStyle}`}>{e}</span>;
+                      })}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
@@ -1377,6 +1601,19 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                       className="px-2.5 py-1 text-xs border border-border text-textMuted hover:text-white hover:border-primary/40 rounded-lg transition-colors"
                     >
                       {testResult[hook.id] ?? 'Test'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (editingHookId === hook.id) { setEditingHookId(null); return; }
+                        let evArr: string[] = [];
+                        try { evArr = JSON.parse(hook.events); } catch {}
+                        setEditForm({ url: hook.url, events: evArr, secret: '' });
+                        setEditingHookId(hook.id);
+                      }}
+                      className={`p-1.5 transition-colors ${editingHookId === hook.id ? 'text-primary' : 'text-textMuted hover:text-white'}`}
+                      title="Edit webhook"
+                    >
+                      <Pencil className="w-4 h-4" />
                     </button>
                     <button onClick={() => toggle(hook)} className="p-1.5 text-textMuted hover:text-white transition-colors">
                       {hook.enabled
@@ -1388,6 +1625,38 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                     </button>
                   </div>
                 </div>
+                {editingHookId === hook.id && (
+                  <div className="mt-3 pt-3 border-t border-border space-y-3">
+                    <div>
+                      <label className="text-xs text-textMuted font-medium mb-1 block">URL</label>
+                      <input value={editForm.url} onChange={e => setEditForm(f => ({...f, url: e.target.value}))}
+                        className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/40" />
+                    </div>
+                    <div className="flex gap-3 flex-wrap">
+                      {WEBHOOK_EVENTS.map(ev => (
+                        <label key={ev.id} className="flex items-center gap-1.5 cursor-pointer">
+                          <input type="checkbox" checked={editForm.events.includes(ev.id)}
+                            onChange={e => setEditForm(f => ({...f, events: e.target.checked ? [...f.events, ev.id] : f.events.filter(x => x !== ev.id)}))}
+                            className="accent-primary" />
+                          <span className="text-xs text-textMuted">{ev.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={async () => {
+                        await fetch(`${apiUrl}/api/settings/webhooks/${hook.id}`, {
+                          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ url: editForm.url, events: editForm.events }),
+                        });
+                        setEditingHookId(null);
+                        load();
+                      }} className="px-4 py-1.5 bg-primary text-background text-xs font-bold rounded-lg hover:bg-primary/90 transition-colors">
+                        Save
+                      </button>
+                      <button onClick={() => setEditingHookId(null)} className="px-4 py-1.5 text-textMuted text-xs hover:text-white transition-colors">Cancel</button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1424,12 +1693,22 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
             </div>
             <div>
               <label className="text-xs text-textMuted font-medium mb-1.5 block">Secret (optional — for HMAC signature)</label>
-              <input
-                value={newSecret}
-                onChange={e => setNewSecret(e.target.value)}
-                placeholder="my-secret-key"
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/40"
-              />
+              <div className="relative">
+                <input
+                  value={newSecret}
+                  onChange={e => setNewSecret(e.target.value)}
+                  type={showSecret ? 'text' : 'password'}
+                  placeholder="my-secret-key"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 pr-10 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/40"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecret(s => !s)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-textMuted hover:text-white transition-colors"
+                >
+                  {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
             <div className="flex gap-2">
               <button onClick={add} className="px-4 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">

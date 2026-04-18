@@ -61,11 +61,11 @@ function PhaseProgressBar({
             </div>
             <div className="flex-1">
               <div className="flex items-center justify-between mb-0.5">
-                <span className={`text-[10px] font-bold uppercase tracking-wide
+                <span className={`text-xs font-bold uppercase tracking-wide
                   ${isDone ? 'text-green-400' : isActive ? 'text-primary' : 'text-textMuted/40'}`}>
                   {p.label}
                 </span>
-                {isActive && <span className="text-[10px] text-textMuted">{progress}%</span>}
+                {isActive && <span className="text-xs text-textMuted">{progress}%</span>}
               </div>
               <div className="h-1 bg-background rounded-full overflow-hidden">
                 <div
@@ -90,7 +90,9 @@ export default function WorkersPage() {
   const [addModalOpen, setAddModalOpen] = useState(false);
 
   const pendingWorkers = workers.filter(w => w.status === 'pending');
-  const activeWorkers  = workers.filter(w => w.status !== 'pending');
+  const onlineWorkers  = workers.filter(w => w.status !== 'pending' && w.status !== 'offline');
+  const offlineWorkers = workers.filter(w => w.status === 'offline');
+  const activeWorkers  = workers.filter(w => w.status !== 'pending'); // keep for empty-state logic
 
   const handleAccept = async (id: string, worker: WorkerInfo) => {
     await acceptWorker(id);
@@ -143,10 +145,10 @@ export default function WorkersPage() {
         </section>
       )}
 
-      {/* Active workers */}
+      {/* Online workers */}
       <section>
         <h2 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-4">
-          Fleet ({activeWorkers.length})
+          Fleet ({onlineWorkers.length + offlineWorkers.length})
         </h2>
         {activeWorkers.length === 0 && pendingWorkers.length === 0 ? (
           <div className="bg-surface border border-dashed border-border rounded-2xl p-12 flex flex-col items-center text-center gap-4">
@@ -165,11 +167,27 @@ export default function WorkersPage() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 stagger-list">
-            {activeWorkers.map(w => (
-              <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={handleAccept} onReject={rejectWorker} />
-            ))}
-          </div>
+          <>
+            {onlineWorkers.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 stagger-list">
+                {onlineWorkers.map(w => (
+                  <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={handleAccept} onReject={rejectWorker} />
+                ))}
+              </div>
+            )}
+            {offlineWorkers.length > 0 && (
+              <div className={onlineWorkers.length > 0 ? 'mt-6' : ''}>
+                <h3 className="text-xs font-bold uppercase tracking-widest text-textMuted/50 mb-3">
+                  Offline ({offlineWorkers.length})
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5 opacity-50">
+                  {offlineWorkers.map(w => (
+                    <WorkerCard key={w.id} worker={w} apiUrl={apiUrl} onAccept={handleAccept} onReject={rejectWorker} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </section>
 
@@ -388,7 +406,7 @@ function EncoderBadge({ type }: { type: keyof typeof ENCODER_CONFIG }) {
   return (
     <span
       title={c.desc}
-      className={`px-2 py-0.5 ${c.bg} ${c.text} text-[11px] font-bold rounded-md border ${c.border} flex items-center gap-1`}
+      className={`px-2 py-0.5 ${c.bg} ${c.text} text-xs font-bold rounded-md border ${c.border} flex items-center gap-1`}
     >
       <c.Icon />
       {c.label}
@@ -407,28 +425,28 @@ function GpuStatsBar({ stats }: { stats: GpuStats }) {
     <div className="mt-2 p-2.5 bg-background/60 rounded-lg border border-border/40 space-y-1.5">
       {/* GPU utilisation */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-textMuted w-12 shrink-0">GPU</span>
+        <span className="text-xs text-textMuted w-12 shrink-0">GPU</span>
         <div className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden">
           <div className={`h-full rounded-full transition-all duration-500 ${utilColor}`} style={{ width: `${stats.utilPct}%` }} />
         </div>
-        <span className="text-[10px] text-textMuted w-8 text-right">{stats.utilPct}%</span>
+        <span className="text-xs text-textMuted w-8 text-right">{stats.utilPct}%</span>
       </div>
       {/* VRAM */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-textMuted w-12 shrink-0 flex items-center gap-1">
+        <span className="text-xs text-textMuted w-12 shrink-0 flex items-center gap-1">
           <MemoryStick className="w-2.5 h-2.5" /> VRAM
         </span>
         <div className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden">
           <div className="h-full rounded-full bg-sky-500 transition-all duration-500" style={{ width: `${vramPct}%` }} />
         </div>
-        <span className="text-[10px] text-textMuted w-8 text-right">
+        <span className="text-xs text-textMuted w-8 text-right">
           {stats.vramUsedMB >= 1024 ? `${(stats.vramUsedMB / 1024).toFixed(1)}G` : `${stats.vramUsedMB}M`}
         </span>
       </div>
       {/* Temperature */}
       <div className="flex items-center justify-end gap-1">
         <Thermometer className={`w-3 h-3 ${tempColor}`} />
-        <span className={`text-[10px] font-medium ${tempColor}`}>{stats.tempC}°C</span>
+        <span className={`text-xs font-medium ${tempColor}`}>{stats.tempC}°C</span>
       </div>
     </div>
   );

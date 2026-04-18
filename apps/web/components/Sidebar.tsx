@@ -28,9 +28,10 @@ interface SidebarProps {
 
 export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
   const pathname  = usePathname();
-  const { meta, connected } = useAppState();
+  const { meta, connected, jobs } = useAppState();
 
   const nav       = meta.mode === 'worker' ? workerNav : mainNav;
+  const hasActiveJobs = jobs.some(j => ['transcoding', 'dispatched', 'receiving', 'sending', 'swapping', 'finalizing'].includes(j.phase ?? j.status));
   const isLoading = meta.mode === 'loading';
 
   // Close drawer on route change
@@ -47,7 +48,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between">
               <p className="font-bold text-white text-sm leading-tight">Transcodarr</p>
-              <span className="text-[10px] bg-white/10 px-1.5 py-0.5 rounded-md text-white/70 font-mono">
+              <span className="text-xs bg-white/10 px-1.5 py-0.5 rounded-md text-white/70 font-mono">
                 v{meta.version || '1.0.0'}
               </span>
             </div>
@@ -84,6 +85,9 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
             >
               <Icon className="w-4.5 h-4.5 shrink-0" />
               {label}
+              {href === '/queue' && hasActiveJobs && (
+                <span className="ml-auto w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
+              )}
             </Link>
           );
         })}

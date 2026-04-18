@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { getJobs, getJob, enqueueFile, updateJobStatus, getStats, deleteJob, clearQueue, analyzeFile, recordJobEvent } from '../queue.js';
 import { broadcast } from '../server.js';
 import { dispatchNext } from '../dispatcher.js';
+import { fireWebhooks } from '../webhooks.js';
 import { getDb } from '../db.js';
 import fs from 'fs';
 import path from 'path';
@@ -155,6 +156,7 @@ export async function jobsRoutes(app: FastifyInstance) {
 
     const job = enqueueFile(req.body.filePath, req.body.recipe, true);
     if (!job) return reply.status(400).send({ error: 'Could not enqueue file (already queued, skipped, or unreadable)' });
+    fireWebhooks('job:queued', job).catch(() => {});
     dispatchNext().catch(() => {});
     return job;
   });
@@ -244,6 +246,7 @@ export async function jobsRoutes(app: FastifyInstance) {
     recordJobEvent(req.params.id, 'resumed');
     broadcast('job:queued', updated);
     broadcast('stats:update', getStats());
+    fireWebhooks('job:queued', updated).catch(() => {});
     dispatchNext().catch(() => {});
     return updated;
   });

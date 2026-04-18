@@ -211,6 +211,7 @@ export default function QueuePage() {
   const { jobs, workers, scanSummary, scanProgress, apiUrl } = useAppState();
   const [localScan, setLocalScan] = useState<ScanSummary | null>(null);
   const [orderedActiveIds, setOrderedActiveIds] = useState<string[]>([]);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => { if (scanSummary) setLocalScan(scanSummary); }, [scanSummary]);
 
@@ -251,7 +252,10 @@ export default function QueuePage() {
   const completedJobs = jobs.filter(j => j.status === 'complete');
   const failedJobs    = jobs.filter(j => j.status === 'failed');
 
-  const clearHistory = () => fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
+  const clearHistory = () => {
+    setConfirmClear(false);
+    fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
+  };
   const retryAll     = () => fetch(`${apiUrl}/api/jobs/retry-all`, { method: 'POST' });
   const pauseAll     = () => fetch(`${apiUrl}/api/jobs/pause-all`,  { method: 'POST' });
   const resumeAll    = () => fetch(`${apiUrl}/api/jobs/resume-all`, { method: 'POST' });
@@ -324,7 +328,7 @@ export default function QueuePage() {
             )
           )}
           <button
-            onClick={clearHistory}
+            onClick={() => setConfirmClear(true)}
             disabled={!canClear}
             className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-xs md:text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent"
           >
@@ -382,16 +386,17 @@ export default function QueuePage() {
           </h2>
           <div className="space-y-2 stagger-list">
             {pausedJobs.map(job => (
-              <JobRow
-                key={job.id}
-                job={job}
-                onResume={() => resumeJob(job.id)}
-                onRemove={() => removeJob(job.id)}
-                onCancel={() => cancelJob(job.id)}
-                idleWorkers={idleWorkers}
-                apiUrl={apiUrl}
-                draggable={false}
-              />
+              <div key={job.id} className="opacity-75 hover:opacity-100 transition-opacity">
+                <JobRow
+                  job={job}
+                  onResume={() => resumeJob(job.id)}
+                  onRemove={() => removeJob(job.id)}
+                  onCancel={() => cancelJob(job.id)}
+                  idleWorkers={idleWorkers}
+                  apiUrl={apiUrl}
+                  draggable={false}
+                />
+              </div>
             ))}
           </div>
         </section>
@@ -416,6 +421,7 @@ export default function QueuePage() {
               <FailedJobRow
                 key={job.id}
                 job={job}
+                apiUrl={apiUrl}
                 onRemove={() => removeJob(job.id)}
                 onRetry={() => fetch(`${apiUrl}/api/jobs/${job.id}/retry`, { method: 'POST' })}
               />
@@ -436,6 +442,23 @@ export default function QueuePage() {
           </div>
         </section>
       )}
+
+      {confirmClear && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
+            <h3 className="text-white font-bold text-lg">Clear History?</h3>
+            <p className="text-textMuted text-sm">This will permanently remove all completed and failed jobs from the list. Active jobs are not affected.</p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setConfirmClear(false)} className="px-4 py-2 rounded-xl text-textMuted hover:bg-background transition-colors text-sm font-medium">
+                Cancel
+              </button>
+              <button onClick={clearHistory} className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors text-sm font-bold">
+                Clear History
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -448,7 +471,7 @@ function ConversionBadge({ job }: { job: Job }) {
   const same = from.toLowerCase() === to.toLowerCase();
   if (same) return null;
   return (
-    <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
+    <div className="flex items-center gap-1 text-xs font-mono shrink-0">
       <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
       <ArrowRight className="w-3 h-3 text-textMuted" />
       <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
@@ -468,7 +491,7 @@ function ResolutionBadge({ resolution }: { resolution: string }) {
   else if (w >= 1280) { label = '720p';  color = 'bg-white/5 border-white/10 text-textMuted'; }
   else                { label = 'SD';    color = 'bg-white/5 border-white/10 text-textMuted'; }
   return (
-    <span className={`inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border ${color}`}>
+    <span className={`inline-flex items-center text-xs font-bold px-1.5 py-0.5 rounded border ${color}`}>
       {label}
     </span>
   );
@@ -481,7 +504,7 @@ function FileSizeBadge({ bytes }: { bytes: number }) {
   if (bytes >= 1e9) label = `${(bytes / 1e9).toFixed(1)} GB`;
   else              label = `${Math.round(bytes / 1e6)} MB`;
   return (
-    <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-textMuted font-mono">
+    <span className="inline-flex items-center text-xs px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-textMuted font-mono">
       {label}
     </span>
   );
@@ -495,7 +518,7 @@ function SubtitleWarning({ job }: { job: Job }) {
   if (container !== 'mp4') return null; // MKV preserves subs fine
   return (
     <span
-      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-400"
+      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-400"
       title="MP4 only supports text subtitles (mov_text). Image-based subtitles (PGS, VOBSUB) will be dropped. Use a MKV recipe to keep all subtitle types."
     >
       <AlertTriangle className="w-2.5 h-2.5" />
@@ -522,12 +545,12 @@ function WorkerPicker({ job, workers, apiUrl }: { job: Job; workers: WorkerInfo[
   if (workers.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-1.5 text-[10px]">
+    <div className="flex items-center gap-1.5 text-xs">
       <User className="w-3 h-3 text-textMuted" />
       <select
         value={value}
         onChange={handleChange}
-        className="bg-background border border-border text-textMuted rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:border-primary/40 focus:outline-none focus:border-primary/60 transition-colors"
+        className="bg-background border border-border text-textMuted rounded px-1.5 py-0.5 text-xs cursor-pointer hover:border-primary/40 focus:outline-none focus:border-primary/60 transition-colors"
       >
         <option value="">Any Worker</option>
         {workers.map(w => (
@@ -709,7 +732,7 @@ function JobRow({
 
           {/* Row 2: status chip + metadata badges */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
+            <span className={`inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
               <Icon className="w-2.5 h-2.5" />
               {job.phase === 'swapping' ? 'Saving' : job.phase === 'finalizing' ? 'Finalizing' : cfg.label}
             </span>
@@ -717,7 +740,7 @@ function JobRow({
             {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
             <ConversionBadge job={job} />
             {job.fps != null && job.fps > 0 && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
+              <span className="text-xs font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
                 {job.fps.toFixed(1)} fps
               </span>
             )}
@@ -833,27 +856,70 @@ function JobRow({
 
 // ─── Failed Job Row ───────────────────────────────────────────────────────────
 
-function FailedJobRow({ job, onRemove, onRetry }: { job: Job; onRemove: () => void; onRetry: () => void }) {
+function FailedJobRow({ job, onRemove, onRetry, apiUrl }: { job: Job; onRemove: () => void; onRetry: () => void; apiUrl: string }) {
   const from = codecLabel(job.codecIn);
   const to   = targetCodecLabel(job.recipe);
+  const [timelineEvents, setTimelineEvents] = useState<Array<{ id: string; event: string; workerName?: string; detail?: any; createdAt: number }>>([]);
+  const [showTimeline, setShowTimeline] = useState(true);
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/jobs/${job.id}/events`)
+      .then(r => r.ok ? r.json() : [])
+      .then(setTimelineEvents)
+      .catch(() => {});
+  }, [job.id, apiUrl]);
+
+  const EVENT_LABEL: Record<string, string> = {
+    queued: 'Added to queue', dispatched: 'Dispatched', paused: 'Paused', resumed: 'Resumed',
+    complete: 'Completed', failed: 'Failed',
+  };
+
   return (
-    <div className="card-hover bg-red-500/5 border border-red-500/20 border-l-2 border-l-red-500/50 rounded-xl p-3 flex items-center gap-3">
-      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <p className="text-white text-sm font-medium truncate">{job.fileName}</p>
-        {job.error && <p className="text-red-400/70 text-xs truncate mt-0.5">{job.error}</p>}
+    <div className="card-hover bg-red-500/5 border border-red-500/20 border-l-2 border-l-red-500/50 rounded-xl overflow-hidden">
+      <div className="p-3.5 md:p-4 flex items-center gap-3">
+        <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-white text-sm font-medium truncate">{job.fileName}</p>
+          {job.error && <p className="text-red-400/70 text-xs truncate mt-0.5">{job.error}</p>}
+        </div>
+        <div className="flex items-center gap-1 text-xs font-mono shrink-0">
+          <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
+          <ArrowRight className="w-3 h-3 text-textMuted" />
+          <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
+        </div>
+        <button onClick={onRetry} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-yellow-400 transition-colors shrink-0" title="Retry">
+          <RefreshCw className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => setShowTimeline(s => !s)}
+          title="Toggle timeline"
+          className={`p-1.5 rounded-lg transition-colors shrink-0 ${showTimeline ? 'text-primary' : 'text-textMuted/40 hover:text-textMuted'}`}
+        >
+          <History className="w-3.5 h-3.5" />
+        </button>
+        <button onClick={onRemove} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors shrink-0" title="Remove">
+          <XCircle className="w-4 h-4" />
+        </button>
       </div>
-      <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
-        <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
-        <ArrowRight className="w-3 h-3 text-textMuted" />
-        <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
-      </div>
-      <button onClick={onRetry} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-yellow-400 transition-colors shrink-0" title="Retry">
-        <RefreshCw className="w-4 h-4" />
-      </button>
-      <button onClick={onRemove} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors shrink-0" title="Remove">
-        <XCircle className="w-4 h-4" />
-      </button>
+      {showTimeline && timelineEvents.length > 0 && (
+        <div className="border-t border-red-500/10 px-4 py-3 space-y-1.5 bg-background/40">
+          {timelineEvents.map(e => (
+            <div key={e.id} className="flex items-center gap-2 text-xs">
+              <span className="text-textMuted/50 tabular-nums w-20 shrink-0 font-mono">
+                {new Date(e.createdAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                e.event === 'complete' ? 'bg-green-400' :
+                e.event === 'failed'   ? 'bg-red-400' :
+                e.event === 'paused'   ? 'bg-amber-400' :
+                'bg-primary/60'
+              }`} />
+              <span className="text-textMuted">{EVENT_LABEL[e.event] ?? e.event}</span>
+              {e.workerName && <span className="text-textMuted/50">via {e.workerName}</span>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -868,7 +934,7 @@ function CompletedJobRow({ job, onRemove }: { job: Job; onRemove: () => void }) 
   const to   = targetCodecLabel(job.recipe);
 
   return (
-    <div className="bg-background border border-border/50 border-l-2 border-l-green-500/30 rounded-xl p-3 flex items-center gap-3 opacity-60 hover:opacity-100 transition-opacity">
+    <div className="bg-background border border-border/50 border-l-2 border-l-green-500/30 rounded-xl p-3.5 md:p-4 flex items-center gap-3 opacity-60 hover:opacity-100 transition-opacity">
       <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-white text-sm font-medium truncate">{job.fileName}</p>
@@ -876,7 +942,7 @@ function CompletedJobRow({ job, onRemove }: { job: Job; onRemove: () => void }) 
           <p className="text-textMuted text-xs mt-0.5">{Math.round(job.avgFps)} fps avg{job.elapsedSeconds ? ` · ${Math.round(job.elapsedSeconds / 60)}m` : ''}</p>
         )}
       </div>
-      <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
+      <div className="flex items-center gap-1 text-xs font-mono shrink-0">
         <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
         <ArrowRight className="w-3 h-3 text-textMuted" />
         <span className="px-1.5 py-0.5 rounded border bg-green-500/10 border-green-500/20 text-green-400">{to}</span>

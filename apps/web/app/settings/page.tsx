@@ -6,6 +6,7 @@ import {
   FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight,
   Filter, Settings2, BookOpen, Info, ArrowLeftRight,
   Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell, Pencil, Clock, ArrowRightCircle,
+  AlertTriangle, RefreshCw,
 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
@@ -218,6 +219,8 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   const [paths, setPaths]     = useState<WatchedPath[]>([]);
   const [adding, setAdding]   = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [scanningIds, setScanningIds] = useState<Set<string>>(new Set());
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [recipePickerOpen, setRecipePickerOpen] = useState(false);
   const [form, setForm]       = useState({ ...BLANK_FORM });
@@ -295,7 +298,12 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   };
 
   const scanNow = async (p: WatchedPath) => {
-    await fetch(`/api/settings/paths/${p.id}/scan`, { method: 'POST' }).catch(() => {});
+    setScanningIds(prev => new Set(prev).add(p.id));
+    try {
+      await fetch(`/api/settings/paths/${p.id}/scan`, { method: 'POST' });
+    } catch { /* ignore */ } finally {
+      setScanningIds(prev => { const s = new Set(prev); s.delete(p.id); return s; });
+    }
   };
 
   return (
@@ -346,8 +354,17 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => scanNow(p)} className="text-xs text-textMuted hover:text-primary transition-colors px-3 py-1.5 border border-border rounded-lg">
-                Scan Now
+              <button
+                onClick={() => scanNow(p)}
+                disabled={scanningIds.has(p.id)}
+                className="flex items-center gap-1.5 text-xs text-textMuted hover:text-primary transition-colors px-3 py-1.5 border border-border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {scanningIds.has(p.id) ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    Scanning…
+                  </>
+                ) : 'Scan Now'}
               </button>
               <button onClick={() => openEdit(p)} title="Edit folder" className="text-textMuted hover:text-white transition-colors">
                 <Pencil className="w-4 h-4" />
@@ -355,7 +372,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
               <button onClick={() => toggle(p)} className="text-textMuted hover:text-white transition-colors">
                 {p.enabled ? <ToggleRight className="w-5 h-5 text-primary" /> : <ToggleLeft className="w-5 h-5" />}
               </button>
-              <button onClick={() => del(p.id)} className="text-textMuted hover:text-red-400 transition-colors">
+              <button onClick={() => setConfirmDeleteId(p.id)} className="text-textMuted hover:text-red-400 transition-colors">
                 <Trash2 className="w-4 h-4" />
               </button>
             </div>
@@ -375,7 +392,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                 value={form.path}
                 onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
                 placeholder="/data/media/movies"
-                className="flex-1 bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
+                className="flex-1 bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40 font-mono"
               />
               <button
                 title="Browse Folders"
@@ -505,7 +522,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                 value={form.moveTo}
                 onChange={e => setForm(f => ({ ...f, moveTo: e.target.value }))}
                 placeholder="Leave empty to keep files in place"
-                className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
+                className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/40"
               />
               <button
                 type="button"
@@ -558,6 +575,29 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         apiUrl={apiUrl}
         onSelect={(r) => { setSelectedRecipe(r); setForm(f => ({ ...f, recipe: r.id })); }}
       />
+
+      {confirmDeleteId && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
+            <h3 className="text-white font-bold text-lg">Remove Watched Folder?</h3>
+            <p className="text-textMuted text-sm">
+              This removes the folder from Transcodarr&apos;s watch list. Your files are not deleted.
+              Jobs already queued from this folder will continue.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setConfirmDeleteId(null)} className="px-4 py-2 rounded-xl text-textMuted hover:bg-background transition-colors text-sm font-medium">
+                Cancel
+              </button>
+              <button
+                onClick={() => { del(confirmDeleteId); setConfirmDeleteId(null); }}
+                className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors text-sm font-bold"
+              >
+                Remove Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -618,7 +658,7 @@ function SmartFiltersPanel() {
         <FilterRow title="Skip by filename keywords" description="Skip files whose name contains any of these words (comma-separated)." enabled={filters.skipKeywords.length > 0} onToggle={v => set('skipKeywords', v ? ['REMUX'] : [])}>
           {filters.skipKeywords.length > 0 && (
             <input
-              className="mt-3 w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-primary/50"
+              className="mt-3 w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-primary/40"
               value={filters.skipKeywords.join(', ')}
               onChange={e => set('skipKeywords', e.target.value.split(',').map(k => k.trim()).filter(Boolean))}
               placeholder="REMUX, BDREMUX, BLURAY"
@@ -728,7 +768,7 @@ function RecipeCard({ recipe, community }: { recipe: Recipe; community?: boolean
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-white font-bold text-sm">{recipe.name}</h3>
-            {community && <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-purple-900/30 text-purple-400 border border-purple-500/20">Community</span>}
+            {community && <span className="px-1.5 py-0.5 text-xs font-bold rounded bg-purple-900/30 text-purple-400 border border-purple-500/20">Community</span>}
           </div>
           <p className="text-textMuted text-xs mt-0.5">{recipe.description}</p>
         </div>
@@ -919,7 +959,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
               <div key={i} className="bg-background border border-border rounded-xl p-4 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
+                    <label className="text-xs font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
                       Main Node root path
                     </label>
                     <div className="flex gap-1.5">
@@ -927,7 +967,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
                         value={m.networkBasePath}
                         onChange={e => setMappings(ms => ms.map((mp, idx) => idx === i ? { ...mp, networkBasePath: e.target.value } : mp))}
                         placeholder="/mnt/nas or /media"
-                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 font-mono"
+                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/40 font-mono"
                       />
                       <button
                         onClick={() => openBrowser(i, 'networkBasePath')}
@@ -939,7 +979,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
                     </div>
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
+                    <label className="text-xs font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
                       Worker sees it as
                     </label>
                     <div className="flex gap-1.5">
@@ -947,7 +987,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
                         value={m.localBasePath}
                         onChange={e => setMappings(ms => ms.map((mp, idx) => idx === i ? { ...mp, localBasePath: e.target.value } : mp))}
                         placeholder="Z:\ or /mnt/pi-media"
-                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 font-mono"
+                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/40 font-mono"
                       />
                       <button
                         onClick={() => openBrowser(i, 'localBasePath')}
@@ -1059,7 +1099,7 @@ function GeneralPanel() {
             value={settings.nodeName}
             onChange={e => setSettings(s => ({ ...s, nodeName: e.target.value }))}
             placeholder="Transcodarr Main"
-            className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50"
+            className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40"
           />
         </Field>
 
@@ -1137,7 +1177,7 @@ function GeneralPanel() {
               value={settings.mainUrl}
               onChange={e => setSettings(s => ({ ...s, mainUrl: e.target.value }))}
               placeholder="http://192.168.1.50:3001"
-              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
+              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40 font-mono"
             />
             <p className="text-xs text-textMuted mt-1.5 ml-1">Requires a manual restart of the worker executable to apply.</p>
           </Field>
@@ -1201,6 +1241,23 @@ function BrowserNotificationsCard() {
   };
 
   if (permission === 'unsupported') return null;
+
+  if (permission === 'denied') {
+    return (
+      <div className="card-hover bg-surface border border-border rounded-2xl p-6">
+        <h3 className="text-white font-bold text-sm mb-1">Browser Notifications</h3>
+        <p className="text-textMuted text-xs mb-3">
+          Notifications are blocked by your browser.
+        </p>
+        <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-amber-400/80 text-xs leading-relaxed">
+            To re-enable, open your browser&apos;s site settings (usually in the address bar 🔒) and allow notifications for this site, then refresh the page.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card-hover bg-surface border border-border rounded-2xl p-6">
@@ -1292,13 +1349,14 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
           Paste any URL — Discord, Slack, or custom endpoint. Transcodarr will POST a JSON payload when events fire.
         </p>
 
-        {hooks.length === 0 && !adding && (
-          <p className="text-textMuted text-sm py-4 text-center border border-border border-dashed rounded-xl">
-            No webhooks configured yet.
-          </p>
-        )}
-
         <div className="space-y-3 mb-4">
+          {hooks.length === 0 && (
+            <div className="py-8 flex flex-col items-center gap-2 text-center">
+              <Bell className="w-7 h-7 text-textMuted/30" />
+              <p className="text-sm text-textMuted">No webhooks yet</p>
+              <p className="text-xs text-textMuted/60">Add a URL above to receive push notifications when jobs complete or fail.</p>
+            </div>
+          )}
           {hooks.map(hook => {
             let eventsArr: string[] = [];
             try { eventsArr = JSON.parse(hook.events); } catch {}
@@ -1309,7 +1367,7 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                     <p className="text-white text-sm font-medium truncate font-mono">{hook.url}</p>
                     <div className="flex flex-wrap gap-1 mt-2">
                       {eventsArr.map(e => (
-                        <span key={e} className="px-1.5 py-0.5 text-[10px] rounded border bg-surface border-border text-textMuted">{e}</span>
+                        <span key={e} className="px-1.5 py-0.5 text-xs rounded border bg-surface border-border text-textMuted">{e}</span>
                       ))}
                     </div>
                   </div>
@@ -1343,7 +1401,7 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                 value={newUrl}
                 onChange={e => setNewUrl(e.target.value)}
                 placeholder="https://discord.com/api/webhooks/..."
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/60"
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/40"
               />
             </div>
             <div>
@@ -1370,7 +1428,7 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                 value={newSecret}
                 onChange={e => setNewSecret(e.target.value)}
                 placeholder="my-secret-key"
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/60"
+                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/40"
               />
             </div>
             <div className="flex gap-2">

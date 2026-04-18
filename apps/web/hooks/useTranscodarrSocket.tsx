@@ -189,11 +189,17 @@ export function SocketProvider({ children }: { children: ReactNode }) {
               const notifEnabled = typeof localStorage !== 'undefined'
                 ? localStorage.getItem('transcodarr:notifications') !== 'off'
                 : true;
-              if (notifEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.visibilityState === 'hidden') {
+              if (notifEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
                 const title = event === 'job:complete' ? 'Transcode complete' : 'Transcode failed';
                 const body  = d.fileName ?? (event === 'job:complete' ? 'Job finished successfully' : 'A job encountered an error');
                 new Notification(title, { body, icon: '/favicon.ico', tag: d.jobId });
               }
+            }
+            // In-app toast for job completion/failure
+            if (event === 'job:complete') {
+              addToast({ type: 'success', title: 'Transcode complete', message: d.fileName ?? 'Job finished' });
+            } else if (event === 'job:failed') {
+              addToast({ type: 'error', title: 'Transcode failed', message: d.fileName ?? 'A job encountered an error' });
             }
             setJobs(prev => {
               const idx = prev.findIndex(j => j.id === (d.jobId ?? d.id));

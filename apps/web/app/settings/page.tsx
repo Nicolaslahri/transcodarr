@@ -6,8 +6,7 @@ import {
   FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight,
   Filter, Settings2, BookOpen, Info, ArrowLeftRight,
   Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell, Pencil, Clock, ArrowRightCircle,
-  AlertTriangle, RefreshCw, Eye, EyeOff, Shield, ChevronDown, Loader2, CheckCircle2,
-  Scan, Download, Upload,
+  Eye, EyeOff, Shield, ChevronDown, Loader2, CheckCircle2, Scan, AlertTriangle,
 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
@@ -198,7 +197,6 @@ interface WatchedPath {
   extensions: string; priority: string; min_size_mb: number;
   preferred_audio_lang?: string; preferred_subtitle_lang?: string;
   scan_interval_hours?: number; last_scan_at?: number; move_to?: string;
-  exclude_patterns?: string | null;
 }
 
 const LANG_OPTIONS = [
@@ -215,53 +213,19 @@ const LANG_OPTIONS = [
   { value: 'ara', label: 'Arabic (ara)' },
 ];
 
-const BLANK_FORM = { path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100, preferredAudioLang: '', preferredSubtitleLang: '', scanIntervalHours: 0, moveTo: '', excludePatterns: '' };
-
-function FolderStats({ id, apiUrl }: { id: string; apiUrl: string }) {
-  const [stats, setStats] = useState<{ total: number; queued: number; active: number; complete: number; failed: number; gbSaved: number } | null>(null);
-
-  useEffect(() => {
-    fetch(`${apiUrl}/api/settings/paths/${id}/stats`)
-      .then(r => r.json())
-      .then(setStats)
-      .catch(() => {});
-  }, [id, apiUrl]);
-
-  if (!stats || stats.total === 0) return null;
-
-  return (
-    <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border/50">
-      {stats.complete > 0 && (
-        <span className="text-xs text-green-400">✓ {stats.complete} done</span>
-      )}
-      {stats.active > 0 && (
-        <span className="text-xs text-primary animate-pulse">⟳ {stats.active} active</span>
-      )}
-      {stats.queued > 0 && (
-        <span className="text-xs text-textMuted">◷ {stats.queued} queued</span>
-      )}
-      {stats.failed > 0 && (
-        <span className="text-xs text-red-400">✗ {stats.failed} failed</span>
-      )}
-      {stats.gbSaved > 0.05 && (
-        <span className="text-xs text-textMuted/60">{stats.gbSaved.toFixed(2)} GB saved</span>
-      )}
-    </div>
-  );
-}
+const BLANK_FORM = { path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100, preferredAudioLang: '', preferredSubtitleLang: '', scanIntervalHours: 0, moveTo: '' };
 
 function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   const [paths, setPaths]     = useState<WatchedPath[]>([]);
   const [adding, setAdding]   = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [scanningIds, setScanningIds] = useState<Set<string>>(new Set());
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [postAddId, setPostAddId] = useState<string | null>(null);
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [recipePickerOpen, setRecipePickerOpen] = useState(false);
   const [form, setForm]       = useState({ ...BLANK_FORM });
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [allRecipes, setAllRecipes] = useState<Recipe[]>([]);
+  const [postAddId, setPostAddId] = useState<string | null>(null);
+  const [scanningIds, setScanningIds] = useState<Set<string>>(new Set());
 
   const load = () => fetch('/api/settings/paths').then(r => r.json()).then(setPaths).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -279,7 +243,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   }, []);
 
   const openEdit = (p: WatchedPath) => {
-    setForm({ path: p.path, recipe: p.recipe, recurse: p.recurse, extensions: p.extensions, priority: p.priority, minSizeMb: p.min_size_mb, preferredAudioLang: p.preferred_audio_lang ?? '', preferredSubtitleLang: p.preferred_subtitle_lang ?? '', scanIntervalHours: p.scan_interval_hours ?? 0, moveTo: p.move_to ?? '', excludePatterns: p.exclude_patterns ?? '' });
+    setForm({ path: p.path, recipe: p.recipe, recurse: p.recurse, extensions: p.extensions, priority: p.priority, minSizeMb: p.min_size_mb, preferredAudioLang: p.preferred_audio_lang ?? '', preferredSubtitleLang: p.preferred_subtitle_lang ?? '', scanIntervalHours: p.scan_interval_hours ?? 0, moveTo: p.move_to ?? '' });
     const found = allRecipes.find(r => r.id === p.recipe);
     setSelectedRecipe(found ?? null);
     setEditingId(p.id);
@@ -295,14 +259,13 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   };
 
   const save = async () => {
-    const { preferredAudioLang, preferredSubtitleLang, scanIntervalHours, moveTo, excludePatterns, ...rest } = form;
+    const { preferredAudioLang, preferredSubtitleLang, scanIntervalHours, moveTo, ...rest } = form;
     const payload = {
       ...rest,
       preferred_audio_lang:    preferredAudioLang || null,
       preferred_subtitle_lang: preferredSubtitleLang || null,
       scan_interval_hours:     scanIntervalHours,
       move_to:                 moveTo || null,
-      exclude_patterns:        excludePatterns || null,
     };
     if (editingId) {
       await fetch(`/api/settings/paths/${editingId}`, {
@@ -318,7 +281,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const newPath = await res.json().catch(() => null);
+      const newPath = await res.json();
       closeForm();
       load();
       if (newPath?.id) setPostAddId(newPath.id);
@@ -339,12 +302,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   };
 
   const scanNow = async (p: WatchedPath) => {
-    setScanningIds(prev => new Set(prev).add(p.id));
-    try {
-      await fetch(`/api/settings/paths/${p.id}/scan`, { method: 'POST' });
-    } catch { /* ignore */ } finally {
-      setScanningIds(prev => { const s = new Set(prev); s.delete(p.id); return s; });
-    }
+    await fetch(`/api/settings/paths/${p.id}/scan`, { method: 'POST' }).catch(() => {});
   };
 
   return (
@@ -358,8 +316,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
       )}
 
       {paths.map(p => (
-        <div key={p.id} className={`card-hover bg-surface border rounded-2xl p-5 transition-opacity ${!p.enabled ? 'opacity-50' : ''}`}
-          style={{ borderColor: p.enabled ? 'var(--color-border)' : undefined }}>
+        <div key={p.id} className={`card-hover bg-surface border border-border rounded-2xl p-5 transition-opacity ${!p.enabled ? 'opacity-50' : ''}`}>
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-white font-mono text-sm font-medium truncate">{p.path}</p>
@@ -393,20 +350,10 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                   </span>
                 )}
               </div>
-              <FolderStats id={p.id} apiUrl={apiUrl} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => scanNow(p)}
-                disabled={scanningIds.has(p.id)}
-                className="flex items-center gap-1.5 text-xs text-textMuted hover:text-primary transition-colors px-3 py-1.5 border border-border rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {scanningIds.has(p.id) ? (
-                  <>
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                    Scanning…
-                  </>
-                ) : 'Scan Now'}
+              <button onClick={() => scanNow(p)} className="text-xs text-textMuted hover:text-primary transition-colors px-3 py-1.5 border border-border rounded-lg">
+                Scan Now
               </button>
               <button onClick={() => openEdit(p)} title="Edit folder" className="text-textMuted hover:text-white transition-colors">
                 <Pencil className="w-4 h-4" />
@@ -414,7 +361,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
               <button onClick={() => toggle(p)} className="text-textMuted hover:text-white transition-colors">
                 {p.enabled ? <ToggleRight className="w-5 h-5 text-primary" /> : <ToggleLeft className="w-5 h-5" />}
               </button>
-              <button onClick={() => setConfirmDeleteId(p.id)} className="text-textMuted hover:text-red-400 transition-colors">
+              <button onClick={() => del(p.id)} className="text-textMuted hover:text-red-400 transition-colors">
                 <Trash2 className="w-4 h-4" />
               </button>
             </div>
@@ -422,190 +369,190 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         </div>
       ))}
 
-      {/* Add form */}
+      {/* Add / Edit modal */}
       {adding && (
-        <div className="bg-surface border border-primary/30 rounded-2xl p-6 space-y-4">
-          <h3 className="text-white font-bold text-sm">{editingId ? 'Edit Watched Folder' : 'Add Watched Folder'}</h3>
-
-          <div>
-            <label className="text-xs text-textMuted font-medium mb-1.5 block">Folder Path</label>
-            <div className="flex gap-2">
-              <input
-                value={form.path}
-                onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
-                placeholder="/data/media/movies"
-                className="flex-1 bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40 font-mono"
-              />
-              <button
-                title="Browse Folders"
-                onClick={() => setExplorerOpen(true)}
-                className="px-4 py-2 bg-surface border border-border rounded-xl hover:bg-white/5 transition-colors text-textMuted hover:text-white flex items-center justify-center shrink-0"
-              >
-                <FolderOpen className="w-5 h-5 text-primary" />
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-surface border border-border rounded-2xl w-full max-w-xl max-h-[92vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 duration-200">
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+              <h3 className="text-white font-bold">{editingId ? 'Edit Watched Folder' : 'Add Watched Folder'}</h3>
+              <button onClick={closeForm} className="text-textMuted hover:text-white transition-colors">
+                <X className="w-5 h-5" />
               </button>
             </div>
-          </div>
 
-          {/* Recipe picker */}
-          <div>
-            <label className="text-xs text-textMuted font-medium mb-1.5 block">Recipe</label>
-            <button
-              onClick={() => setRecipePickerOpen(true)}
-              className="w-full flex items-center justify-between bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white hover:border-primary/40 transition-colors"
-            >
-              <span className="flex items-center gap-2">
-                {selectedRecipe ? (
-                  <>
-                    <span>{selectedRecipe.icon}</span>
-                    <span className="font-medium">{selectedRecipe.name}</span>
-                    {selectedRecipe.estimatedReduction !== undefined && selectedRecipe.estimatedReduction > 0 && (
-                      <span className="text-xs text-textMuted">~{selectedRecipe.estimatedReduction}% smaller</span>
+            {/* Scrollable form body */}
+            <div className="overflow-y-auto flex-1 p-6 space-y-4">
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block">Folder Path</label>
+                <div className="flex gap-2">
+                  <input
+                    value={form.path}
+                    onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
+                    placeholder="/data/media/movies"
+                    disabled={!!editingId}
+                    className="flex-1 bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  {!editingId && (
+                    <button
+                      title="Browse Folders"
+                      onClick={() => setExplorerOpen(true)}
+                      className="px-4 py-2 bg-background border border-border rounded-xl hover:bg-white/5 transition-colors text-textMuted hover:text-white flex items-center justify-center shrink-0"
+                    >
+                      <FolderOpen className="w-5 h-5 text-primary" />
+                    </button>
+                  )}
+                </div>
+                {editingId && <p className="text-xs text-textMuted/50 mt-1">Path cannot be changed — delete and re-add to use a different path.</p>}
+              </div>
+
+              {/* Recipe picker */}
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block">Recipe</label>
+                <button
+                  onClick={() => setRecipePickerOpen(true)}
+                  className="w-full flex items-center justify-between bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white hover:border-primary/40 transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    {selectedRecipe ? (
+                      <>
+                        <span>{selectedRecipe.icon}</span>
+                        <span className="font-medium">{selectedRecipe.name}</span>
+                        {selectedRecipe.estimatedReduction !== undefined && selectedRecipe.estimatedReduction > 0 && (
+                          <span className="text-xs text-textMuted">~{selectedRecipe.estimatedReduction}% smaller</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-textMuted">Choose a recipe…</span>
                     )}
-                  </>
-                ) : (
-                  <span className="text-textMuted">Choose a recipe…</span>
-                )}
-              </span>
-              <ChevronRight className="w-4 h-4 text-textMuted" />
-            </button>
-          </div>
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-textMuted" />
+                </button>
+              </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Priority</label>
-              <select
-                value={form.priority}
-                onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
-              >
-                <option value="high">High</option>
-                <option value="normal">Normal</option>
-                <option value="low">Low</option>
-              </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-textMuted font-medium mb-1.5 block">Priority</label>
+                  <select
+                    value={form.priority}
+                    onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+                  >
+                    <option value="high">High</option>
+                    <option value="normal">Normal</option>
+                    <option value="low">Low</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-textMuted font-medium mb-1.5 block">Min File Size (MB)</label>
+                  <input
+                    type="number"
+                    value={form.minSizeMb}
+                    onChange={e => setForm(f => ({ ...f, minSizeMb: parseInt(e.target.value) }))}
+                    className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-textMuted font-medium mb-1.5 block">Audio Language</label>
+                  <select
+                    value={form.preferredAudioLang}
+                    onChange={e => setForm(f => ({ ...f, preferredAudioLang: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+                  >
+                    {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-textMuted font-medium mb-1.5 block">Subtitle Language</label>
+                  <select
+                    value={form.preferredSubtitleLang}
+                    onChange={e => setForm(f => ({ ...f, preferredSubtitleLang: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+                  >
+                    {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block">Extensions</label>
+                <input
+                  value={form.extensions}
+                  onChange={e => setForm(f => ({ ...f, extensions: e.target.value }))}
+                  className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.recurse}
+                    onChange={e => setForm(f => ({ ...f, recurse: e.target.checked }))}
+                    className="w-4 h-4 accent-primary"
+                  />
+                  <span className="text-sm text-white">Scan subdirectories</span>
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-textMuted font-medium whitespace-nowrap">Periodic re-scan</label>
+                  <select
+                    value={form.scanIntervalHours}
+                    onChange={e => setForm(f => ({ ...f, scanIntervalHours: parseInt(e.target.value) }))}
+                    className="bg-background border border-border rounded-xl px-3 py-2 text-sm text-white focus:outline-none appearance-none"
+                  >
+                    <option value={0}>Off</option>
+                    <option value={6}>Every 6h</option>
+                    <option value={12}>Every 12h</option>
+                    <option value={24}>Daily</option>
+                    <option value={48}>Every 2 days</option>
+                    <option value={168}>Weekly</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-textMuted font-medium block mb-1.5">
+                  Move completed files to <span className="text-textMuted/60">(optional)</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={form.moveTo}
+                    onChange={e => setForm(f => ({ ...f, moveTo: e.target.value }))}
+                    placeholder="Leave empty to keep files in place"
+                    className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setExplorerOpen(true)}
+                    className="px-3 py-2 bg-background border border-border rounded-xl text-textMuted hover:text-white hover:border-primary/40 transition-colors text-xs"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-xs text-textMuted/50 mt-1">
+                  After transcoding completes, the output file will be moved to this directory.
+                </p>
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Min File Size (MB)</label>
-              <input
-                type="number"
-                value={form.minSizeMb}
-                onChange={e => setForm(f => ({ ...f, minSizeMb: parseInt(e.target.value) }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none"
-              />
-            </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Audio Language</label>
-              <select
-                value={form.preferredAudioLang}
-                onChange={e => setForm(f => ({ ...f, preferredAudioLang: e.target.value }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
-              >
-                {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Subtitle Language</label>
-              <select
-                value={form.preferredSubtitleLang}
-                onChange={e => setForm(f => ({ ...f, preferredSubtitleLang: e.target.value }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
-              >
-                {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-textMuted font-medium mb-1.5 block">Extensions</label>
-            <input
-              value={form.extensions}
-              onChange={e => setForm(f => ({ ...f, extensions: e.target.value }))}
-              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono"
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.recurse}
-                onChange={e => setForm(f => ({ ...f, recurse: e.target.checked }))}
-                className="w-4 h-4 accent-primary"
-              />
-              <span className="text-sm text-white">Scan subdirectories</span>
-            </label>
-
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-textMuted font-medium whitespace-nowrap">Periodic re-scan</label>
-              <select
-                value={form.scanIntervalHours}
-                onChange={e => setForm(f => ({ ...f, scanIntervalHours: parseInt(e.target.value) }))}
-                className="bg-background border border-border rounded-xl px-3 py-2 text-sm text-white focus:outline-none appearance-none"
-              >
-                <option value={0}>Off</option>
-                <option value={6}>Every 6h</option>
-                <option value={12}>Every 12h</option>
-                <option value={24}>Daily</option>
-                <option value={48}>Every 2 days</option>
-                <option value={168}>Weekly</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-textMuted font-medium block mb-1.5">
-              Exclude patterns <span className="text-textMuted/60">(optional)</span>
-            </label>
-            <input
-              type="text"
-              value={form.excludePatterns}
-              onChange={e => setForm(f => ({ ...f, excludePatterns: e.target.value }))}
-              placeholder="sample, trailer, extras"
-              className="w-full bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/40 font-mono"
-            />
-            <p className="text-xs text-textMuted/50 mt-1">
-              Comma-separated keywords. Files whose path contains any of these will be skipped.
-            </p>
-          </div>
-
-          <div>
-            <label className="text-xs text-textMuted font-medium block mb-1.5">
-              Move completed files to <span className="text-textMuted/60">(optional)</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={form.moveTo}
-                onChange={e => setForm(f => ({ ...f, moveTo: e.target.value }))}
-                placeholder="Leave empty to keep files in place"
-                className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/40"
-              />
+            {/* Modal footer */}
+            <div className="flex gap-2 px-6 py-4 border-t border-border shrink-0">
               <button
-                type="button"
-                onClick={() => setExplorerOpen(true)}
-                className="px-3 py-2 bg-background border border-border rounded-xl text-textMuted hover:text-white hover:border-primary/40 transition-colors text-xs"
+                onClick={save}
+                disabled={!form.path || !form.recipe}
+                className="px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
               >
-                Browse
+                {editingId ? 'Save Changes' : 'Add Folder'}
+              </button>
+              <button onClick={closeForm} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
+                Cancel
               </button>
             </div>
-            <p className="text-xs text-textMuted/50 mt-1">
-              After transcoding completes, the output file will be moved to this directory.
-            </p>
-          </div>
-
-          <div className="flex gap-2 pt-2">
-            <button
-              onClick={save}
-              disabled={!form.path || !form.recipe}
-              className="px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
-            >
-              {editingId ? 'Save Changes' : 'Add Folder'}
-            </button>
-            <button onClick={closeForm} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
-              Cancel
-            </button>
           </div>
         </div>
       )}
@@ -660,29 +607,6 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         apiUrl={apiUrl}
         onSelect={(r) => { setSelectedRecipe(r); setForm(f => ({ ...f, recipe: r.id })); }}
       />
-
-      {confirmDeleteId && (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-surface border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
-            <h3 className="text-white font-bold text-lg">Remove Watched Folder?</h3>
-            <p className="text-textMuted text-sm">
-              This removes the folder from Transcodarr&apos;s watch list. Your files are not deleted.
-              Jobs already queued from this folder will continue.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button onClick={() => setConfirmDeleteId(null)} className="px-4 py-2 rounded-xl text-textMuted hover:bg-background transition-colors text-sm font-medium">
-                Cancel
-              </button>
-              <button
-                onClick={() => { del(confirmDeleteId); setConfirmDeleteId(null); }}
-                className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors text-sm font-bold"
-              >
-                Remove Folder
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -707,7 +631,7 @@ function SmartFiltersPanel() {
     skipKeywords: ['REMUX', 'BDREMUX'],
     skipDolbyAtmos: true,
   });
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle'|'saving'|'saved'>('idle');
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInitialMount = useRef(true);
 
@@ -742,7 +666,7 @@ function SmartFiltersPanel() {
           {filters.skipBelowBitrateKbps !== null && (
             <>
               <NumberInput label="Below (kbps)" value={filters.skipBelowBitrateKbps} onChange={v => set('skipBelowBitrateKbps', v)} />
-              <p className="text-xs text-textMuted/50 mt-1.5">Reference: 1080p H.264 ≈ 4,000 kbps · 1080p H.265 ≈ 2,000 kbps · 4K H.265 ≈ 8,000 kbps</p>
+              <p className="text-xs text-textMuted/50 mt-1.5">Typical reference: 1080p H.264 ≈ 4,000 kbps · 1080p H.265 ≈ 2,000 kbps · 4K H.265 ≈ 8,000 kbps</p>
             </>
           )}
         </FilterRow>
@@ -752,12 +676,12 @@ function SmartFiltersPanel() {
         <FilterRow title="Skip small files" description="Skip files under a minimum size — likely already compact." enabled={filters.skipBelowSizeMb !== null} onToggle={v => set('skipBelowSizeMb', v ? 50 : null)}>
           {filters.skipBelowSizeMb !== null && <NumberInput label="Below (MB)" value={filters.skipBelowSizeMb} onChange={v => set('skipBelowSizeMb', v)} />}
         </FilterRow>
-        <FilterRow title="Preserve lossless audio (Dolby Atmos / TrueHD / DTS-HD MA)" description="Skip files with Dolby Atmos or lossless audio tracks. Re-encoding always degrades lossless audio — enable this to protect high-fidelity content." enabled={filters.skipDolbyAtmos} onToggle={v => set('skipDolbyAtmos', v)} />
+        <FilterRow title="Preserve lossless audio (Dolby Atmos / TrueHD / DTS-HD MA)" description="Skip files with Dolby Atmos or lossless audio tracks. Re-encoding always degrades lossless audio quality — enable this to protect high-fidelity content." enabled={filters.skipDolbyAtmos} onToggle={v => set('skipDolbyAtmos', v)} />
         <FilterRow title="Skip by filename keywords" description="Skip files whose name contains any of these words (comma-separated)." enabled={filters.skipKeywords.length > 0} onToggle={v => set('skipKeywords', v ? ['REMUX'] : [])}>
           {filters.skipKeywords.length > 0 && (
             <>
               <input
-                className="mt-3 w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-primary/40"
+                className="mt-3 w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-primary/50"
                 value={filters.skipKeywords.join(', ')}
                 onChange={e => set('skipKeywords', e.target.value.split(',').map(k => k.trim()).filter(Boolean))}
                 placeholder="REMUX, BDREMUX, BLURAY"
@@ -817,7 +741,7 @@ function NumberInput({ label, value, onChange }: { label: string; value: number;
 
 function RecipesPanel({ apiUrl }: { apiUrl: string }) {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = () => fetch(`${apiUrl}/api/settings/recipes`).then(r => r.json()).then(setRecipes).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -853,19 +777,98 @@ function RecipesPanel({ apiUrl }: { apiUrl: string }) {
       )}
 
       <button
-        onClick={() => setPickerOpen(true)}
+        onClick={() => setImportOpen(true)}
         className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors px-4 py-2.5 border border-dashed border-border rounded-xl"
       >
         <Plus className="w-4 h-4" /> Import Community Recipe…
       </button>
 
-      <RecipePickerModal
-        open={pickerOpen}
-        onClose={() => { setPickerOpen(false); load(); }}
-        selectedId={undefined}
+      <ImportRecipeModal
+        open={importOpen}
+        onClose={() => { setImportOpen(false); load(); }}
         apiUrl={apiUrl}
-        onSelect={() => { setPickerOpen(false); load(); }}
       />
+    </div>
+  );
+}
+
+function ImportRecipeModal({ open, onClose, apiUrl }: { open: boolean; onClose: () => void; apiUrl: string }) {
+  const [url, setUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => { if (!open) { setUrl(''); setError(''); setSuccess(''); } }, [open]);
+
+  const handleImport = async () => {
+    if (!url.trim()) return;
+    setImporting(true); setError(''); setSuccess('');
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/recipes/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error ?? 'Import failed'); return; }
+      setSuccess(`Imported ${data.imported ?? 'recipe(s)'} successfully!`);
+      setTimeout(() => onClose(), 1500);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-md shadow-2xl animate-in slide-in-from-bottom-4 duration-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-white font-bold">Import Community Recipe</h2>
+          <button onClick={onClose} className="text-textMuted hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-textMuted text-sm">
+            Paste a URL that returns a JSON array of recipe objects. Works with GitHub raw URLs.
+          </p>
+          <div>
+            <label className="text-xs text-textMuted font-medium mb-1.5 block">Recipe URL</label>
+            <input
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleImport()}
+              placeholder="https://raw.githubusercontent.com/…/recipes.json"
+              autoFocus
+              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white font-mono placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
+            />
+          </div>
+          {error && (
+            <p className="text-red-400 text-sm flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />{error}
+            </p>
+          )}
+          {success && (
+            <p className="text-green-400 text-sm flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />{success}
+            </p>
+          )}
+        </div>
+        <div className="flex gap-2 px-6 py-4 border-t border-border">
+          <button
+            onClick={handleImport}
+            disabled={importing || !url.trim()}
+            className="flex items-center gap-2 px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
+          >
+            {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            {importing ? 'Importing…' : 'Import'}
+          </button>
+          <button onClick={onClose} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -878,7 +881,7 @@ function RecipeCard({ recipe, community, onDelete }: { recipe: Recipe; community
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-white font-bold text-sm">{recipe.name}</h3>
-            {community && <span className="px-1.5 py-0.5 text-xs font-bold rounded bg-purple-900/30 text-purple-400 border border-purple-500/20">Community</span>}
+            {community && <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-purple-900/30 text-purple-400 border border-purple-500/20">Community</span>}
           </div>
           <p className="text-textMuted text-xs mt-0.5">{recipe.description}</p>
         </div>
@@ -1079,7 +1082,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
               <div key={i} className="bg-background border border-border rounded-xl p-4 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
                       Main Node root path
                     </label>
                     <div className="flex gap-1.5">
@@ -1087,7 +1090,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
                         value={m.networkBasePath}
                         onChange={e => setMappings(ms => ms.map((mp, idx) => idx === i ? { ...mp, networkBasePath: e.target.value } : mp))}
                         placeholder="/mnt/nas or /media"
-                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/40 font-mono"
+                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 font-mono"
                       />
                       <button
                         onClick={() => openBrowser(i, 'networkBasePath')}
@@ -1099,7 +1102,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
                       Worker sees it as
                     </label>
                     <div className="flex gap-1.5">
@@ -1107,7 +1110,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
                         value={m.localBasePath}
                         onChange={e => setMappings(ms => ms.map((mp, idx) => idx === i ? { ...mp, localBasePath: e.target.value } : mp))}
                         placeholder="Z:\ or /mnt/pi-media"
-                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/40 font-mono"
+                        className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 font-mono"
                       />
                       <button
                         onClick={() => openBrowser(i, 'localBasePath')}
@@ -1171,19 +1174,16 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
 // ─── General ─────────────────────────────────────────────────────────────────
 
 function GeneralPanel() {
-  const { apiUrl, meta, workers } = useAppState();
+  const { apiUrl, meta } = useAppState();
   const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '', preferred_audio_lang: '', preferred_subtitle_lang: '' });
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
 
-  const onlineWorkers = workers.filter(w => w.status === 'idle' || w.status === 'active').length;
-
   useEffect(() => {
     fetch(`${apiUrl}/api/settings/general`).then(r => r.json()).then(data => {
       setSettings(s => ({
         nodeName:               data.nodeName               ?? s.nodeName,
-        // Read both key names for back-compat; save will always use snake_case going forward
         maxConcurrentJobs:      data.max_concurrent_jobs    ?? data.maxConcurrentJobs ?? s.maxConcurrentJobs,
         queueStrategy:          data.queueStrategy          ?? s.queueStrategy,
         autoAcceptWorkers:      data.autoAcceptWorkers      ?? s.autoAcceptWorkers,
@@ -1225,20 +1225,11 @@ function GeneralPanel() {
             value={settings.nodeName}
             onChange={e => setSettings(s => ({ ...s, nodeName: e.target.value }))}
             placeholder="Transcodarr Main"
-            className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40"
+            className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50"
           />
         </Field>
 
-        <Field
-          label="Max Simultaneous Jobs"
-          hint={
-            onlineWorkers === 0
-              ? 'No workers online — connect a worker to enable parallel processing'
-              : parseInt(settings.maxConcurrentJobs) > onlineWorkers
-              ? `⚠ You have ${onlineWorkers} worker${onlineWorkers !== 1 ? 's' : ''} online — add more workers to reach this limit`
-              : `${onlineWorkers} worker${onlineWorkers !== 1 ? 's' : ''} online — each worker handles 1 job at a time`
-          }
-        >
+        <Field label="Max Simultaneous Jobs">
           <input
             type="number"
             min={1}
@@ -1249,16 +1240,13 @@ function GeneralPanel() {
           />
         </Field>
 
-        <Field
-          label="Queue Strategy"
-          hint={
-            settings.queueStrategy === 'fifo'     ? 'Files are processed in the order they were discovered — first in, first out.'
-          : settings.queueStrategy === 'largest'  ? 'Prioritise large files first — maximises space savings per batch.'
-          : settings.queueStrategy === 'oldest'   ? 'Oldest files in your library get transcoded first.'
-          : settings.queueStrategy === 'smallest' ? 'Small files first — see completed jobs sooner while large ones process overnight.'
-          : undefined
-          }
-        >
+        <Field label="Queue Strategy" hint={
+          settings.queueStrategy === 'fifo'     ? 'Files are processed in the order they were discovered — first in, first out.'
+        : settings.queueStrategy === 'largest'  ? 'Prioritise large files first — maximises space savings per batch.'
+        : settings.queueStrategy === 'oldest'   ? 'Oldest files in your library get transcoded first.'
+        : settings.queueStrategy === 'smallest' ? 'Small files first — see completed jobs sooner while large ones process overnight.'
+        : undefined
+        }>
           <select
             value={settings.queueStrategy}
             onChange={e => setSettings(s => ({ ...s, queueStrategy: e.target.value }))}
@@ -1281,15 +1269,16 @@ function GeneralPanel() {
               <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settings.autoAcceptWorkers === 'true' ? 'left-5' : 'left-1'}`} />
             </button>
           </div>
-          {settings.autoAcceptWorkers === 'true' && (
-            <div className="flex items-start gap-2.5 mt-2 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
-              <Shield className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-400/80 leading-relaxed">
-                <strong className="text-amber-400">Security notice:</strong> Any device on your local network can join as a worker without approval. Only enable this on trusted networks.
-              </p>
-            </div>
-          )}
         </Field>
+
+        {settings.autoAcceptWorkers === 'true' && (
+          <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+            <Shield className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-400/80 leading-relaxed">
+              <strong className="text-amber-400">Security notice:</strong> Any device on your local network can join as a worker without approval. Only enable this on trusted networks.
+            </p>
+          </div>
+        )}
 
         {meta.mode !== 'worker' && (
           <>
@@ -1321,7 +1310,7 @@ function GeneralPanel() {
               value={settings.mainUrl}
               onChange={e => setSettings(s => ({ ...s, mainUrl: e.target.value }))}
               placeholder="http://192.168.1.50:3001"
-              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40 font-mono"
+              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
             />
             <div className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20">
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
@@ -1341,61 +1330,6 @@ function GeneralPanel() {
         </button>
       </div>
 
-      {/* Backup & Restore */}
-      <div className="card-hover bg-surface border border-border rounded-2xl p-6 space-y-4">
-        <div>
-          <h3 className="text-white font-bold text-sm mb-1">Backup & Restore</h3>
-          <p className="text-textMuted text-xs">Export all settings as a JSON file, or restore from a previous backup.</p>
-        </div>
-        <div className="flex gap-3 flex-wrap">
-          <button
-            onClick={async () => {
-              try {
-                const [general, filters, paths, webhooks] = await Promise.all([
-                  fetch(`${apiUrl}/api/settings/general`).then(r => r.json()),
-                  fetch(`${apiUrl}/api/settings/filters`).then(r => r.json()),
-                  fetch(`${apiUrl}/api/settings/paths`).then(r => r.json()),
-                  fetch(`${apiUrl}/api/settings/webhooks`).then(r => r.json()),
-                ]);
-                const backup = { version: '1.0.38', exportedAt: new Date().toISOString(), general, filters, paths, webhooks };
-                const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = `transcodarr-backup-${new Date().toISOString().slice(0,10)}.json`;
-                a.click();
-                URL.revokeObjectURL(a.href);
-              } catch { /* ignore */ }
-            }}
-            className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-xl text-sm text-textMuted hover:text-white hover:border-primary/40 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            Export settings
-          </button>
-          <label className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-xl text-sm text-textMuted hover:text-white hover:border-primary/40 transition-colors cursor-pointer">
-            <Upload className="w-4 h-4" />
-            Import settings
-            <input
-              type="file"
-              accept=".json"
-              className="hidden"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                try {
-                  const text = await file.text();
-                  const backup = JSON.parse(text);
-                  if (backup.general) await fetch(`${apiUrl}/api/settings/general`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup.general) });
-                  if (backup.filters) await fetch(`${apiUrl}/api/settings/filters`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup.filters) });
-                  alert('Settings restored. Reload the page to see changes.');
-                } catch { alert('Invalid backup file.'); }
-                e.target.value = '';
-              }}
-            />
-          </label>
-        </div>
-      </div>
-
-      {/* Danger Zone */}
       <div className="space-y-3">
         <button
           onClick={() => setShowDangerZone(s => !s)}
@@ -1407,7 +1341,7 @@ function GeneralPanel() {
         {showDangerZone && (
           <div className="card-hover bg-surface border border-red-500/20 rounded-2xl p-6">
             <h3 className="text-red-400 font-bold text-sm mb-1">Reset Setup</h3>
-            <p className="text-textMuted text-xs mb-4">Wipe this node&apos;s role configuration and restart the onboarding wizard. The server will restart automatically.</p>
+            <p className="text-textMuted text-xs mb-4">Wipe this node's role configuration and restart the onboarding wizard. The server will restart automatically.</p>
             <button
               onClick={resetSetup}
               className="px-5 py-2.5 bg-red-500/10 text-red-400 text-sm font-bold rounded-xl border border-red-500/30 hover:bg-red-500/20 transition-colors"
@@ -1437,81 +1371,14 @@ interface Webhook {
   enabled: number;
 }
 
-function BrowserNotificationsCard() {
-  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
-  const [enabled, setEnabled] = useState(true);
-
-  useEffect(() => {
-    if (typeof Notification === 'undefined') { setPermission('unsupported'); return; }
-    setPermission(Notification.permission);
-    setEnabled(localStorage.getItem('transcodarr:notifications') !== 'off');
-  }, []);
-
-  const request = async () => {
-    const result = await Notification.requestPermission();
-    setPermission(result);
-  };
-
-  const toggle = (on: boolean) => {
-    setEnabled(on);
-    localStorage.setItem('transcodarr:notifications', on ? 'on' : 'off');
-  };
-
-  if (permission === 'unsupported') return null;
-
-  if (permission === 'denied') {
-    return (
-      <div className="card-hover bg-surface border border-border rounded-2xl p-6">
-        <h3 className="text-white font-bold text-sm mb-1">Browser Notifications</h3>
-        <p className="text-textMuted text-xs mb-3">
-          Notifications are blocked by your browser.
-        </p>
-        <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <p className="text-amber-400/80 text-xs leading-relaxed">
-            To re-enable, open your browser&apos;s site settings (usually in the address bar 🔒) and allow notifications for this site, then refresh the page.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="card-hover bg-surface border border-border rounded-2xl p-6">
-      <h3 className="text-white font-bold text-sm mb-1">Browser Notifications</h3>
-      <p className="text-textMuted text-xs mb-4">
-        Get a desktop notification when a job completes or fails — even when this tab is in the background.
-      </p>
-      {permission !== 'granted' ? (
-        <button
-          onClick={request}
-          className="px-4 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors"
-        >
-          Enable desktop notifications
-        </button>
-      ) : (
-        <label className="flex items-center gap-3 cursor-pointer">
-          <div
-            onClick={() => toggle(!enabled)}
-            className={`relative w-10 h-6 rounded-full transition-colors cursor-pointer ${enabled ? 'bg-primary' : 'bg-border'}`}
-          >
-            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${enabled ? 'left-5' : 'left-1'}`} />
-          </div>
-          <span className="text-sm text-white">Notify me when jobs complete or fail</span>
-        </label>
-      )}
-    </div>
-  );
-}
-
 function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
   const [hooks, setHooks] = useState<Webhook[]>([]);
   const [newUrl, setNewUrl] = useState('');
   const [newEvents, setNewEvents] = useState<string[]>(['job:complete', 'job:failed']);
   const [newSecret, setNewSecret] = useState('');
-  const [showSecret, setShowSecret] = useState(false);
   const [adding, setAdding] = useState(false);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
+  const [showSecret, setShowSecret] = useState(false);
   const [editingHookId, setEditingHookId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ url: '', events: [] as string[], secret: '' });
 
@@ -1561,41 +1428,48 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
 
   return (
     <div className="animate-section space-y-6">
-      <BrowserNotificationsCard />
-
       <div className="card-hover bg-surface border border-border rounded-2xl p-6">
-        <h3 className="text-white font-bold text-sm mb-1">Webhooks</h3>
+        <div className="flex items-start justify-between mb-1">
+          <h3 className="text-white font-bold text-sm">Webhooks</h3>
+          {!adding && (
+            <button
+              onClick={() => setAdding(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-background border border-border rounded-lg text-xs text-textMuted hover:text-white hover:border-primary/40 transition-all"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Webhook
+            </button>
+          )}
+        </div>
         <p className="text-textMuted text-xs mb-5">
           Paste any URL — Discord, Slack, or custom endpoint. Transcodarr will POST a JSON payload when events fire.
         </p>
 
-        <div className="space-y-3 mb-4">
-          {hooks.length === 0 && (
-            <div className="py-8 flex flex-col items-center gap-2 text-center">
-              <Bell className="w-7 h-7 text-textMuted/30" />
-              <p className="text-sm text-textMuted">No webhooks yet</p>
-              <p className="text-xs text-textMuted/60">Add a URL above to receive push notifications when jobs complete or fail.</p>
-            </div>
-          )}
+        {hooks.length === 0 && !adding && (
+          <p className="text-textMuted text-sm py-6 text-center border border-dashed border-border rounded-xl">
+            No webhooks configured yet.
+          </p>
+        )}
+
+        <div className="space-y-2 mb-4">
           {hooks.map(hook => {
             let eventsArr: string[] = [];
             try { eventsArr = JSON.parse(hook.events); } catch {}
             return (
-              <div key={hook.id} className={`card-hover bg-background border rounded-xl p-4 ${hook.enabled ? 'border-border' : 'border-border/40 opacity-60'}`}>
-                <div className="flex items-start gap-3">
+              <div key={hook.id} className={`bg-background border rounded-xl overflow-hidden ${hook.enabled ? 'border-border' : 'border-border/40 opacity-60'}`}>
+                <div className="flex items-start gap-3 p-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-sm font-medium truncate font-mono">{hook.url}</p>
-                    <div className="flex flex-wrap gap-1 mt-2">
+                    <div className="flex flex-wrap gap-1 mt-1.5">
                       {eventsArr.map(e => {
                         const tagStyle = e === 'job:complete' ? 'bg-green-900/20 border-green-500/25 text-green-400'
                                        : e === 'job:failed'   ? 'bg-red-900/20 border-red-500/25 text-red-400'
                                        : e === 'job:queued'   ? 'bg-sky-900/20 border-sky-500/25 text-sky-400'
                                        : 'bg-surface border-border text-textMuted';
-                        return <span key={e} className={`px-1.5 py-0.5 text-xs rounded border ${tagStyle}`}>{e}</span>;
+                        return <span key={e} className={`px-1.5 py-0.5 text-[10px] rounded border ${tagStyle}`}>{e}</span>;
                       })}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0">
                     <button
                       onClick={() => test(hook.id)}
                       className="px-2.5 py-1 text-xs border border-border text-textMuted hover:text-white hover:border-primary/40 rounded-lg transition-colors"
@@ -1610,10 +1484,10 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                         setEditForm({ url: hook.url, events: evArr, secret: '' });
                         setEditingHookId(hook.id);
                       }}
-                      className={`p-1.5 transition-colors ${editingHookId === hook.id ? 'text-primary' : 'text-textMuted hover:text-white'}`}
+                      className="p-1.5 text-textMuted hover:text-white transition-colors"
                       title="Edit webhook"
                     >
-                      <Pencil className="w-4 h-4" />
+                      <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button onClick={() => toggle(hook)} className="p-1.5 text-textMuted hover:text-white transition-colors">
                       {hook.enabled
@@ -1621,16 +1495,16 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                         : <ToggleLeft className="w-4 h-4" />}
                     </button>
                     <button onClick={() => remove(hook.id)} className="p-1.5 text-textMuted hover:text-red-400 transition-colors">
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
                 {editingHookId === hook.id && (
-                  <div className="mt-3 pt-3 border-t border-border space-y-3">
+                  <div className="border-t border-border bg-surface/50 p-3 space-y-3">
                     <div>
                       <label className="text-xs text-textMuted font-medium mb-1 block">URL</label>
                       <input value={editForm.url} onChange={e => setEditForm(f => ({...f, url: e.target.value}))}
-                        className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/40" />
+                        className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/40" />
                     </div>
                     <div className="flex gap-3 flex-wrap">
                       {WEBHOOK_EVENTS.map(ev => (
@@ -1646,14 +1520,14 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                       <button onClick={async () => {
                         await fetch(`${apiUrl}/api/settings/webhooks/${hook.id}`, {
                           method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ url: editForm.url, events: editForm.events }),
+                          body: JSON.stringify({ url: editForm.url, events: editForm.events, secret: editForm.secret || undefined }),
                         });
                         setEditingHookId(null);
                         load();
-                      }} className="px-4 py-1.5 bg-primary text-background text-xs font-bold rounded-lg hover:bg-primary/90 transition-colors">
+                      }} className="px-3 py-1.5 bg-primary text-background text-xs font-bold rounded-lg hover:bg-primary/90 transition-colors">
                         Save
                       </button>
-                      <button onClick={() => setEditingHookId(null)} className="px-4 py-1.5 text-textMuted text-xs hover:text-white transition-colors">Cancel</button>
+                      <button onClick={() => setEditingHookId(null)} className="px-3 py-1.5 text-textMuted text-xs hover:text-white transition-colors">Cancel</button>
                     </div>
                   </div>
                 )}
@@ -1662,20 +1536,27 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
           })}
         </div>
 
-        {adding ? (
-          <div className="border border-primary/30 bg-primary/5 rounded-xl p-4 space-y-3">
+        {adding && (
+          <div className="bg-background border border-border rounded-xl p-4 space-y-3">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-white text-sm font-semibold">New Webhook</p>
+              <button onClick={() => setAdding(false)} className="text-textMuted hover:text-white transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
             <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Webhook URL</label>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">URL</label>
               <input
                 value={newUrl}
                 onChange={e => setNewUrl(e.target.value)}
                 placeholder="https://discord.com/api/webhooks/..."
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/40"
+                autoFocus
+                className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
               />
             </div>
             <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Events to fire on</label>
-              <div className="flex gap-2 flex-wrap">
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Fire on</label>
+              <div className="flex gap-3 flex-wrap">
                 {WEBHOOK_EVENTS.map(ev => (
                   <label key={ev.id} className="flex items-center gap-1.5 cursor-pointer">
                     <input
@@ -1692,14 +1573,16 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
               </div>
             </div>
             <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Secret (optional — for HMAC signature)</label>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">
+                HMAC Secret <span className="text-textMuted/50">(optional)</span>
+              </label>
               <div className="relative">
                 <input
                   value={newSecret}
                   onChange={e => setNewSecret(e.target.value)}
                   type={showSecret ? 'text' : 'password'}
                   placeholder="my-secret-key"
-                  className="w-full bg-background border border-border rounded-lg px-3 py-2 pr-10 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/40"
+                  className="w-full bg-surface border border-border rounded-lg px-3 py-2 pr-10 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/40"
                 />
                 <button
                   type="button"
@@ -1710,8 +1593,12 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                 </button>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button onClick={add} className="px-4 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={add}
+                disabled={!newUrl.trim()}
+                className="px-4 py-2 bg-primary text-background text-sm font-bold rounded-lg hover:bg-primary/90 disabled:opacity-40 transition-colors"
+              >
                 Add Webhook
               </button>
               <button onClick={() => setAdding(false)} className="px-4 py-2 text-textMuted text-sm hover:text-white transition-colors">
@@ -1719,26 +1606,18 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
               </button>
             </div>
           </div>
-        ) : (
-          <button
-            onClick={() => setAdding(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-xl text-textMuted hover:text-white hover:border-primary/40 transition-all text-sm"
-          >
-            <Plus className="w-4 h-4" />
-            Add Webhook
-          </button>
         )}
       </div>
     </div>
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) {
+function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <div>
       <label className="text-xs text-textMuted font-medium mb-1.5 block">{label}</label>
       {children}
-      {hint && <p className="text-xs text-textMuted/60 mt-1.5">{hint}</p>}
+      {hint && <p className="text-xs text-textMuted/60 mt-1.5 ml-1">{hint}</p>}
     </div>
   );
 }

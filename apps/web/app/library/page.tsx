@@ -126,6 +126,11 @@ function LibraryRow({ job }: { job: Job }) {
               −{savedPct}%
             </span>
           )}
+          {savedPct != null && savedPct < 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/20 text-amber-400 font-semibold">
+              +{Math.abs(savedPct)}% larger
+            </span>
+          )}
           <span className="text-[10px] text-textMuted/60">{recipeName(job.recipe)}</span>
         </div>
       </div>
@@ -133,11 +138,16 @@ function LibraryRow({ job }: { job: Job }) {
       <div className="text-right shrink-0 hidden sm:block">
         {job.sizeBefore != null && job.sizeAfter != null && (
           <p className="text-xs text-textMuted">
-            {formatBytes(job.sizeBefore)} <span className="text-green-400">→</span> {formatBytes(job.sizeAfter)}
+            {formatBytes(job.sizeBefore)}{' '}
+            <span className={job.sizeAfter <= job.sizeBefore ? 'text-green-400' : 'text-amber-400'}>→</span>{' '}
+            {formatBytes(job.sizeAfter)}
           </p>
         )}
         {savedBytes > 0 && (
           <p className="text-xs text-green-400 font-medium">{formatBytes(savedBytes)} saved</p>
+        )}
+        {savedBytes < 0 && (
+          <p className="text-xs text-amber-400 font-medium">{formatBytes(Math.abs(savedBytes))} larger</p>
         )}
       </div>
 

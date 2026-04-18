@@ -1,12 +1,11 @@
 'use client';
 
-import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useAppState } from '@/hooks/useTranscodarrSocket';
 import { Sidebar } from '@/components/Sidebar';
 import { SetupWizard } from '@/components/SetupWizard';
-import { Radio, Menu, LayoutDashboard, ListVideo, Cpu, Film, Settings, Zap } from 'lucide-react';
+import { Radio, LayoutDashboard, ListVideo, Cpu, Film, Settings, Zap } from 'lucide-react';
 
 const mainNav = [
   { href: '/overview', icon: LayoutDashboard, label: 'Overview' },
@@ -24,7 +23,6 @@ const workerNav = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { meta, connected } = useAppState();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
 
   // Server explicitly said we're in setup mode — show the wizard
@@ -55,20 +53,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       {/* ── Desktop sidebar ─────────────────────────────────────── */}
-      <Sidebar mobileOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar />
 
       {/* ── Content column ──────────────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
         {/* Mobile top bar */}
         <header className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-surface shrink-0">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="p-2 rounded-xl text-textMuted hover:text-white hover:bg-white/10 transition-colors"
-            aria-label="Open menu"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <div className="w-6 h-6 rounded-lg bg-primary flex items-center justify-center shrink-0">
               <Radio className="w-3.5 h-3.5 text-background" />

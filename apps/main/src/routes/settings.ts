@@ -120,24 +120,65 @@ export async function settingsRoutes(app: FastifyInstance) {
     return getDb().prepare('SELECT * FROM watched_paths ORDER BY created_at DESC').all();
   });
 
+  // GET /api/settings/paths/:id/stats — per-folder job statistics
+  app.get<{ Params: { id: string } }>('/paths/:id/stats', async (req, reply) => {
+    const path_row = getDb().prepare('SELECT * FROM watched_paths WHERE id = ?').get(req.params.id) as any;
+    if (!path_row) return reply.status(404).send({ error: 'Not found' });
+    const watchPath = path_row.path as string;
+    // Match files whose path starts with the watched dir (with sep)
+    const sep = watchPath.endsWith('/') || watchPath.endsWith('\\') ? '' : (watchPath.includes('\\') ? '\\' : '/');
+    const pattern = `${watchPath}${sep}%`;
+
+    const counts = getDb().prepare(`
+      SELECT status, COUNT(*) as cnt, SUM(size_before) as sb, SUM(size_after) as sa
+      FROM jobs
+      WHERE file_path LIKE ?
+      GROUP BY status
+    `).all(pattern) as { status: string; cnt: number; sb: number | null; sa: number | null }[];
+
+    let queued = 0, active = 0, complete = 0, failed = 0, skipped = 0;
+    let sizeBefore = 0, sizeAfter = 0;
+    const activeStatuses = new Set(['dispatched', 'transcoding', 'receiving', 'sending', 'swapping', 'finalizing']);
+
+    for (const row of counts) {
+      const cnt = row.cnt;
+      if (row.status === 'queued') queued += cnt;
+      else if (activeStatuses.has(row.status)) active += cnt;
+      else if (row.status === 'complete') {
+        complete += cnt;
+        sizeBefore += (row.sb ?? 0);
+        sizeAfter  += (row.sa ?? 0);
+      }
+      else if (row.status === 'failed') failed += cnt;
+      else if (row.status === 'skipped') skipped += cnt;
+    }
+
+    const total = queued + active + complete + failed + skipped;
+    const gbSaved = sizeBefore > 0 ? (sizeBefore - sizeAfter) / 1e9 : 0;
+
+    return { total, queued, active, complete, failed, skipped, sizeBefore, sizeAfter, gbSaved };
+  });
+
   app.post<{ Body: {
     path: string; recipe: string;
     recurse?: boolean; extensions?: string;
     priority?: string; minSizeMb?: number;
     preferred_audio_lang?: string | null; preferred_subtitle_lang?: string | null;
     scan_interval_hours?: number; move_to?: string | null;
+    exclude_patterns?: string | null;
   } }>('/paths', async (req, reply) => {
-    const { path: watchPath, recipe, recurse = true, extensions = '.mkv,.mp4,.avi,.ts,.mov', priority = 'normal', minSizeMb = 100, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours = 0, move_to } = req.body;
+    const { path: watchPath, recipe, recurse = true, extensions = '.mkv,.mp4,.avi,.ts,.mov', priority = 'normal', minSizeMb = 100, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours = 0, move_to, exclude_patterns } = req.body;
     if (!watchPath || !recipe) return reply.status(400).send({ error: 'path and recipe required' });
 
     const id = nanoid();
     getDb().prepare(`
-      INSERT INTO watched_paths (id, path, recipe, recurse, extensions, priority, min_size_mb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, watchPath, recipe, recurse ? 1 : 0, extensions, priority, minSizeMb, preferred_audio_lang ?? null, preferred_subtitle_lang ?? null, scan_interval_hours, move_to ?? null);
+      INSERT INTO watched_paths (id, path, recipe, recurse, extensions, priority, min_size_mb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to, exclude_patterns)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, watchPath, recipe, recurse ? 1 : 0, extensions, priority, minSizeMb, preferred_audio_lang ?? null, preferred_subtitle_lang ?? null, scan_interval_hours, move_to ?? null, exclude_patterns ?? null);
 
     // Dynamically hot-reload the watcher
-    addWatchedPath(watchPath, recipe);
+    const excludeArr = exclude_patterns ? exclude_patterns.split(',').map(s => s.trim()).filter(Boolean) : [];
+    addWatchedPath(watchPath, recipe, true, excludeArr);
 
     return { id, path: watchPath, recipe, enabled: true, recurse, extensions, priority, minSizeMb, createdAt: Date.now() };
   });
@@ -159,8 +200,9 @@ export async function settingsRoutes(app: FastifyInstance) {
     priority?: string; minSizeMb?: number;
     preferred_audio_lang?: string | null; preferred_subtitle_lang?: string | null;
     scan_interval_hours?: number; move_to?: string | null;
+    exclude_patterns?: string | null;
   } }>('/paths/:id', async (req) => {
-    const { path: watchPath, recipe, recurse, extensions, priority, minSizeMb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to } = req.body;
+    const { path: watchPath, recipe, recurse, extensions, priority, minSizeMb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to, exclude_patterns } = req.body;
     const fields: string[] = [];
     const vals: any[] = [];
     if (watchPath !== undefined) { fields.push('path = ?'); vals.push(watchPath); }
@@ -173,6 +215,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (preferred_subtitle_lang !== undefined) { fields.push('preferred_subtitle_lang = ?'); vals.push(preferred_subtitle_lang); }
     if (scan_interval_hours !== undefined) { fields.push('scan_interval_hours = ?'); vals.push(scan_interval_hours); }
     if (move_to !== undefined) { fields.push('move_to = ?'); vals.push(move_to ?? null); }
+    if (exclude_patterns !== undefined) { fields.push('exclude_patterns = ?'); vals.push(exclude_patterns ?? null); }
     if (fields.length) {
       vals.push(req.params.id);
       getDb().prepare(`UPDATE watched_paths SET ${fields.join(', ')} WHERE id = ?`).run(...vals);

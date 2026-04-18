@@ -1,9 +1,10 @@
 'use client';
 
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
-import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown } from 'lucide-react';
+import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown, FilePlus2, X, Plus, BookOpen } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
 import { useEffect, useRef, useState, useCallback } from 'react';
+import gsap from 'gsap';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 import {
   DndContext,
@@ -109,20 +110,8 @@ function ScanProgressBanner({ progress }: { progress: ScanProgress }) {
 
 // ─── Scan Summary Banner ──────────────────────────────────────────────────────
 
-function ScanBanner({ summary, jobs, onDismiss }: { summary: ScanSummary; jobs: Job[]; onDismiss: () => void }) {
+function ScanBanner({ summary, onDismiss }: { summary: ScanSummary; onDismiss: () => void }) {
   const isError = !!summary.error;
-
-  // Auto-dismiss after 15s
-  useEffect(() => {
-    if (isError) return;
-    const t = setTimeout(onDismiss, 15_000);
-    return () => clearTimeout(t);
-  }, [isError, onDismiss]);
-
-  // Live counts from current jobs state (updates as jobs are paused/removed)
-  const liveQueued  = jobs.filter(j => ['queued', 'dispatched', 'paused'].includes(j.status)).length;
-  const liveActive  = jobs.filter(j => ['transcoding', 'receiving', 'sending', 'swapping', 'finalizing'].includes(j.phase ?? j.status)).length;
-
   return (
     <div className={`toast-enter flex items-start gap-4 p-4 rounded-xl border ${
       isError ? 'bg-red-500/10 border-red-500/30' : 'bg-primary/10 border-primary/30'
@@ -134,21 +123,24 @@ function ScanBanner({ summary, jobs, onDismiss }: { summary: ScanSummary; jobs: 
         <p className="text-white font-semibold text-sm">
           {isError ? 'Scan Failed' : `Scan Complete — "${summary.dir.split(/[\\/]/).pop()}"`}
         </p>
-        <p className="text-textMuted text-xs mt-0.5">
-          {summary.error ?? `${summary.total} files found · ${summary.skipped} already optimized`}
-        </p>
+        <p className="text-textMuted text-xs mt-0.5">{summary.error ?? summary.message}</p>
         {!isError && (
           <div className="flex items-center gap-4 mt-2">
             <span className="text-xs flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-primary inline-block" />
-              <span className="text-white font-medium">{liveQueued}</span>
-              <span className="text-textMuted">in queue</span>
+              <span className="text-white font-medium">{summary.enqueued}</span>
+              <span className="text-textMuted">queued</span>
             </span>
-            {liveActive > 0 && (
+            <span className="text-xs flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+              <span className="text-white font-medium">{summary.skipped}</span>
+              <span className="text-textMuted">already optimized</span>
+            </span>
+            {summary.alreadyActive > 0 && (
               <span className="text-xs flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse inline-block" />
-                <span className="text-white font-medium">{liveActive}</span>
-                <span className="text-textMuted">encoding now</span>
+                <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
+                <span className="text-white font-medium">{summary.alreadyActive}</span>
+                <span className="text-textMuted">in progress</span>
               </span>
             )}
           </div>
@@ -211,7 +203,11 @@ export default function QueuePage() {
   const { jobs, workers, scanSummary, scanProgress, apiUrl } = useAppState();
   const [localScan, setLocalScan] = useState<ScanSummary | null>(null);
   const [orderedActiveIds, setOrderedActiveIds] = useState<string[]>([]);
-  const [confirmClear, setConfirmClear] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickFilePath, setQuickFilePath] = useState('');
+  const [quickRecipe, setQuickRecipe] = useState('space-saver');
+  const [quickAdding, setQuickAdding] = useState(false);
+  const [quickError, setQuickError] = useState('');
 
   useEffect(() => { if (scanSummary) setLocalScan(scanSummary); }, [scanSummary]);
 
@@ -252,13 +248,8 @@ export default function QueuePage() {
   const completedJobs = jobs.filter(j => j.status === 'complete');
   const failedJobs    = jobs.filter(j => j.status === 'failed');
 
-  const clearHistory = () => {
-    setConfirmClear(false);
-    fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
-  };
+  const clearHistory = () => fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
   const retryAll     = () => fetch(`${apiUrl}/api/jobs/retry-all`, { method: 'POST' });
-  const pauseAll     = () => fetch(`${apiUrl}/api/jobs/pause-all`,  { method: 'POST' });
-  const resumeAll    = () => fetch(`${apiUrl}/api/jobs/resume-all`, { method: 'POST' });
   const removeJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}`, { method: 'DELETE' });
   const cancelJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}/cancel`, { method: 'POST' });
   const resumeJob    = (id: string) => fetch(`${apiUrl}/api/jobs/${id}/resume`, { method: 'POST' });
@@ -305,30 +296,15 @@ export default function QueuePage() {
           <p className="text-textMuted text-sm">Active transcodes and processing history.</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {/* Pause All / Resume All — only shown when there's something to act on */}
-          {(activeJobs.length > 0 || pausedJobs.length > 0) && (
-            pausedJobs.length > 0 && activeJobs.length === 0 ? (
-              <button
-                onClick={resumeAll}
-                title="Resume all paused jobs"
-                className="flex items-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-green-400 hover:border-green-500/30 hover:bg-green-500/5 transition-all text-xs font-medium"
-              >
-                <PlayCircle className="w-4 h-4" />
-                <span className="hidden sm:inline">Resume All</span>
-              </button>
-            ) : (
-              <button
-                onClick={pauseAll}
-                title="Pause all queued and active jobs"
-                className="flex items-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-amber-400 hover:border-amber-500/30 hover:bg-amber-500/5 transition-all text-xs font-medium"
-              >
-                <PauseCircle className="w-4 h-4" />
-                <span className="hidden sm:inline">Pause All</span>
-              </button>
-            )
-          )}
           <button
-            onClick={() => setConfirmClear(true)}
+            onClick={() => { setQuickAddOpen(true); setQuickError(''); }}
+            className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-primary/10 border border-primary/30 rounded-xl text-primary hover:bg-primary/20 transition-all text-xs md:text-sm font-medium"
+          >
+            <FilePlus2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Add File</span>
+          </button>
+          <button
+            onClick={clearHistory}
             disabled={!canClear}
             className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-xs md:text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent"
           >
@@ -339,10 +315,81 @@ export default function QueuePage() {
         </div>
       </header>
 
+      {/* Quick-add file modal */}
+      {quickAddOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200">
+          <div className="bg-surface border border-border rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h2 className="text-white font-bold flex items-center gap-2">
+                <FilePlus2 className="w-4 h-4 text-primary" /> Add Single File
+              </h2>
+              <button onClick={() => setQuickAddOpen(false)} className="text-textMuted hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-textMuted text-sm">Manually queue a single file for transcoding. The file must be accessible to the Main node.</p>
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block">File Path</label>
+                <input
+                  value={quickFilePath}
+                  onChange={e => setQuickFilePath(e.target.value)}
+                  placeholder="/media/movies/example.mkv"
+                  autoFocus
+                  className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white font-mono placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block flex items-center gap-1.5">
+                  <BookOpen className="w-3.5 h-3.5" /> Recipe
+                </label>
+                <select
+                  value={quickRecipe}
+                  onChange={e => setQuickRecipe(e.target.value)}
+                  className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+                >
+                  {BUILT_IN_RECIPES.map(r => (
+                    <option key={r.id} value={r.id}>{r.icon} {r.name}</option>
+                  ))}
+                </select>
+              </div>
+              {quickError && <p className="text-red-400 text-sm flex items-center gap-1.5"><XCircle className="w-4 h-4 shrink-0" />{quickError}</p>}
+            </div>
+            <div className="flex gap-2 px-6 py-4 border-t border-border">
+              <button
+                onClick={async () => {
+                  if (!quickFilePath.trim()) { setQuickError('File path is required'); return; }
+                  setQuickAdding(true); setQuickError('');
+                  try {
+                    const res = await fetch(`${apiUrl}/api/jobs`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ filePath: quickFilePath.trim(), recipe: quickRecipe }),
+                    });
+                    if (!res.ok) {
+                      const d = await res.json().catch(() => ({}));
+                      setQuickError(d.error ?? 'Failed to queue file');
+                    } else {
+                      setQuickAddOpen(false);
+                      setQuickFilePath('');
+                      setQuickRecipe('space-saver');
+                    }
+                  } catch { setQuickError('Network error'); }
+                  setQuickAdding(false);
+                }}
+                disabled={quickAdding || !quickFilePath.trim()}
+                className="flex items-center gap-2 px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
+              >
+                {quickAdding ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {quickAdding ? 'Queuing…' : 'Queue File'}
+              </button>
+              <button onClick={() => setQuickAddOpen(false)} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <LiveStrip jobs={jobs} />
 
       {scanProgress && <ScanProgressBanner progress={scanProgress} />}
-      {localScan && !scanProgress && <ScanBanner summary={localScan} jobs={jobs} onDismiss={() => setLocalScan(null)} />}
+      {localScan && !scanProgress && <ScanBanner summary={localScan} onDismiss={() => setLocalScan(null)} />}
 
       {/* Active & Queued */}
       <section>
@@ -386,17 +433,16 @@ export default function QueuePage() {
           </h2>
           <div className="space-y-2 stagger-list">
             {pausedJobs.map(job => (
-              <div key={job.id} className="opacity-75 hover:opacity-100 transition-opacity">
-                <JobRow
-                  job={job}
-                  onResume={() => resumeJob(job.id)}
-                  onRemove={() => removeJob(job.id)}
-                  onCancel={() => cancelJob(job.id)}
-                  idleWorkers={idleWorkers}
-                  apiUrl={apiUrl}
-                  draggable={false}
-                />
-              </div>
+              <JobRow
+                key={job.id}
+                job={job}
+                onResume={() => resumeJob(job.id)}
+                onRemove={() => removeJob(job.id)}
+                onCancel={() => cancelJob(job.id)}
+                idleWorkers={idleWorkers}
+                apiUrl={apiUrl}
+                draggable={false}
+              />
             ))}
           </div>
         </section>
@@ -421,7 +467,6 @@ export default function QueuePage() {
               <FailedJobRow
                 key={job.id}
                 job={job}
-                apiUrl={apiUrl}
                 onRemove={() => removeJob(job.id)}
                 onRetry={() => fetch(`${apiUrl}/api/jobs/${job.id}/retry`, { method: 'POST' })}
               />
@@ -442,23 +487,6 @@ export default function QueuePage() {
           </div>
         </section>
       )}
-
-      {confirmClear && (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-surface border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
-            <h3 className="text-white font-bold text-lg">Clear History?</h3>
-            <p className="text-textMuted text-sm">This will permanently remove all completed and failed jobs from the list. Active jobs are not affected.</p>
-            <div className="flex gap-3 justify-end">
-              <button onClick={() => setConfirmClear(false)} className="px-4 py-2 rounded-xl text-textMuted hover:bg-background transition-colors text-sm font-medium">
-                Cancel
-              </button>
-              <button onClick={clearHistory} className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-colors text-sm font-bold">
-                Clear History
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -471,7 +499,7 @@ function ConversionBadge({ job }: { job: Job }) {
   const same = from.toLowerCase() === to.toLowerCase();
   if (same) return null;
   return (
-    <div className="flex items-center gap-1 text-xs font-mono shrink-0">
+    <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
       <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
       <ArrowRight className="w-3 h-3 text-textMuted" />
       <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
@@ -491,7 +519,7 @@ function ResolutionBadge({ resolution }: { resolution: string }) {
   else if (w >= 1280) { label = '720p';  color = 'bg-white/5 border-white/10 text-textMuted'; }
   else                { label = 'SD';    color = 'bg-white/5 border-white/10 text-textMuted'; }
   return (
-    <span className={`inline-flex items-center text-xs font-bold px-1.5 py-0.5 rounded border ${color}`}>
+    <span className={`inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border ${color}`}>
       {label}
     </span>
   );
@@ -504,7 +532,7 @@ function FileSizeBadge({ bytes }: { bytes: number }) {
   if (bytes >= 1e9) label = `${(bytes / 1e9).toFixed(1)} GB`;
   else              label = `${Math.round(bytes / 1e6)} MB`;
   return (
-    <span className="inline-flex items-center text-xs px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-textMuted font-mono">
+    <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-textMuted font-mono">
       {label}
     </span>
   );
@@ -518,7 +546,7 @@ function SubtitleWarning({ job }: { job: Job }) {
   if (container !== 'mp4') return null; // MKV preserves subs fine
   return (
     <span
-      className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-400"
+      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-400"
       title="MP4 only supports text subtitles (mov_text). Image-based subtitles (PGS, VOBSUB) will be dropped. Use a MKV recipe to keep all subtitle types."
     >
       <AlertTriangle className="w-2.5 h-2.5" />
@@ -545,12 +573,12 @@ function WorkerPicker({ job, workers, apiUrl }: { job: Job; workers: WorkerInfo[
   if (workers.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-1.5 text-xs">
+    <div className="flex items-center gap-1.5 text-[10px]">
       <User className="w-3 h-3 text-textMuted" />
       <select
         value={value}
         onChange={handleChange}
-        className="bg-background border border-border text-textMuted rounded px-1.5 py-0.5 text-xs cursor-pointer hover:border-primary/40 focus:outline-none focus:border-primary/60 transition-colors"
+        className="bg-background border border-border text-textMuted rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:border-primary/40 focus:outline-none focus:border-primary/60 transition-colors"
       >
         <option value="">Any Worker</option>
         {workers.map(w => (
@@ -588,6 +616,7 @@ function JobRow({
 
   const isProcessing = ['dispatched', 'receiving', 'transcoding', 'finalizing', 'sending', 'swapping'].includes(phaseKey);
   const isPaused = displayStatus === 'paused';
+  const waveRef = useRef<HTMLDivElement>(null);
 
   // dnd-kit sortable hook — only active for draggable rows
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -596,30 +625,21 @@ function JobRow({
   });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
 
-  // Tick every second for ETA countdown and swapping/finalizing elapsed timer
+  useEffect(() => {
+    if (!isProcessing || !waveRef.current) return;
+    const bars = waveRef.current.children;
+    const ctx  = gsap.context(() => {
+      gsap.to(bars, { scaleY: 1, duration: 0.4, stagger: { each: 0.1, repeat: -1, yoyo: true }, ease: 'sine.inOut' });
+    }, waveRef);
+    return () => ctx.revert();
+  }, [isProcessing]);
+
   const [, forceUpdate] = useState(0);
   useEffect(() => {
-    if (!job.eta && job.phase !== 'swapping' && job.phase !== 'finalizing') return;
+    if (!job.eta) return;
     const id = setInterval(() => forceUpdate(n => n + 1), 1000);
     return () => clearInterval(id);
-  }, [job.eta, job.phase]);
-
-  // Track when swapping/finalizing started so we can show elapsed time
-  const swappingStartRef  = useRef<number | null>(null);
-  const finalizingStartRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (job.phase === 'swapping' && swappingStartRef.current === null) {
-      swappingStartRef.current = Date.now();
-    } else if (job.phase !== 'swapping') {
-      swappingStartRef.current = null;
-    }
-    if (job.phase === 'finalizing' && finalizingStartRef.current === null) {
-      finalizingStartRef.current = Date.now();
-    } else if (job.phase !== 'finalizing') {
-      finalizingStartRef.current = null;
-    }
-  }, [job.phase]);
-
+  }, [job.eta]);
 
   const canRemove = !['transcoding', 'dispatched', 'receiving', 'sending', 'finalizing', 'swapping'].includes(displayStatus);
   const showWorkerPicker = ['queued', 'dispatched'].includes(displayStatus) && idleWorkers.length > 0;
@@ -647,182 +667,143 @@ function JobRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={`card-hover bg-surface border border-l-2 ${cfg.border} ${isProcessing ? 'border-border/80 shadow-lg' : 'border-border'} rounded-xl overflow-hidden ${isDragging ? 'z-50 !transform-none' : ''}`}
+      className={`card-hover bg-surface border border-border border-l-2 ${cfg.border} rounded-xl overflow-hidden ${isProcessing ? 'shadow-lg' : ''} ${isDragging ? 'z-50 !transform-none' : ''}`}
     >
-      {/* Thin accent line at top — shows progress subtly */}
-      {isProcessing && (
-        <div className="h-[2px] w-full bg-background overflow-hidden">
+      {/* Progress bar — top of card when active */}
+      {isProcessing && job.progress > 0 && (
+        <div className="h-0.5 w-full bg-background relative overflow-hidden">
           <div
-            className={`h-full ${cfg.barBg} transition-all duration-700 ease-out ${(job.phase === 'swapping' || job.phase === 'finalizing') ? 'w-full animate-pulse opacity-60' : ''}`}
-            style={!(job.phase === 'swapping' || job.phase === 'finalizing') ? { width: `${job.progress}%` } : undefined}
+            className={`absolute inset-y-0 left-0 ${cfg.barBg} transition-all duration-700 ease-out`}
+            style={{ width: `${job.progress}%` }}
+          />
+          <div
+            className="absolute inset-y-0 w-24 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"
+            style={{ left: `calc(${job.progress}% - 48px)` }}
           />
         </div>
       )}
 
-      <div className="p-3.5 md:p-4 flex gap-2.5 md:gap-3">
-        {/* Drag handle — desktop only */}
+      <div className="p-3 md:p-4 flex items-center gap-2 md:gap-3">
+        {/* Drag handle — hidden on mobile, visible md+ */}
         {draggable && (
           <div
             {...attributes}
             {...listeners}
-            className="hidden md:flex items-center p-1 text-textMuted/25 hover:text-textMuted/60 cursor-grab active:cursor-grabbing shrink-0 touch-none"
+            className="hidden md:flex p-1 text-textMuted/40 hover:text-textMuted cursor-grab active:cursor-grabbing shrink-0 touch-none"
           >
             <GripVertical className="w-4 h-4" />
           </div>
         )}
 
-        {/* Phase icon */}
-        <div className={`p-2 rounded-lg shrink-0 self-start mt-0.5 ${isProcessing ? cfg.chip : 'bg-background border border-border'}`}>
-          <Icon className={`w-4 h-4 ${isProcessing ? cfg.accent : 'text-textMuted'}`} />
+        {/* Icon */}
+        <div className={`p-2.5 rounded-xl shrink-0 ${isProcessing ? cfg.chip : 'bg-background border border-border'}`}>
+          {isProcessing
+            ? <Icon className={`w-4 h-4 ${cfg.accent}`} />
+            : <Film className="w-4 h-4 text-textMuted" />
+          }
         </div>
 
-        {/* Info column — takes all remaining space */}
+        {/* Info */}
         <div className="flex-1 min-w-0">
-
-          {/* Row 1: filename + action buttons inline */}
-          <div className="flex items-start gap-2 mb-2">
-            <h3 className="text-white font-semibold text-sm leading-snug flex-1 min-w-0 truncate">{job.fileName}</h3>
-            <div className="flex items-center gap-0.5 shrink-0 -mt-0.5 -mr-1">
-              {isProcessing ? (
-                // Active job: pause stops the encode and holds it in the Paused section
-                <button
-                  onClick={() => { setOverrideStatus('paused'); onCancel(); }}
-                  title="Pause — stops encoding and holds your spot. Click ▶ to resume later."
-                  className="p-1.5 rounded-lg text-textMuted/50 hover:text-amber-400 hover:bg-background transition-colors"
-                >
-                  <PauseCircle className="w-4 h-4" />
-                </button>
-              ) : isPaused ? (
-                // Paused job: resume re-queues it, X removes it
-                <>
-                  <button onClick={() => { setOverrideStatus(null); onResume(); }}
-                    title="Resume — puts job back in queue"
-                    className="p-1.5 rounded-lg text-textMuted/50 hover:text-green-400 hover:bg-background transition-colors">
-                    <PlayCircle className="w-4 h-4" />
-                  </button>
-                  <button onClick={onRemove}
-                    title="Remove from queue"
-                    className="p-1.5 rounded-lg text-textMuted/50 hover:text-red-400 hover:bg-background transition-colors">
-                    <XCircle className="w-4 h-4" />
-                  </button>
-                </>
-              ) : (
-                // Queued (waiting): pause holds it; X removes it entirely
-                <>
-                  <button
-                    onClick={() => { setOverrideStatus('paused'); onCancel(); }}
-                    title="Hold — prevents dispatch until you resume"
-                    className="p-1.5 rounded-lg text-textMuted/30 hover:text-amber-400 hover:bg-background transition-colors"
-                  >
-                    <PauseCircle className="w-4 h-4" />
-                  </button>
-                  <button onClick={onRemove} disabled={!canRemove}
-                    title="Remove from queue permanently"
-                    className="p-1.5 rounded-lg text-textMuted/50 hover:text-red-400 hover:bg-background transition-colors disabled:opacity-20 disabled:cursor-not-allowed">
-                    <XCircle className="w-4 h-4" />
-                  </button>
-                </>
-              )}
-              <button onClick={toggleTimeline} title="Job timeline"
-                className={`p-1.5 rounded-lg transition-colors ${showTimeline ? 'text-primary' : 'text-textMuted/25 hover:text-textMuted/60'}`}>
-                <History className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Row 2: status chip + metadata badges */}
+          <h3 className="text-white font-semibold truncate text-sm leading-tight mb-1.5">{job.fileName}</h3>
+          {/* Badge row: status chip + file metadata + fps (inline, no layout shift) + conversion + subtitle warning */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={`inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
+            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
               <Icon className="w-2.5 h-2.5" />
-              {job.phase === 'swapping' ? 'Saving' : job.phase === 'finalizing' ? 'Finalizing' : cfg.label}
+              {cfg.label}
             </span>
             {job.resolution && <ResolutionBadge resolution={job.resolution} />}
             {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
             <ConversionBadge job={job} />
             {job.fps != null && job.fps > 0 && (
-              <span className="text-xs font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
                 {job.fps.toFixed(1)} fps
               </span>
             )}
             <SubtitleWarning job={job} />
           </div>
-
-          {/* Row 3: full-width progress bar (active jobs only) */}
-          {isProcessing && (
-            <div className="mt-3">
-              {job.phase === 'finalizing' ? (
-                /* ffmpeg post-processing (MP4 faststart reindex etc.) — no progress, just elapsed time */
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-textMuted/60 flex items-center gap-1.5">
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400/60 animate-pulse shrink-0" />
-                      Writing MP4 index…
-                    </span>
-                    {finalizingStartRef.current && (() => {
-                      const secs = Math.floor((Date.now() - finalizingStartRef.current) / 1000);
-                      const m = Math.floor(secs / 60), s = secs % 60;
-                      return (
-                        <span className="text-xs text-textMuted/50 tabular-nums shrink-0">
-                          {m > 0 ? `${m}m ${s}s` : `${s}s`}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                  <div className="h-1 bg-background rounded-full overflow-hidden">
-                    <div className="h-full w-full bg-amber-400 opacity-40 rounded-full animate-pulse" />
-                  </div>
-                </div>
-              ) : job.phase === 'swapping' ? (
-                /* Renaming the output file into its final location */
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-textMuted/60 flex items-center gap-1.5">
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60 animate-pulse shrink-0" />
-                      Renaming file to final path…
-                    </span>
-                    {swappingStartRef.current && (() => {
-                      const secs = Math.floor((Date.now() - swappingStartRef.current) / 1000);
-                      const m = Math.floor(secs / 60), s = secs % 60;
-                      return (
-                        <span className="text-xs text-textMuted/50 tabular-nums shrink-0">
-                          {m > 0 ? `${m}m ${s}s` : `${s}s`}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                  <div className="h-1 bg-background rounded-full overflow-hidden">
-                    <div className={`h-full w-full ${cfg.barBg} opacity-40 rounded-full animate-pulse`} />
-                  </div>
-                </div>
-              ) : (
-                /* Normal progress */
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-xs text-textMuted/60 tabular-nums">
-                      {job.eta && job.eta > Date.now()
-                        ? <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{formatEta(job.eta)} remaining</span>
-                        : <span className="opacity-0">–</span>
-                      }
-                    </span>
-                    <span className={`text-xs font-bold tabular-nums ${cfg.accent}`}>{job.progress}%</span>
-                  </div>
-                  <div className="h-1 bg-background rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-700 ease-out ${cfg.barBg}`}
-                      style={{ width: `${job.progress}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Row 4: worker picker (queued/dispatched only) */}
+          {/* Worker picker row — only for queued/dispatched + idle workers available */}
           {showWorkerPicker && (
-            <div className="mt-2">
+            <div className="mt-1.5">
               <WorkerPicker job={job} workers={idleWorkers} apiUrl={apiUrl} />
             </div>
           )}
+        </div>
+
+        {/* Progress + controls */}
+        <div className="flex items-center gap-3 shrink-0">
+          {isProcessing && (
+            <div ref={waveRef} className={`flex items-end gap-[2px] h-5 w-6 ${cfg.accent}`}>
+              <div className="w-1 h-1.5 rounded-sm bg-current transform scale-y-50 origin-bottom opacity-70" />
+              <div className="w-1 h-3 rounded-sm bg-current transform scale-y-50 origin-bottom" />
+              <div className="w-1 h-5 rounded-sm bg-current transform scale-y-50 origin-bottom" />
+              <div className="w-1 h-2 rounded-sm bg-current transform scale-y-50 origin-bottom opacity-70" />
+            </div>
+          )}
+
+          <div className="w-20 md:w-28 space-y-1.5">
+            <div className="flex items-center justify-end gap-1.5">
+              {job.eta && job.eta > Date.now() && (
+                <span className="text-[10px] text-textMuted flex items-center gap-0.5 shrink-0">
+                  <Clock className="w-2.5 h-2.5" />
+                  {formatEta(job.eta)}
+                </span>
+              )}
+              <span className={`text-xs font-semibold tabular-nums shrink-0 ${isProcessing ? cfg.accent : 'text-textMuted'}`}>
+                {job.progress}%
+              </span>
+            </div>
+            <div className="h-1.5 bg-background rounded-full overflow-hidden border border-border/60">
+              <div
+                className={`h-full rounded-full transition-all duration-700 ease-out ${cfg.barBg}`}
+                style={{ width: `${job.progress}%` }}
+              />
+            </div>
+          </div>
+
+          {isProcessing ? (
+            <button
+              onClick={() => { setOverrideStatus('paused'); onCancel(); }}
+              title="Pause — stops transcoding, keeps job in queue"
+              className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-amber-400 transition-colors"
+            >
+              <PauseCircle className="w-4 h-4" />
+            </button>
+          ) : isPaused ? (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => { setOverrideStatus(null); onResume(); }}
+                title="Resume — put back in queue"
+                className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-green-400 transition-colors"
+              >
+                <PlayCircle className="w-4 h-4" />
+              </button>
+              <button
+                onClick={onRemove}
+                title="Remove"
+                className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors"
+              >
+                <XCircle className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onRemove}
+              disabled={!canRemove}
+              className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Timeline toggle */}
+          <button
+            onClick={toggleTimeline}
+            title="Show job timeline"
+            className={`p-2 hover:bg-background rounded-lg transition-colors ${showTimeline ? 'text-primary' : 'text-textMuted/40 hover:text-textMuted'}`}
+          >
+            <History className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 
@@ -856,70 +837,27 @@ function JobRow({
 
 // ─── Failed Job Row ───────────────────────────────────────────────────────────
 
-function FailedJobRow({ job, onRemove, onRetry, apiUrl }: { job: Job; onRemove: () => void; onRetry: () => void; apiUrl: string }) {
+function FailedJobRow({ job, onRemove, onRetry }: { job: Job; onRemove: () => void; onRetry: () => void }) {
   const from = codecLabel(job.codecIn);
   const to   = targetCodecLabel(job.recipe);
-  const [timelineEvents, setTimelineEvents] = useState<Array<{ id: string; event: string; workerName?: string; detail?: any; createdAt: number }>>([]);
-  const [showTimeline, setShowTimeline] = useState(true);
-
-  useEffect(() => {
-    fetch(`${apiUrl}/api/jobs/${job.id}/events`)
-      .then(r => r.ok ? r.json() : [])
-      .then(setTimelineEvents)
-      .catch(() => {});
-  }, [job.id, apiUrl]);
-
-  const EVENT_LABEL: Record<string, string> = {
-    queued: 'Added to queue', dispatched: 'Dispatched', paused: 'Paused', resumed: 'Resumed',
-    complete: 'Completed', failed: 'Failed',
-  };
-
   return (
-    <div className="card-hover bg-red-500/5 border border-red-500/20 border-l-2 border-l-red-500/50 rounded-xl overflow-hidden">
-      <div className="p-3.5 md:p-4 flex items-center gap-3">
-        <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="text-white text-sm font-medium truncate">{job.fileName}</p>
-          {job.error && <p className="text-red-400/70 text-xs truncate mt-0.5">{job.error}</p>}
-        </div>
-        <div className="flex items-center gap-1 text-xs font-mono shrink-0">
-          <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
-          <ArrowRight className="w-3 h-3 text-textMuted" />
-          <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
-        </div>
-        <button onClick={onRetry} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-yellow-400 transition-colors shrink-0" title="Retry">
-          <RefreshCw className="w-4 h-4" />
-        </button>
-        <button
-          onClick={() => setShowTimeline(s => !s)}
-          title="Toggle timeline"
-          className={`p-1.5 rounded-lg transition-colors shrink-0 ${showTimeline ? 'text-primary' : 'text-textMuted/40 hover:text-textMuted'}`}
-        >
-          <History className="w-3.5 h-3.5" />
-        </button>
-        <button onClick={onRemove} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors shrink-0" title="Remove">
-          <XCircle className="w-4 h-4" />
-        </button>
+    <div className="card-hover bg-red-500/5 border border-red-500/20 border-l-2 border-l-red-500/50 rounded-xl p-3 flex items-center gap-3">
+      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-white text-sm font-medium truncate">{job.fileName}</p>
+        {job.error && <p className="text-red-400/70 text-xs truncate mt-0.5">{job.error}</p>}
       </div>
-      {showTimeline && timelineEvents.length > 0 && (
-        <div className="border-t border-red-500/10 px-4 py-3 space-y-1.5 bg-background/40">
-          {timelineEvents.map(e => (
-            <div key={e.id} className="flex items-center gap-2 text-xs">
-              <span className="text-textMuted/50 tabular-nums w-20 shrink-0 font-mono">
-                {new Date(e.createdAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-              </span>
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                e.event === 'complete' ? 'bg-green-400' :
-                e.event === 'failed'   ? 'bg-red-400' :
-                e.event === 'paused'   ? 'bg-amber-400' :
-                'bg-primary/60'
-              }`} />
-              <span className="text-textMuted">{EVENT_LABEL[e.event] ?? e.event}</span>
-              {e.workerName && <span className="text-textMuted/50">via {e.workerName}</span>}
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
+        <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
+        <ArrowRight className="w-3 h-3 text-textMuted" />
+        <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
+      </div>
+      <button onClick={onRetry} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-yellow-400 transition-colors shrink-0" title="Retry">
+        <RefreshCw className="w-4 h-4" />
+      </button>
+      <button onClick={onRemove} className="p-1.5 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors shrink-0" title="Remove">
+        <XCircle className="w-4 h-4" />
+      </button>
     </div>
   );
 }
@@ -934,7 +872,7 @@ function CompletedJobRow({ job, onRemove }: { job: Job; onRemove: () => void }) 
   const to   = targetCodecLabel(job.recipe);
 
   return (
-    <div className="bg-background border border-border/50 border-l-2 border-l-green-500/30 rounded-xl p-3.5 md:p-4 flex items-center gap-3 opacity-60 hover:opacity-100 transition-opacity">
+    <div className="bg-background border border-border/50 border-l-2 border-l-green-500/30 rounded-xl p-3 flex items-center gap-3 opacity-60 hover:opacity-100 transition-opacity">
       <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-white text-sm font-medium truncate">{job.fileName}</p>
@@ -942,7 +880,7 @@ function CompletedJobRow({ job, onRemove }: { job: Job; onRemove: () => void }) 
           <p className="text-textMuted text-xs mt-0.5">{Math.round(job.avgFps)} fps avg{job.elapsedSeconds ? ` · ${Math.round(job.elapsedSeconds / 60)}m` : ''}</p>
         )}
       </div>
-      <div className="flex items-center gap-1 text-xs font-mono shrink-0">
+      <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
         <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
         <ArrowRight className="w-3 h-3 text-textMuted" />
         <span className="px-1.5 py-0.5 rounded border bg-green-500/10 border-green-500/20 text-green-400">{to}</span>

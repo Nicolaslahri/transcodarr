@@ -148,6 +148,9 @@ export function initDb(): void {
     created_at  INTEGER DEFAULT (unixepoch())
   )`);
   migrate(`CREATE INDEX IF NOT EXISTS idx_job_events_job ON job_events(job_id, created_at)`);
-  // v11 migrations — watched path exclude patterns
+  // v11 migrations — per-folder exclude patterns
   migrate(`ALTER TABLE watched_paths ADD COLUMN exclude_patterns TEXT DEFAULT NULL`);
+  // v12 migrations — webhook delivery tracking + scheduled dispatch
+  migrate(`ALTER TABLE webhooks ADD COLUMN last_fired INTEGER`);
+  migrate(`ALTER TABLE webhooks ADD COLUMN last_delivery_ok INTEGER DEFAULT 1`);
 }

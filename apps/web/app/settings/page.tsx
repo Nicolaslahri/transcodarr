@@ -6,6 +6,7 @@ import {
   FolderOpen, Plus, Trash2, ToggleLeft, ToggleRight,
   Filter, Settings2, BookOpen, Info, ArrowLeftRight,
   Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell, Pencil, Clock, ArrowRightCircle,
+  Eye, EyeOff, Shield, ChevronDown, Loader2, CheckCircle2, Scan, AlertTriangle,
 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
@@ -223,6 +224,8 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   const [form, setForm]       = useState({ ...BLANK_FORM });
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [allRecipes, setAllRecipes] = useState<Recipe[]>([]);
+  const [postAddId, setPostAddId] = useState<string | null>(null);
+  const [scanningIds, setScanningIds] = useState<Set<string>>(new Set());
 
   const load = () => fetch('/api/settings/paths').then(r => r.json()).then(setPaths).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -270,15 +273,19 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      closeForm();
+      load();
     } else {
-      await fetch('/api/settings/paths', {
+      const res = await fetch('/api/settings/paths', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      const newPath = await res.json();
+      closeForm();
+      load();
+      if (newPath?.id) setPostAddId(newPath.id);
     }
-    closeForm();
-    load();
   };
 
   const toggle = async (p: WatchedPath) => {
@@ -309,8 +316,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
       )}
 
       {paths.map(p => (
-        <div key={p.id} className={`card-hover bg-surface border rounded-2xl p-5 transition-opacity ${!p.enabled ? 'opacity-50' : ''}`}
-          style={{ borderColor: p.enabled ? 'var(--color-border)' : undefined }}>
+        <div key={p.id} className={`card-hover bg-surface border border-border rounded-2xl p-5 transition-opacity ${!p.enabled ? 'opacity-50' : ''}`}>
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-white font-mono text-sm font-medium truncate">{p.path}</p>
@@ -363,174 +369,190 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         </div>
       ))}
 
-      {/* Add form */}
+      {/* Add / Edit modal */}
       {adding && (
-        <div className="bg-surface border border-primary/30 rounded-2xl p-6 space-y-4">
-          <h3 className="text-white font-bold text-sm">{editingId ? 'Edit Watched Folder' : 'Add Watched Folder'}</h3>
-
-          <div>
-            <label className="text-xs text-textMuted font-medium mb-1.5 block">Folder Path</label>
-            <div className="flex gap-2">
-              <input
-                value={form.path}
-                onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
-                placeholder="/data/media/movies"
-                className="flex-1 bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
-              />
-              <button
-                title="Browse Folders"
-                onClick={() => setExplorerOpen(true)}
-                className="px-4 py-2 bg-surface border border-border rounded-xl hover:bg-white/5 transition-colors text-textMuted hover:text-white flex items-center justify-center shrink-0"
-              >
-                <FolderOpen className="w-5 h-5 text-primary" />
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-surface border border-border rounded-2xl w-full max-w-xl max-h-[92vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom-4 sm:slide-in-from-bottom-0 duration-200">
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+              <h3 className="text-white font-bold">{editingId ? 'Edit Watched Folder' : 'Add Watched Folder'}</h3>
+              <button onClick={closeForm} className="text-textMuted hover:text-white transition-colors">
+                <X className="w-5 h-5" />
               </button>
             </div>
-          </div>
 
-          {/* Recipe picker */}
-          <div>
-            <label className="text-xs text-textMuted font-medium mb-1.5 block">Recipe</label>
-            <button
-              onClick={() => setRecipePickerOpen(true)}
-              className="w-full flex items-center justify-between bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white hover:border-primary/40 transition-colors"
-            >
-              <span className="flex items-center gap-2">
-                {selectedRecipe ? (
-                  <>
-                    <span>{selectedRecipe.icon}</span>
-                    <span className="font-medium">{selectedRecipe.name}</span>
-                    {selectedRecipe.estimatedReduction !== undefined && selectedRecipe.estimatedReduction > 0 && (
-                      <span className="text-xs text-textMuted">~{selectedRecipe.estimatedReduction}% smaller</span>
+            {/* Scrollable form body */}
+            <div className="overflow-y-auto flex-1 p-6 space-y-4">
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block">Folder Path</label>
+                <div className="flex gap-2">
+                  <input
+                    value={form.path}
+                    onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
+                    placeholder="/data/media/movies"
+                    disabled={!!editingId}
+                    className="flex-1 bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  {!editingId && (
+                    <button
+                      title="Browse Folders"
+                      onClick={() => setExplorerOpen(true)}
+                      className="px-4 py-2 bg-background border border-border rounded-xl hover:bg-white/5 transition-colors text-textMuted hover:text-white flex items-center justify-center shrink-0"
+                    >
+                      <FolderOpen className="w-5 h-5 text-primary" />
+                    </button>
+                  )}
+                </div>
+                {editingId && <p className="text-xs text-textMuted/50 mt-1">Path cannot be changed — delete and re-add to use a different path.</p>}
+              </div>
+
+              {/* Recipe picker */}
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block">Recipe</label>
+                <button
+                  onClick={() => setRecipePickerOpen(true)}
+                  className="w-full flex items-center justify-between bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white hover:border-primary/40 transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    {selectedRecipe ? (
+                      <>
+                        <span>{selectedRecipe.icon}</span>
+                        <span className="font-medium">{selectedRecipe.name}</span>
+                        {selectedRecipe.estimatedReduction !== undefined && selectedRecipe.estimatedReduction > 0 && (
+                          <span className="text-xs text-textMuted">~{selectedRecipe.estimatedReduction}% smaller</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-textMuted">Choose a recipe…</span>
                     )}
-                  </>
-                ) : (
-                  <span className="text-textMuted">Choose a recipe…</span>
-                )}
-              </span>
-              <ChevronRight className="w-4 h-4 text-textMuted" />
-            </button>
-          </div>
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-textMuted" />
+                </button>
+              </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Priority</label>
-              <select
-                value={form.priority}
-                onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
-              >
-                <option value="high">High</option>
-                <option value="normal">Normal</option>
-                <option value="low">Low</option>
-              </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-textMuted font-medium mb-1.5 block">Priority</label>
+                  <select
+                    value={form.priority}
+                    onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+                  >
+                    <option value="high">High</option>
+                    <option value="normal">Normal</option>
+                    <option value="low">Low</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-textMuted font-medium mb-1.5 block">Min File Size (MB)</label>
+                  <input
+                    type="number"
+                    value={form.minSizeMb}
+                    onChange={e => setForm(f => ({ ...f, minSizeMb: parseInt(e.target.value) }))}
+                    className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-textMuted font-medium mb-1.5 block">Audio Language</label>
+                  <select
+                    value={form.preferredAudioLang}
+                    onChange={e => setForm(f => ({ ...f, preferredAudioLang: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+                  >
+                    {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-textMuted font-medium mb-1.5 block">Subtitle Language</label>
+                  <select
+                    value={form.preferredSubtitleLang}
+                    onChange={e => setForm(f => ({ ...f, preferredSubtitleLang: e.target.value }))}
+                    className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+                  >
+                    {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block">Extensions</label>
+                <input
+                  value={form.extensions}
+                  onChange={e => setForm(f => ({ ...f, extensions: e.target.value }))}
+                  className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.recurse}
+                    onChange={e => setForm(f => ({ ...f, recurse: e.target.checked }))}
+                    className="w-4 h-4 accent-primary"
+                  />
+                  <span className="text-sm text-white">Scan subdirectories</span>
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-textMuted font-medium whitespace-nowrap">Periodic re-scan</label>
+                  <select
+                    value={form.scanIntervalHours}
+                    onChange={e => setForm(f => ({ ...f, scanIntervalHours: parseInt(e.target.value) }))}
+                    className="bg-background border border-border rounded-xl px-3 py-2 text-sm text-white focus:outline-none appearance-none"
+                  >
+                    <option value={0}>Off</option>
+                    <option value={6}>Every 6h</option>
+                    <option value={12}>Every 12h</option>
+                    <option value={24}>Daily</option>
+                    <option value={48}>Every 2 days</option>
+                    <option value={168}>Weekly</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-textMuted font-medium block mb-1.5">
+                  Move completed files to <span className="text-textMuted/60">(optional)</span>
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={form.moveTo}
+                    onChange={e => setForm(f => ({ ...f, moveTo: e.target.value }))}
+                    placeholder="Leave empty to keep files in place"
+                    className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setExplorerOpen(true)}
+                    className="px-3 py-2 bg-background border border-border rounded-xl text-textMuted hover:text-white hover:border-primary/40 transition-colors text-xs"
+                  >
+                    Browse
+                  </button>
+                </div>
+                <p className="text-xs text-textMuted/50 mt-1">
+                  After transcoding completes, the output file will be moved to this directory.
+                </p>
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Min File Size (MB)</label>
-              <input
-                type="number"
-                value={form.minSizeMb}
-                onChange={e => setForm(f => ({ ...f, minSizeMb: parseInt(e.target.value) }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none"
-              />
-            </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Audio Language</label>
-              <select
-                value={form.preferredAudioLang}
-                onChange={e => setForm(f => ({ ...f, preferredAudioLang: e.target.value }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
-              >
-                {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Subtitle Language</label>
-              <select
-                value={form.preferredSubtitleLang}
-                onChange={e => setForm(f => ({ ...f, preferredSubtitleLang: e.target.value }))}
-                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
-              >
-                {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-textMuted font-medium mb-1.5 block">Extensions</label>
-            <input
-              value={form.extensions}
-              onChange={e => setForm(f => ({ ...f, extensions: e.target.value }))}
-              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono"
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.recurse}
-                onChange={e => setForm(f => ({ ...f, recurse: e.target.checked }))}
-                className="w-4 h-4 accent-primary"
-              />
-              <span className="text-sm text-white">Scan subdirectories</span>
-            </label>
-
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-textMuted font-medium whitespace-nowrap">Periodic re-scan</label>
-              <select
-                value={form.scanIntervalHours}
-                onChange={e => setForm(f => ({ ...f, scanIntervalHours: parseInt(e.target.value) }))}
-                className="bg-background border border-border rounded-xl px-3 py-2 text-sm text-white focus:outline-none appearance-none"
-              >
-                <option value={0}>Off</option>
-                <option value={6}>Every 6h</option>
-                <option value={12}>Every 12h</option>
-                <option value={24}>Daily</option>
-                <option value={48}>Every 2 days</option>
-                <option value={168}>Weekly</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-textMuted font-medium block mb-1.5">
-              Move completed files to <span className="text-textMuted/60">(optional)</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={form.moveTo}
-                onChange={e => setForm(f => ({ ...f, moveTo: e.target.value }))}
-                placeholder="Leave empty to keep files in place"
-                className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
-              />
+            {/* Modal footer */}
+            <div className="flex gap-2 px-6 py-4 border-t border-border shrink-0">
               <button
-                type="button"
-                onClick={() => setExplorerOpen(true)}
-                className="px-3 py-2 bg-background border border-border rounded-xl text-textMuted hover:text-white hover:border-primary/40 transition-colors text-xs"
+                onClick={save}
+                disabled={!form.path || !form.recipe}
+                className="px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
               >
-                Browse
+                {editingId ? 'Save Changes' : 'Add Folder'}
+              </button>
+              <button onClick={closeForm} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
+                Cancel
               </button>
             </div>
-            <p className="text-xs text-textMuted/50 mt-1">
-              After transcoding completes, the output file will be moved to this directory.
-            </p>
-          </div>
-
-          <div className="flex gap-2 pt-2">
-            <button
-              onClick={save}
-              disabled={!form.path || !form.recipe}
-              className="px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
-            >
-              {editingId ? 'Save Changes' : 'Add Folder'}
-            </button>
-            <button onClick={closeForm} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
-              Cancel
-            </button>
           </div>
         </div>
       )}
@@ -542,6 +564,33 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         >
           <Plus className="w-4 h-4" /> Add Watched Folder
         </button>
+      )}
+
+      {postAddId && (
+        <div className="flex items-start gap-4 p-4 bg-green-900/10 border border-green-500/20 rounded-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-white font-medium text-sm mb-1">Folder added successfully</p>
+            <p className="text-textMuted text-xs">Scan now to queue existing files for transcoding?</p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={async () => {
+                const id = postAddId;
+                setPostAddId(null);
+                setScanningIds(prev => new Set(prev).add(id));
+                try { await fetch(`/api/settings/paths/${id}/scan`, { method: 'POST' }); }
+                finally { setScanningIds(prev => { const s = new Set(prev); s.delete(id); return s; }); }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-bold rounded-lg hover:bg-green-500/30 transition-colors"
+            >
+              <Scan className="w-3.5 h-3.5" /> Scan Now
+            </button>
+            <button onClick={() => setPostAddId(null)} className="px-3 py-1.5 text-textMuted text-xs hover:text-white transition-colors">
+              Later
+            </button>
+          </div>
+        </div>
       )}
 
       <FileExplorerModal
@@ -582,20 +631,28 @@ function SmartFiltersPanel() {
     skipKeywords: ['REMUX', 'BDREMUX'],
     skipDolbyAtmos: true,
   });
-  const [saved, setSaved] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitialMount = useRef(true);
 
   useEffect(() => {
     fetch('/api/settings/filters').then(r => r.json()).then(setFilters).catch(() => {});
   }, []);
 
-  const save = async () => {
-    await fetch('/api/settings/filters', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(filters),
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  useEffect(() => {
+    if (isInitialMount.current) { isInitialMount.current = false; return; }
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setAutoSaveStatus('saving');
+    saveTimerRef.current = setTimeout(async () => {
+      await fetch('/api/settings/filters', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(filters),
+      });
+      setAutoSaveStatus('saved');
+      setTimeout(() => setAutoSaveStatus('idle'), 2000);
+    }, 800);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [filters]);
 
   const set = (key: keyof SmartFilters, val: any) => setFilters(f => ({ ...f, [key]: val }));
 
@@ -606,7 +663,12 @@ function SmartFiltersPanel() {
       <div className="card-hover bg-surface border border-border rounded-2xl divide-y divide-border overflow-hidden">
         <FilterRow title="Skip already in target codec" description="If the file is already in the recipe's target codec, skip it entirely." enabled={filters.skipAlreadyTargetCodec} onToggle={v => set('skipAlreadyTargetCodec', v)} />
         <FilterRow title="Skip low-bitrate files" description="Files already heavily compressed at this bitrate probably won't benefit from re-encoding." enabled={filters.skipBelowBitrateKbps !== null} onToggle={v => set('skipBelowBitrateKbps', v ? 500 : null)}>
-          {filters.skipBelowBitrateKbps !== null && <NumberInput label="Below (kbps)" value={filters.skipBelowBitrateKbps} onChange={v => set('skipBelowBitrateKbps', v)} />}
+          {filters.skipBelowBitrateKbps !== null && (
+            <>
+              <NumberInput label="Below (kbps)" value={filters.skipBelowBitrateKbps} onChange={v => set('skipBelowBitrateKbps', v)} />
+              <p className="text-xs text-textMuted/50 mt-1.5">Typical reference: 1080p H.264 ≈ 4,000 kbps · 1080p H.265 ≈ 2,000 kbps · 4K H.265 ≈ 8,000 kbps</p>
+            </>
+          )}
         </FilterRow>
         <FilterRow title="Skip low-resolution files" description="Don't waste GPU time on content below a certain height." enabled={filters.skipBelowHeightPx !== null} onToggle={v => set('skipBelowHeightPx', v ? 480 : null)}>
           {filters.skipBelowHeightPx !== null && <NumberInput label="Below (px height)" value={filters.skipBelowHeightPx} onChange={v => set('skipBelowHeightPx', v)} />}
@@ -614,22 +676,27 @@ function SmartFiltersPanel() {
         <FilterRow title="Skip small files" description="Skip files under a minimum size — likely already compact." enabled={filters.skipBelowSizeMb !== null} onToggle={v => set('skipBelowSizeMb', v ? 50 : null)}>
           {filters.skipBelowSizeMb !== null && <NumberInput label="Below (MB)" value={filters.skipBelowSizeMb} onChange={v => set('skipBelowSizeMb', v)} />}
         </FilterRow>
-        <FilterRow title="Skip Dolby Atmos / lossless audio" description="Preserve lossless audio tracks by skipping files containing them." enabled={filters.skipDolbyAtmos} onToggle={v => set('skipDolbyAtmos', v)} />
+        <FilterRow title="Preserve lossless audio (Dolby Atmos / TrueHD / DTS-HD MA)" description="Skip files with Dolby Atmos or lossless audio tracks. Re-encoding always degrades lossless audio quality — enable this to protect high-fidelity content." enabled={filters.skipDolbyAtmos} onToggle={v => set('skipDolbyAtmos', v)} />
         <FilterRow title="Skip by filename keywords" description="Skip files whose name contains any of these words (comma-separated)." enabled={filters.skipKeywords.length > 0} onToggle={v => set('skipKeywords', v ? ['REMUX'] : [])}>
           {filters.skipKeywords.length > 0 && (
-            <input
-              className="mt-3 w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-primary/50"
-              value={filters.skipKeywords.join(', ')}
-              onChange={e => set('skipKeywords', e.target.value.split(',').map(k => k.trim()).filter(Boolean))}
-              placeholder="REMUX, BDREMUX, BLURAY"
-            />
+            <>
+              <input
+                className="mt-3 w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-primary/50"
+                value={filters.skipKeywords.join(', ')}
+                onChange={e => set('skipKeywords', e.target.value.split(',').map(k => k.trim()).filter(Boolean))}
+                placeholder="REMUX, BDREMUX, BLURAY"
+              />
+              <p className="text-xs text-textMuted/50 mt-1">Case-insensitive — REMUX and remux both match.</p>
+            </>
           )}
         </FilterRow>
       </div>
 
-      <button onClick={save} className="px-5 py-2.5 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">
-        {saved ? '✓ Saved!' : 'Save Filters'}
-      </button>
+      <div className="flex items-center gap-2 text-xs text-textMuted">
+        {autoSaveStatus === 'saving' && <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Auto-saving…</>}
+        {autoSaveStatus === 'saved' && <><CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> <span className="text-green-400">Saved</span></>}
+        {autoSaveStatus === 'idle' && <span className="text-textMuted/40">Changes save automatically</span>}
+      </div>
     </div>
   );
 }
@@ -674,7 +741,7 @@ function NumberInput({ label, value, onChange }: { label: string; value: number;
 
 function RecipesPanel({ apiUrl }: { apiUrl: string }) {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = () => fetch(`${apiUrl}/api/settings/recipes`).then(r => r.json()).then(setRecipes).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -697,30 +764,116 @@ function RecipesPanel({ apiUrl }: { apiUrl: string }) {
         <div>
           <h3 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-4">Community Recipes ({community.length})</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {community.map(r => <RecipeCard key={r.id} recipe={r} community />)}
+            {community.map(r => (
+              <RecipeCard key={r.id} recipe={r} community
+                onDelete={async () => {
+                  await fetch(`${apiUrl}/api/settings/recipes/custom/${r.id}`, { method: 'DELETE' });
+                  load();
+                }}
+              />
+            ))}
           </div>
         </div>
       )}
 
       <button
-        onClick={() => setPickerOpen(true)}
+        onClick={() => setImportOpen(true)}
         className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors px-4 py-2.5 border border-dashed border-border rounded-xl"
       >
         <Plus className="w-4 h-4" /> Import Community Recipe…
       </button>
 
-      <RecipePickerModal
-        open={pickerOpen}
-        onClose={() => { setPickerOpen(false); load(); }}
-        selectedId={undefined}
+      <ImportRecipeModal
+        open={importOpen}
+        onClose={() => { setImportOpen(false); load(); }}
         apiUrl={apiUrl}
-        onSelect={() => { setPickerOpen(false); load(); }}
       />
     </div>
   );
 }
 
-function RecipeCard({ recipe, community }: { recipe: Recipe; community?: boolean }) {
+function ImportRecipeModal({ open, onClose, apiUrl }: { open: boolean; onClose: () => void; apiUrl: string }) {
+  const [url, setUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => { if (!open) { setUrl(''); setError(''); setSuccess(''); } }, [open]);
+
+  const handleImport = async () => {
+    if (!url.trim()) return;
+    setImporting(true); setError(''); setSuccess('');
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/recipes/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error ?? 'Import failed'); return; }
+      setSuccess(`Imported ${data.imported ?? 'recipe(s)'} successfully!`);
+      setTimeout(() => onClose(), 1500);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-md shadow-2xl animate-in slide-in-from-bottom-4 duration-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-white font-bold">Import Community Recipe</h2>
+          <button onClick={onClose} className="text-textMuted hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-textMuted text-sm">
+            Paste a URL that returns a JSON array of recipe objects. Works with GitHub raw URLs.
+          </p>
+          <div>
+            <label className="text-xs text-textMuted font-medium mb-1.5 block">Recipe URL</label>
+            <input
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleImport()}
+              placeholder="https://raw.githubusercontent.com/…/recipes.json"
+              autoFocus
+              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white font-mono placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
+            />
+          </div>
+          {error && (
+            <p className="text-red-400 text-sm flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />{error}
+            </p>
+          )}
+          {success && (
+            <p className="text-green-400 text-sm flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />{success}
+            </p>
+          )}
+        </div>
+        <div className="flex gap-2 px-6 py-4 border-t border-border">
+          <button
+            onClick={handleImport}
+            disabled={importing || !url.trim()}
+            className="flex items-center gap-2 px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
+          >
+            {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            {importing ? 'Importing…' : 'Import'}
+          </button>
+          <button onClick={onClose} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecipeCard({ recipe, community, onDelete }: { recipe: Recipe; community?: boolean; onDelete?: () => void }) {
   return (
     <div className="card-hover bg-surface border border-border rounded-2xl p-5">
       <div className="flex items-start gap-3 mb-3">
@@ -740,6 +893,16 @@ function RecipeCard({ recipe, community }: { recipe: Recipe; community?: boolean
           <Badge label={`~${recipe.estimatedReduction}% smaller`} color="green" />
         )}
       </div>
+      {community && onDelete && (
+        <div className="flex justify-end mt-3 pt-3 border-t border-border">
+          <button
+            onClick={onDelete}
+            className="flex items-center gap-1.5 text-xs text-textMuted hover:text-red-400 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Remove recipe
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1014,6 +1177,8 @@ function GeneralPanel() {
   const { apiUrl, meta } = useAppState();
   const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '', preferred_audio_lang: '', preferred_subtitle_lang: '' });
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [showDangerZone, setShowDangerZone] = useState(false);
 
   useEffect(() => {
     fetch(`${apiUrl}/api/settings/general`).then(r => r.json()).then(data => {
@@ -1030,12 +1195,18 @@ function GeneralPanel() {
   }, [apiUrl]);
 
   const save = async () => {
-    await fetch(`${apiUrl}/api/settings/general`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setSaving(true);
+    try {
+      const payload = { ...settings, max_concurrent_jobs: settings.maxConcurrentJobs };
+      await fetch(`${apiUrl}/api/settings/general`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const resetSetup = async () => {
@@ -1059,16 +1230,23 @@ function GeneralPanel() {
         </Field>
 
         <Field label="Max Simultaneous Jobs">
-          <select
+          <input
+            type="number"
+            min={1}
+            max={32}
             value={settings.maxConcurrentJobs}
             onChange={e => setSettings(s => ({ ...s, maxConcurrentJobs: e.target.value }))}
-            className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
-          >
-            {[1,2,3,4,6,8].map(n => <option key={n} value={n}>{n} job{n > 1 ? 's' : ''}</option>)}
-          </select>
+            className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40"
+          />
         </Field>
 
-        <Field label="Queue Strategy">
+        <Field label="Queue Strategy" hint={
+          settings.queueStrategy === 'fifo'     ? 'Files are processed in the order they were discovered — first in, first out.'
+        : settings.queueStrategy === 'largest'  ? 'Prioritise large files first — maximises space savings per batch.'
+        : settings.queueStrategy === 'oldest'   ? 'Oldest files in your library get transcoded first.'
+        : settings.queueStrategy === 'smallest' ? 'Small files first — see completed jobs sooner while large ones process overnight.'
+        : undefined
+        }>
           <select
             value={settings.queueStrategy}
             onChange={e => setSettings(s => ({ ...s, queueStrategy: e.target.value }))}
@@ -1092,6 +1270,15 @@ function GeneralPanel() {
             </button>
           </div>
         </Field>
+
+        {settings.autoAcceptWorkers === 'true' && (
+          <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+            <Shield className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-400/80 leading-relaxed">
+              <strong className="text-amber-400">Security notice:</strong> Any device on your local network can join as a worker without approval. Only enable this on trusted networks.
+            </p>
+          </div>
+        )}
 
         {meta.mode !== 'worker' && (
           <>
@@ -1125,26 +1312,44 @@ function GeneralPanel() {
               placeholder="http://192.168.1.50:3001"
               className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
             />
-            <p className="text-xs text-textMuted mt-1.5 ml-1">Requires a manual restart of the worker executable to apply.</p>
+            <div className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-400/80">Requires a manual restart of the worker to apply. Stop the process and relaunch.</p>
+            </div>
           </Field>
         )}
       </div>
 
       <div className="flex items-center gap-3">
-        <button onClick={save} className="px-5 py-2.5 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">
-          {saved ? '✓ Saved!' : 'Save Settings'}
+        <button
+          onClick={save}
+          disabled={saving}
+          className="px-5 py-2.5 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-60 flex items-center gap-2"
+        >
+          {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : saved ? '✓ Saved!' : 'Save Settings'}
         </button>
       </div>
 
-      <div className="card-hover bg-surface border border-red-500/20 rounded-2xl p-6">
-        <h3 className="text-red-400 font-bold text-sm mb-1">Reset Setup</h3>
-        <p className="text-textMuted text-xs mb-4">Wipe this node's role configuration and restart the onboarding wizard. The server will restart automatically.</p>
+      <div className="space-y-3">
         <button
-          onClick={resetSetup}
-          className="px-5 py-2.5 bg-red-500/10 text-red-400 text-sm font-bold rounded-xl border border-red-500/30 hover:bg-red-500/20 transition-colors"
+          onClick={() => setShowDangerZone(s => !s)}
+          className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors"
         >
-          Reset Setup…
+          <ChevronDown className={`w-4 h-4 transition-transform ${showDangerZone ? 'rotate-180' : ''}`} />
+          {showDangerZone ? 'Hide danger zone' : 'Show danger zone'}
         </button>
+        {showDangerZone && (
+          <div className="card-hover bg-surface border border-red-500/20 rounded-2xl p-6">
+            <h3 className="text-red-400 font-bold text-sm mb-1">Reset Setup</h3>
+            <p className="text-textMuted text-xs mb-4">Wipe this node's role configuration and restart the onboarding wizard. The server will restart automatically.</p>
+            <button
+              onClick={resetSetup}
+              className="px-5 py-2.5 bg-red-500/10 text-red-400 text-sm font-bold rounded-xl border border-red-500/30 hover:bg-red-500/20 transition-colors"
+            >
+              Reset Setup…
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1166,56 +1371,6 @@ interface Webhook {
   enabled: number;
 }
 
-function BrowserNotificationsCard() {
-  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
-  const [enabled, setEnabled] = useState(true);
-
-  useEffect(() => {
-    if (typeof Notification === 'undefined') { setPermission('unsupported'); return; }
-    setPermission(Notification.permission);
-    setEnabled(localStorage.getItem('transcodarr:notifications') !== 'off');
-  }, []);
-
-  const request = async () => {
-    const result = await Notification.requestPermission();
-    setPermission(result);
-  };
-
-  const toggle = (on: boolean) => {
-    setEnabled(on);
-    localStorage.setItem('transcodarr:notifications', on ? 'on' : 'off');
-  };
-
-  if (permission === 'unsupported') return null;
-
-  return (
-    <div className="card-hover bg-surface border border-border rounded-2xl p-6">
-      <h3 className="text-white font-bold text-sm mb-1">Browser Notifications</h3>
-      <p className="text-textMuted text-xs mb-4">
-        Get a desktop notification when a job completes or fails — even when this tab is in the background.
-      </p>
-      {permission !== 'granted' ? (
-        <button
-          onClick={request}
-          className="px-4 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors"
-        >
-          Enable desktop notifications
-        </button>
-      ) : (
-        <label className="flex items-center gap-3 cursor-pointer">
-          <div
-            onClick={() => toggle(!enabled)}
-            className={`relative w-10 h-6 rounded-full transition-colors cursor-pointer ${enabled ? 'bg-primary' : 'bg-border'}`}
-          >
-            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${enabled ? 'left-5' : 'left-1'}`} />
-          </div>
-          <span className="text-sm text-white">Notify me when jobs complete or fail</span>
-        </label>
-      )}
-    </div>
-  );
-}
-
 function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
   const [hooks, setHooks] = useState<Webhook[]>([]);
   const [newUrl, setNewUrl] = useState('');
@@ -1223,6 +1378,9 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
   const [newSecret, setNewSecret] = useState('');
   const [adding, setAdding] = useState(false);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
+  const [showSecret, setShowSecret] = useState(false);
+  const [editingHookId, setEditingHookId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ url: '', events: [] as string[], secret: '' });
 
   const load = useCallback(async () => {
     const r = await fetch(`${apiUrl}/api/settings/webhooks`);
@@ -1270,41 +1428,66 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
 
   return (
     <div className="animate-section space-y-6">
-      <BrowserNotificationsCard />
-
       <div className="card-hover bg-surface border border-border rounded-2xl p-6">
-        <h3 className="text-white font-bold text-sm mb-1">Webhooks</h3>
+        <div className="flex items-start justify-between mb-1">
+          <h3 className="text-white font-bold text-sm">Webhooks</h3>
+          {!adding && (
+            <button
+              onClick={() => setAdding(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-background border border-border rounded-lg text-xs text-textMuted hover:text-white hover:border-primary/40 transition-all"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Webhook
+            </button>
+          )}
+        </div>
         <p className="text-textMuted text-xs mb-5">
           Paste any URL — Discord, Slack, or custom endpoint. Transcodarr will POST a JSON payload when events fire.
         </p>
 
         {hooks.length === 0 && !adding && (
-          <p className="text-textMuted text-sm py-4 text-center border border-border border-dashed rounded-xl">
+          <p className="text-textMuted text-sm py-6 text-center border border-dashed border-border rounded-xl">
             No webhooks configured yet.
           </p>
         )}
 
-        <div className="space-y-3 mb-4">
+        <div className="space-y-2 mb-4">
           {hooks.map(hook => {
             let eventsArr: string[] = [];
             try { eventsArr = JSON.parse(hook.events); } catch {}
             return (
-              <div key={hook.id} className={`card-hover bg-background border rounded-xl p-4 ${hook.enabled ? 'border-border' : 'border-border/40 opacity-60'}`}>
-                <div className="flex items-start gap-3">
+              <div key={hook.id} className={`bg-background border rounded-xl overflow-hidden ${hook.enabled ? 'border-border' : 'border-border/40 opacity-60'}`}>
+                <div className="flex items-start gap-3 p-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-sm font-medium truncate font-mono">{hook.url}</p>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {eventsArr.map(e => (
-                        <span key={e} className="px-1.5 py-0.5 text-[10px] rounded border bg-surface border-border text-textMuted">{e}</span>
-                      ))}
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {eventsArr.map(e => {
+                        const tagStyle = e === 'job:complete' ? 'bg-green-900/20 border-green-500/25 text-green-400'
+                                       : e === 'job:failed'   ? 'bg-red-900/20 border-red-500/25 text-red-400'
+                                       : e === 'job:queued'   ? 'bg-sky-900/20 border-sky-500/25 text-sky-400'
+                                       : 'bg-surface border-border text-textMuted';
+                        return <span key={e} className={`px-1.5 py-0.5 text-[10px] rounded border ${tagStyle}`}>{e}</span>;
+                      })}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0">
                     <button
                       onClick={() => test(hook.id)}
                       className="px-2.5 py-1 text-xs border border-border text-textMuted hover:text-white hover:border-primary/40 rounded-lg transition-colors"
                     >
                       {testResult[hook.id] ?? 'Test'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (editingHookId === hook.id) { setEditingHookId(null); return; }
+                        let evArr: string[] = [];
+                        try { evArr = JSON.parse(hook.events); } catch {}
+                        setEditForm({ url: hook.url, events: evArr, secret: '' });
+                        setEditingHookId(hook.id);
+                      }}
+                      className="p-1.5 text-textMuted hover:text-white transition-colors"
+                      title="Edit webhook"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button onClick={() => toggle(hook)} className="p-1.5 text-textMuted hover:text-white transition-colors">
                       {hook.enabled
@@ -1312,29 +1495,68 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                         : <ToggleLeft className="w-4 h-4" />}
                     </button>
                     <button onClick={() => remove(hook.id)} className="p-1.5 text-textMuted hover:text-red-400 transition-colors">
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
+                {editingHookId === hook.id && (
+                  <div className="border-t border-border bg-surface/50 p-3 space-y-3">
+                    <div>
+                      <label className="text-xs text-textMuted font-medium mb-1 block">URL</label>
+                      <input value={editForm.url} onChange={e => setEditForm(f => ({...f, url: e.target.value}))}
+                        className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/40" />
+                    </div>
+                    <div className="flex gap-3 flex-wrap">
+                      {WEBHOOK_EVENTS.map(ev => (
+                        <label key={ev.id} className="flex items-center gap-1.5 cursor-pointer">
+                          <input type="checkbox" checked={editForm.events.includes(ev.id)}
+                            onChange={e => setEditForm(f => ({...f, events: e.target.checked ? [...f.events, ev.id] : f.events.filter(x => x !== ev.id)}))}
+                            className="accent-primary" />
+                          <span className="text-xs text-textMuted">{ev.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={async () => {
+                        await fetch(`${apiUrl}/api/settings/webhooks/${hook.id}`, {
+                          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ url: editForm.url, events: editForm.events, secret: editForm.secret || undefined }),
+                        });
+                        setEditingHookId(null);
+                        load();
+                      }} className="px-3 py-1.5 bg-primary text-background text-xs font-bold rounded-lg hover:bg-primary/90 transition-colors">
+                        Save
+                      </button>
+                      <button onClick={() => setEditingHookId(null)} className="px-3 py-1.5 text-textMuted text-xs hover:text-white transition-colors">Cancel</button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
 
-        {adding ? (
-          <div className="border border-primary/30 bg-primary/5 rounded-xl p-4 space-y-3">
+        {adding && (
+          <div className="bg-background border border-border rounded-xl p-4 space-y-3">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-white text-sm font-semibold">New Webhook</p>
+              <button onClick={() => setAdding(false)} className="text-textMuted hover:text-white transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
             <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Webhook URL</label>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">URL</label>
               <input
                 value={newUrl}
                 onChange={e => setNewUrl(e.target.value)}
                 placeholder="https://discord.com/api/webhooks/..."
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/60"
+                autoFocus
+                className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
               />
             </div>
             <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Events to fire on</label>
-              <div className="flex gap-2 flex-wrap">
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Fire on</label>
+              <div className="flex gap-3 flex-wrap">
                 {WEBHOOK_EVENTS.map(ev => (
                   <label key={ev.id} className="flex items-center gap-1.5 cursor-pointer">
                     <input
@@ -1351,16 +1573,32 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
               </div>
             </div>
             <div>
-              <label className="text-xs text-textMuted font-medium mb-1.5 block">Secret (optional — for HMAC signature)</label>
-              <input
-                value={newSecret}
-                onChange={e => setNewSecret(e.target.value)}
-                placeholder="my-secret-key"
-                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-textMuted focus:outline-none focus:border-primary/60"
-              />
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">
+                HMAC Secret <span className="text-textMuted/50">(optional)</span>
+              </label>
+              <div className="relative">
+                <input
+                  value={newSecret}
+                  onChange={e => setNewSecret(e.target.value)}
+                  type={showSecret ? 'text' : 'password'}
+                  placeholder="my-secret-key"
+                  className="w-full bg-surface border border-border rounded-lg px-3 py-2 pr-10 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/40"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecret(s => !s)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-textMuted hover:text-white transition-colors"
+                >
+                  {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <button onClick={add} className="px-4 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors">
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={add}
+                disabled={!newUrl.trim()}
+                className="px-4 py-2 bg-primary text-background text-sm font-bold rounded-lg hover:bg-primary/90 disabled:opacity-40 transition-colors"
+              >
                 Add Webhook
               </button>
               <button onClick={() => setAdding(false)} className="px-4 py-2 text-textMuted text-sm hover:text-white transition-colors">
@@ -1368,25 +1606,18 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
               </button>
             </div>
           </div>
-        ) : (
-          <button
-            onClick={() => setAdding(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-xl text-textMuted hover:text-white hover:border-primary/40 transition-all text-sm"
-          >
-            <Plus className="w-4 h-4" />
-            Add Webhook
-          </button>
         )}
       </div>
     </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <div>
       <label className="text-xs text-textMuted font-medium mb-1.5 block">{label}</label>
       {children}
+      {hint && <p className="text-xs text-textMuted/60 mt-1.5 ml-1">{hint}</p>}
     </div>
   );
 }

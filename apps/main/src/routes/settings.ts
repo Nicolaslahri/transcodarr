@@ -77,6 +77,40 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // GET /api/settings/recipes/stats — per-recipe avg fps from completed jobs
+  app.get('/recipes/stats', async () => {
+    const rows = getDb().prepare(`
+      SELECT recipe, COUNT(*) as job_count, AVG(avg_fps) as avg_fps
+      FROM jobs WHERE status = 'complete' AND avg_fps IS NOT NULL AND avg_fps > 0
+      GROUP BY recipe
+    `).all() as any[];
+    return Object.fromEntries(rows.map((r: any) => [r.recipe, { avgFps: Math.round(r.avg_fps), jobCount: r.job_count }]));
+  });
+
+  // POST /api/settings/recipes/custom — create a custom recipe from scratch
+  app.post<{ Body: { name: string; description?: string; ffmpegArgs: string[]; targetCodec: string; targetContainer?: string; icon?: string; color?: string } }>('/recipes/custom', async (req, reply) => {
+    const { name, description = '', ffmpegArgs, targetCodec, targetContainer = 'mkv', icon = '🔧', color = '#6b7280' } = req.body;
+    if (!name || !ffmpegArgs?.length || !targetCodec) return reply.status(400).send({ error: 'name, ffmpegArgs, and targetCodec are required' });
+    const id = `custom-${nanoid(8)}`;
+    const existing: any[] = getCustomRecipes();
+    const newRecipe = { id, name, description, ffmpegArgs, targetCodec, targetContainer, icon, color };
+    existing.push(newRecipe);
+    getDb().prepare("INSERT INTO settings (key, value) VALUES ('custom_recipes', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(existing));
+    return newRecipe;
+  });
+
+  // POST /api/settings/fs/mkdir — create a new directory on the server filesystem
+  app.post<{ Body: { path: string } }>('/fs/mkdir', async (req, reply) => {
+    const { path: dirPath } = req.body;
+    if (!dirPath) return reply.status(400).send({ error: 'path required' });
+    try {
+      fs.mkdirSync(dirPath, { recursive: true });
+      return { ok: true, path: dirPath };
+    } catch (err: any) {
+      return reply.status(400).send({ error: err.message });
+    }
+  });
+
   app.get('/fs', async (req) => {
     const q = req.query as { path?: string };
     const isWindows = os.platform() === 'win32';
@@ -120,21 +154,58 @@ export async function settingsRoutes(app: FastifyInstance) {
     return getDb().prepare('SELECT * FROM watched_paths ORDER BY created_at DESC').all();
   });
 
+  app.get<{ Params: { id: string } }>('/paths/:id/stats', async (req, reply) => {
+    const path_row = getDb().prepare('SELECT * FROM watched_paths WHERE id = ?').get(req.params.id) as any;
+    if (!path_row) return reply.status(404).send({ error: 'Not found' });
+    const watchPath = path_row.path;
+    const pattern = watchPath.endsWith('/') || watchPath.endsWith('\\') ? `${watchPath}%` : `${watchPath}/%`;
+
+    const counts = getDb().prepare(`
+      SELECT status, COUNT(*) as cnt, SUM(size_before) as sb, SUM(size_after) as sa
+      FROM jobs
+      WHERE file_path LIKE ?
+      GROUP BY status
+    `).all(pattern) as any[];
+
+    let queued = 0, active = 0, complete = 0, failed = 0, skipped = 0;
+    let sizeBefore = 0, sizeAfter = 0;
+    const activeStatuses = new Set(['dispatched','transcoding','receiving','sending','swapping','finalizing']);
+
+    for (const row of counts) {
+      const cnt = row.cnt as number;
+      if (row.status === 'queued') queued += cnt;
+      else if (activeStatuses.has(row.status)) active += cnt;
+      else if (row.status === 'complete') {
+        complete += cnt;
+        sizeBefore += (row.sb ?? 0);
+        sizeAfter  += (row.sa ?? 0);
+      }
+      else if (row.status === 'failed') failed += cnt;
+      else if (row.status === 'skipped') skipped += cnt;
+    }
+
+    const total = queued + active + complete + failed + skipped;
+    const gbSaved = sizeBefore > 0 ? ((sizeBefore - sizeAfter) / 1e9) : 0;
+
+    return { total, queued, active, complete, failed, skipped, sizeBefore, sizeAfter, gbSaved };
+  });
+
   app.post<{ Body: {
     path: string; recipe: string;
     recurse?: boolean; extensions?: string;
     priority?: string; minSizeMb?: number;
     preferred_audio_lang?: string | null; preferred_subtitle_lang?: string | null;
     scan_interval_hours?: number; move_to?: string | null;
+    exclude_patterns?: string | null;
   } }>('/paths', async (req, reply) => {
-    const { path: watchPath, recipe, recurse = true, extensions = '.mkv,.mp4,.avi,.ts,.mov', priority = 'normal', minSizeMb = 100, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours = 0, move_to } = req.body;
+    const { path: watchPath, recipe, recurse = true, extensions = '.mkv,.mp4,.avi,.ts,.mov', priority = 'normal', minSizeMb = 100, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours = 0, move_to, exclude_patterns } = req.body;
     if (!watchPath || !recipe) return reply.status(400).send({ error: 'path and recipe required' });
 
     const id = nanoid();
     getDb().prepare(`
-      INSERT INTO watched_paths (id, path, recipe, recurse, extensions, priority, min_size_mb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, watchPath, recipe, recurse ? 1 : 0, extensions, priority, minSizeMb, preferred_audio_lang ?? null, preferred_subtitle_lang ?? null, scan_interval_hours, move_to ?? null);
+      INSERT INTO watched_paths (id, path, recipe, recurse, extensions, priority, min_size_mb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to, exclude_patterns)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, watchPath, recipe, recurse ? 1 : 0, extensions, priority, minSizeMb, preferred_audio_lang ?? null, preferred_subtitle_lang ?? null, scan_interval_hours, move_to ?? null, exclude_patterns ?? null);
 
     // Dynamically hot-reload the watcher
     addWatchedPath(watchPath, recipe);
@@ -144,12 +215,45 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   // ─── Manual Scans ───────────────────────────────────────────────────────────
   app.post<{ Params: { id: string } }>('/paths/:id/scan', async (req, reply) => {
-    const row = getDb().prepare('SELECT path, recipe FROM watched_paths WHERE id = ?').get(req.params.id) as any;
+    const row = getDb().prepare('SELECT path, recipe, exclude_patterns FROM watched_paths WHERE id = ?').get(req.params.id) as any;
     if (!row) return reply.status(404).send({ error: 'Path not found' });
-    
     // Start asynchronous full directory scan
     manualScanDirectory(row.path, row.recipe);
     return { ok: true, queued: true };
+  });
+
+  // POST /api/settings/paths/:id/scan/dry — preview what would be queued without actually queuing
+  app.post<{ Params: { id: string } }>('/paths/:id/scan/dry', async (req, reply) => {
+    const pathRow = getDb().prepare('SELECT path, recipe FROM watched_paths WHERE id = ?').get(req.params.id) as any;
+    if (!pathRow) return reply.status(404).send({ error: 'Not found' });
+    const dir = pathRow.path;
+    if (!fs.existsSync(dir)) return reply.status(400).send({ error: 'Directory not found' });
+
+    const SUPPORTED = ['.mkv', '.mp4', '.avi', '.mov', '.ts', '.m2ts', '.wmv'];
+    const results = { total: 0, wouldQueue: 0, alreadyProcessed: 0, alreadyActive: 0 };
+
+    const scan = (current: string) => {
+      try {
+        const entries = fs.readdirSync(current, { withFileTypes: true });
+        for (const e of entries) {
+          const fp = path.join(current, e.name);
+          if (e.isDirectory()) { scan(fp); continue; }
+          if (!e.isFile()) continue;
+          const ext = path.extname(fp).toLowerCase();
+          if (!SUPPORTED.includes(ext)) continue;
+          results.total++;
+          const processed = getDb().prepare('SELECT 1 FROM processed_files WHERE file_path = ? AND recipe = ?').get(fp, pathRow.recipe);
+          if (processed) { results.alreadyProcessed++; continue; }
+          const active = getDb().prepare("SELECT status FROM jobs WHERE file_path = ?").get(fp) as any;
+          if (active && ['transcoding','dispatched','swapping','receiving','sending','queued'].includes(active.status)) {
+            results.alreadyActive++; continue;
+          }
+          results.wouldQueue++;
+        }
+      } catch { /* permission error or broken symlink — skip */ }
+    };
+    scan(dir);
+    return results;
   });
 
   app.put<{ Params: { id: string }; Body: {
@@ -158,8 +262,9 @@ export async function settingsRoutes(app: FastifyInstance) {
     priority?: string; minSizeMb?: number;
     preferred_audio_lang?: string | null; preferred_subtitle_lang?: string | null;
     scan_interval_hours?: number; move_to?: string | null;
+    exclude_patterns?: string | null;
   } }>('/paths/:id', async (req) => {
-    const { path: watchPath, recipe, recurse, extensions, priority, minSizeMb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to } = req.body;
+    const { path: watchPath, recipe, recurse, extensions, priority, minSizeMb, preferred_audio_lang, preferred_subtitle_lang, scan_interval_hours, move_to, exclude_patterns } = req.body;
     const fields: string[] = [];
     const vals: any[] = [];
     if (watchPath !== undefined) { fields.push('path = ?'); vals.push(watchPath); }
@@ -172,6 +277,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (preferred_subtitle_lang !== undefined) { fields.push('preferred_subtitle_lang = ?'); vals.push(preferred_subtitle_lang); }
     if (scan_interval_hours !== undefined) { fields.push('scan_interval_hours = ?'); vals.push(scan_interval_hours); }
     if (move_to !== undefined) { fields.push('move_to = ?'); vals.push(move_to ?? null); }
+    if (exclude_patterns !== undefined) { fields.push('exclude_patterns = ?'); vals.push(exclude_patterns); }
     if (fields.length) {
       vals.push(req.params.id);
       getDb().prepare(`UPDATE watched_paths SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
@@ -252,10 +358,28 @@ export async function settingsRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Params: { id: string } }>('/webhooks/:id/test', async (req, reply) => {
+    const { createHmac } = await import('crypto');
     const hook = getDb().prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id) as any;
     if (!hook) return reply.status(404).send({ error: 'Not found' });
-    await fireWebhooks('test', { message: 'Test webhook from Transcodarr', timestamp: Date.now() });
-    return { ok: true };
+    const body = JSON.stringify({ event: 'test', data: { message: 'Test webhook from Transcodarr', timestamp: Date.now() }, timestamp: Date.now() });
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (hook.secret) {
+      const sig = createHmac('sha256', hook.secret).update(body).digest('hex');
+      headers['X-Transcodarr-Signature'] = `sha256=${sig}`;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    try {
+      const res = await fetch(hook.url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) {
+        getDb().prepare('UPDATE webhooks SET last_fired = ?, last_delivery_ok = 0 WHERE id = ?').run(now, hook.id);
+        return reply.status(502).send({ error: `Remote returned HTTP ${res.status}` });
+      }
+      getDb().prepare('UPDATE webhooks SET last_fired = ?, last_delivery_ok = 1 WHERE id = ?').run(now, hook.id);
+      return { ok: true, status: res.status };
+    } catch (err: any) {
+      getDb().prepare('UPDATE webhooks SET last_fired = ?, last_delivery_ok = 0 WHERE id = ?').run(now, hook.id);
+      return reply.status(502).send({ error: err.message ?? 'Delivery failed — check the URL and try again' });
+    }
   });
 
   // ─── Smart Filters ───────────────────────────────────────────────────────────

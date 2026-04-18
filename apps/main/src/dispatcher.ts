@@ -6,6 +6,7 @@ import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 import { randomBytes } from 'crypto';
 import path from 'path';
 import os from 'os';
+import fs from 'fs';
 
 function getRoutableIp(preferSubnet?: string): string {
   const candidates: string[] = [];
@@ -91,6 +92,38 @@ export async function dispatchNext(): Promise<void> {
 
 // Dispatch a single job-worker pair. Returns true if a job was dispatched, false if nothing to do.
 async function dispatchOne(): Promise<boolean> {
+  // ── Scheduled active hours check ──────────────────────────────────────────
+  const activeHoursRow = getDb().prepare("SELECT value FROM settings WHERE key = 'active_hours'").get() as any;
+  if (activeHoursRow?.value) {
+    try {
+      const { start, end } = JSON.parse(activeHoursRow.value) as { start: number; end: number };
+      const hour = new Date().getHours();
+      // start=22, end=6 means: active between 22:00–06:00 (wraps midnight)
+      const inWindow = start <= end ? (hour >= start && hour < end) : (hour >= start || hour < end);
+      if (!inWindow) {
+        return false; // outside active window — hold all dispatch silently
+      }
+    } catch { /* malformed JSON — ignore */ }
+  }
+
+  // ── Disk space safeguard ───────────────────────────────────────────────────
+  const diskGuardRow = getDb().prepare("SELECT value FROM settings WHERE key = 'disk_safeguard_gb'").get() as any;
+  if (diskGuardRow?.value) {
+    const minFreeGb = parseFloat(diskGuardRow.value);
+    if (!isNaN(minFreeGb) && minFreeGb > 0) {
+      try {
+        const checkPath = os.platform() === 'win32' ? (process.env.SystemDrive ?? 'C:\\') : '/';
+        const stat = (fs as any).statfsSync(checkPath);
+        const freeGb = (stat.bavail * stat.bsize) / 1e9;
+        if (freeGb < minFreeGb) {
+          console.warn(`⚠️  Disk safeguard: ${freeGb.toFixed(1)} GB free < ${minFreeGb} GB threshold — pausing dispatch`);
+          broadcast('system:warning', { message: `Low disk space: ${freeGb.toFixed(1)} GB free. Transcoding paused until ${minFreeGb} GB is available.` });
+          return false;
+        }
+      } catch { /* statfsSync not available or path error — skip check */ }
+    }
+  }
+
   let queuedJobs = getJobsByStatus('queued');
   if (queuedJobs.length === 0) return false;
 

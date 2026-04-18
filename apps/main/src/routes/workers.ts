@@ -9,7 +9,38 @@ import { ProgressUpdateSchema, JobCompletePayloadSchema } from '@transcodarr/sha
 import fs from 'fs';
 import path from 'path';
 import { pipeline } from 'stream/promises';
+import { Transform } from 'stream';
 import { createRequire } from 'module';
+
+// Token-bucket throttle: limits throughput to bytesPerSec
+class ThrottleTransform extends Transform {
+  private readonly bytesPerSec: number;
+  private startTime = Date.now();
+  private bytesSent  = 0;
+
+  constructor(bytesPerSec: number) { super(); this.bytesPerSec = bytesPerSec; }
+
+  _transform(chunk: Buffer, _enc: string, callback: () => void): void {
+    this.bytesSent += chunk.length;
+    const elapsed     = (Date.now() - this.startTime) / 1000;
+    const expectedSec = this.bytesSent / this.bytesPerSec;
+    const delayMs     = Math.max(0, (expectedSec - elapsed) * 1000);
+    if (delayMs > 0) {
+      setTimeout(() => { this.push(chunk); callback(); }, delayMs);
+    } else {
+      this.push(chunk); callback();
+    }
+  }
+}
+
+function getSpeedLimitBytesPerSec(): number {
+  try {
+    const row = getDb().prepare("SELECT value FROM settings WHERE key = 'transfer_speed_limit_mbps'").get() as any;
+    const mbps = row ? parseFloat(row.value) : 0;
+    if (!isNaN(mbps) && mbps > 0) return mbps * 1_000_000 / 8; // Mbps → bytes/sec
+  } catch { /* ignore */ }
+  return 0; // 0 = unlimited
+}
 
 const require = createRequire(import.meta.url);
 const MAIN_VERSION: string = (() => {
@@ -399,6 +430,10 @@ export async function workersRoutes(app: FastifyInstance) {
       broadcast('job:progress', { jobId: req.params.jobId, progress: 0, phase: 'receiving', status: 'dispatched' });
 
       const stream = fs.createReadStream(filePath);
+      const limitBps = getSpeedLimitBytesPerSec();
+      if (limitBps > 0) {
+        return reply.send(stream.pipe(new ThrottleTransform(limitBps)));
+      }
       return reply.send(stream);
     },
   );
@@ -432,7 +467,12 @@ export async function workersRoutes(app: FastifyInstance) {
       try {
         // Stream the upload body to a temp file using pipeline() for backpressure safety
         const writeStream = fs.createWriteStream(tmpPath);
-        await pipeline(req.raw, writeStream);
+        const uploadLimit = getSpeedLimitBytesPerSec();
+        if (uploadLimit > 0) {
+          await pipeline(req.raw, new ThrottleTransform(uploadLimit), writeStream);
+        } else {
+          await pipeline(req.raw, writeStream);
+        }
 
         const sizeAfter = fs.statSync(tmpPath).size;
         const now = Math.floor(Date.now() / 1000);

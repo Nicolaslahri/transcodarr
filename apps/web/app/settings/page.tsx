@@ -7,6 +7,7 @@ import {
   Filter, Settings2, BookOpen, Info, ArrowLeftRight,
   Wifi, HardDrive, X, ChevronUp, ChevronRight, Bell, Pencil, Clock, ArrowRightCircle,
   Eye, EyeOff, Shield, ChevronDown, Loader2, CheckCircle2, Scan, AlertTriangle,
+  Code2, Copy, Zap, FlaskConical, Gauge, FilePlus2,
 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
@@ -215,20 +216,54 @@ const LANG_OPTIONS = [
 
 const BLANK_FORM = { path: '', recipe: 'space-saver', recurse: true, extensions: '.mkv,.mp4,.avi,.ts', priority: 'normal', minSizeMb: 100, preferredAudioLang: '', preferredSubtitleLang: '', scanIntervalHours: 0, moveTo: '' };
 
+interface FolderStats { total: number; complete: number; queued: number; active: number; failed: number; gbSaved: number; }
+
 function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
+  const { scanSummary } = useAppState();
   const [paths, setPaths]     = useState<WatchedPath[]>([]);
   const [adding, setAdding]   = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [explorerOpen, setExplorerOpen] = useState(false);
+  const [moveToExplorerOpen, setMoveToExplorerOpen] = useState(false);
   const [recipePickerOpen, setRecipePickerOpen] = useState(false);
   const [form, setForm]       = useState({ ...BLANK_FORM });
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [allRecipes, setAllRecipes] = useState<Recipe[]>([]);
   const [postAddId, setPostAddId] = useState<string | null>(null);
   const [scanningIds, setScanningIds] = useState<Set<string>>(new Set());
+  const [folderStats, setFolderStats] = useState<Record<string, FolderStats>>({});
+  const [dryRunResult, setDryRunResult] = useState<{ id: string; total: number; wouldQueue: number; alreadyProcessed: number; alreadyActive: number } | null>(null);
+  const [dryRunLoading, setDryRunLoading] = useState<string | null>(null);
 
   const load = () => fetch('/api/settings/paths').then(r => r.json()).then(setPaths).catch(() => {});
   useEffect(() => { load(); }, []);
+
+  // When a scan completes (WS event via useAppState), clear the scanning spinner
+  useEffect(() => {
+    if (!scanSummary) return;
+    setPaths(prev => prev.map(p => p.path === scanSummary.dir ? { ...p, last_scan_at: Math.floor(Date.now() / 1000) } : p));
+    setScanningIds(prev => {
+      const s = new Set(prev);
+      // Find the path whose dir matches
+      const match = [...prev].find(id => {
+        const found = paths.find(p => p.id === id);
+        return found && found.path === scanSummary.dir;
+      });
+      if (match) s.delete(match);
+      return s;
+    });
+  }, [scanSummary]);
+
+  // Load folder stats whenever paths change
+  useEffect(() => {
+    if (!paths.length) return;
+    paths.forEach(p => {
+      fetch(`${apiUrl}/api/settings/paths/${p.id}/stats`)
+        .then(r => r.json())
+        .then(s => setFolderStats(prev => ({ ...prev, [p.id]: s })))
+        .catch(() => {});
+    });
+  }, [paths.map(p => p.id).join(',')]);
 
   // Load recipes for display
   useEffect(() => {
@@ -241,6 +276,54 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
       })
       .catch(() => {});
   }, []);
+
+  // Smart recipe suggestion based on folder path keywords
+  const suggestRecipe = (folderPath: string): Recipe | null => {
+    const lower = folderPath.toLowerCase();
+    const candidates: Array<[string, string]> = [
+      ['anime',    'anime-cleaner'],
+      ['4k',       'quality-archive'],
+      ['uhd',      'quality-archive'],
+      ['bluray',   'quality-archive'],
+      ['blu-ray',  'quality-archive'],
+      ['blu_ray',  'quality-archive'],
+      ['movies',   'space-saver'],
+      ['movie',    'space-saver'],
+      ['tv',       'space-saver'],
+      ['series',   'space-saver'],
+      ['show',     'space-saver'],
+    ];
+    for (const [keyword, recipeId] of candidates) {
+      if (lower.includes(keyword)) {
+        const found = allRecipes.find(r => r.id === recipeId);
+        if (found) return found;
+      }
+    }
+    // If existing folders mostly use the same recipe, suggest that
+    if (paths.length > 0) {
+      const recipeCounts: Record<string, number> = {};
+      paths.forEach(p => { recipeCounts[p.recipe] = (recipeCounts[p.recipe] ?? 0) + 1; });
+      const mostUsed = Object.entries(recipeCounts).sort((a, b) => b[1] - a[1])[0];
+      if (mostUsed && mostUsed[1] >= 2) {
+        const found = allRecipes.find(r => r.id === mostUsed[0]);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  const dryRun = async (p: WatchedPath) => {
+    setDryRunLoading(p.id);
+    setDryRunResult(null);
+    try {
+      const res = await fetch(`/api/settings/paths/${p.id}/scan/dry`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setDryRunResult({ id: p.id, ...data });
+      }
+    } catch { /* ignore */ }
+    setDryRunLoading(null);
+  };
 
   const openEdit = (p: WatchedPath) => {
     setForm({ path: p.path, recipe: p.recipe, recurse: p.recurse, extensions: p.extensions, priority: p.priority, minSizeMb: p.min_size_mb, preferredAudioLang: p.preferred_audio_lang ?? '', preferredSubtitleLang: p.preferred_subtitle_lang ?? '', scanIntervalHours: p.scan_interval_hours ?? 0, moveTo: p.move_to ?? '' });
@@ -302,7 +385,12 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   };
 
   const scanNow = async (p: WatchedPath) => {
-    await fetch(`/api/settings/paths/${p.id}/scan`, { method: 'POST' }).catch(() => {});
+    setScanningIds(prev => new Set(prev).add(p.id));
+    try {
+      await fetch(`/api/settings/paths/${p.id}/scan`, { method: 'POST' });
+    } catch { /* ignore */ }
+    // Clear after 60s max if WS event doesn't come (it goes to the Queue page)
+    setTimeout(() => setScanningIds(prev => { const s = new Set(prev); s.delete(p.id); return s; }), 60_000);
   };
 
   return (
@@ -315,7 +403,10 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         </div>
       )}
 
-      {paths.map(p => (
+      {paths.map(p => {
+        const stats = folderStats[p.id];
+        const isScanning = scanningIds.has(p.id);
+        return (
         <div key={p.id} className={`card-hover bg-surface border border-border rounded-2xl p-5 transition-opacity ${!p.enabled ? 'opacity-50' : ''}`}>
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
@@ -340,20 +431,74 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                   </span>
                 )}
                 {p.last_scan_at != null && p.last_scan_at > 0 && (
-                  <span className="text-xs text-textMuted/60">
-                    Last scanned {lastScannedLabel(p.last_scan_at)}
-                  </span>
+                  <span className="text-xs text-textMuted/60">Last scanned {lastScannedLabel(p.last_scan_at)}</span>
                 )}
                 {p.move_to && (
                   <span className="flex items-center gap-1 text-xs text-textMuted/60">
-                    <ArrowRightCircle className="w-3 h-3" /> {p.move_to}
+                    <ArrowRightCircle className="w-3 h-3" /> moves to {p.move_to}
                   </span>
                 )}
               </div>
+              {/* Per-folder live stats */}
+              {stats && stats.complete > 0 && (
+                <div className="flex items-center gap-4 mt-3 pt-3 border-t border-border/50">
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                    <span className="text-white font-medium">{stats.complete}</span>
+                    <span className="text-textMuted">done</span>
+                  </span>
+                  {stats.queued > 0 && (
+                    <span className="flex items-center gap-1.5 text-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                      <span className="text-white font-medium">{stats.queued}</span>
+                      <span className="text-textMuted">queued</span>
+                    </span>
+                  )}
+                  {stats.active > 0 && (
+                    <span className="flex items-center gap-1.5 text-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+                      <span className="text-white font-medium">{stats.active}</span>
+                      <span className="text-textMuted">active</span>
+                    </span>
+                  )}
+                  {stats.gbSaved > 0.01 && (
+                    <span className="text-xs text-green-400 font-semibold ml-auto">{stats.gbSaved.toFixed(2)} GB saved</span>
+                  )}
+                </div>
+              )}
+              {/* Dry-run result */}
+              {dryRunResult?.id === p.id && (
+                <div className="flex items-center gap-4 mt-2 px-3 py-2 bg-primary/5 border border-primary/15 rounded-lg text-xs">
+                  <span className="text-primary font-semibold">{dryRunResult.wouldQueue} would queue</span>
+                  <span className="text-textMuted">{dryRunResult.alreadyProcessed} already done</span>
+                  {dryRunResult.alreadyActive > 0 && <span className="text-textMuted">{dryRunResult.alreadyActive} in progress</span>}
+                  <button onClick={() => setDryRunResult(null)} className="ml-auto text-textMuted hover:text-white transition-colors"><X className="w-3 h-3" /></button>
+                </div>
+              )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => scanNow(p)} className="text-xs text-textMuted hover:text-primary transition-colors px-3 py-1.5 border border-border rounded-lg">
-                Scan Now
+            <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+              <button
+                onClick={() => dryRun(p)}
+                disabled={dryRunLoading === p.id}
+                title="Preview what would be queued without actually queuing"
+                className="text-xs text-textMuted hover:text-sky-400 transition-colors px-2.5 py-1.5 border border-border rounded-lg disabled:opacity-40 flex items-center gap-1"
+              >
+                {dryRunLoading === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Filter className="w-3 h-3" />}
+                Dry Run
+              </button>
+              <button
+                onClick={() => scanNow(p)}
+                disabled={isScanning}
+                className={`flex items-center gap-1.5 text-xs px-3 py-1.5 border rounded-lg transition-all ${
+                  isScanning
+                    ? 'border-primary/30 text-primary bg-primary/5 cursor-not-allowed'
+                    : 'border-border text-textMuted hover:text-primary hover:border-primary/30'
+                }`}
+              >
+                {isScanning
+                  ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</>
+                  : <><Scan className="w-3 h-3" /> Scan Now</>
+                }
               </button>
               <button onClick={() => openEdit(p)} title="Edit folder" className="text-textMuted hover:text-white transition-colors">
                 <Pencil className="w-4 h-4" />
@@ -367,7 +512,8 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
 
       {/* Add / Edit modal */}
       {adding && (
@@ -428,6 +574,22 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                   </span>
                   <ChevronRight className="w-4 h-4 text-textMuted" />
                 </button>
+                {/* Smart suggestion — only for new folders with a path typed */}
+                {!editingId && form.path && (() => {
+                  const suggestion = suggestRecipe(form.path);
+                  if (!suggestion || suggestion.id === form.recipe) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedRecipe(suggestion); setForm(f => ({ ...f, recipe: suggestion.id })); }}
+                      className="mt-1.5 flex items-center gap-1.5 text-xs text-primary/70 hover:text-primary transition-colors"
+                    >
+                      <span className="text-[10px]">{suggestion.icon}</span>
+                      Suggested: {suggestion.name}
+                      <span className="text-textMuted/60">— tap to apply</span>
+                    </button>
+                  );
+                })()}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -524,18 +686,19 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                     value={form.moveTo}
                     onChange={e => setForm(f => ({ ...f, moveTo: e.target.value }))}
                     placeholder="Leave empty to keep files in place"
-                    className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
+                    className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm text-white placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50 font-mono"
                   />
                   <button
                     type="button"
-                    onClick={() => setExplorerOpen(true)}
+                    onClick={() => setMoveToExplorerOpen(true)}
                     className="px-3 py-2 bg-background border border-border rounded-xl text-textMuted hover:text-white hover:border-primary/40 transition-colors text-xs"
                   >
                     Browse
                   </button>
                 </div>
-                <p className="text-xs text-textMuted/50 mt-1">
-                  After transcoding completes, the output file will be moved to this directory.
+                <p className="text-xs text-amber-400/70 mt-1.5 flex items-start gap-1.5">
+                  <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                  After transcoding, the new file is moved here and the <strong>original is deleted</strong>. Leave empty to replace the original in place.
                 </p>
               </div>
             </div>
@@ -598,6 +761,17 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         onClose={() => setExplorerOpen(false)}
         initialPath={form.path}
         onSelect={(p) => { setForm(f => ({ ...f, path: p })); setExplorerOpen(false); }}
+        allowMkdir
+        mkdirUrl={`${apiUrl}/api/settings/fs/mkdir`}
+      />
+
+      <FileExplorerModal
+        open={moveToExplorerOpen}
+        onClose={() => setMoveToExplorerOpen(false)}
+        initialPath={form.moveTo || form.path}
+        onSelect={(p) => { setForm(f => ({ ...f, moveTo: p })); setMoveToExplorerOpen(false); }}
+        allowMkdir
+        mkdirUrl={`${apiUrl}/api/settings/fs/mkdir`}
       />
 
       <RecipePickerModal
@@ -742,20 +916,50 @@ function NumberInput({ label, value, onChange }: { label: string; value: number;
 function RecipesPanel({ apiUrl }: { apiUrl: string }) {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [importOpen, setImportOpen] = useState(false);
+  const [customBuilderOpen, setCustomBuilderOpen] = useState(false);
+  const [forkRecipe, setForkRecipe] = useState<Recipe | null>(null);
+  const [recipeStats, setRecipeStats] = useState<Record<string, { avgFps: number; jobCount: number }>>({});
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const load = () => fetch(`${apiUrl}/api/settings/recipes`).then(r => r.json()).then(setRecipes).catch(() => {});
-  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    load();
+    fetch(`${apiUrl}/api/settings/recipes/stats`)
+      .then(r => r.json())
+      .then(setRecipeStats)
+      .catch(() => {});
+  }, []);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 3000);
+  };
 
   const builtIn   = recipes.filter(r => !r.sourceUrl);
   const community = recipes.filter(r =>  r.sourceUrl);
 
   return (
-    <div className="animate-section space-y-6">
+    <div className="animate-section space-y-6 relative">
+      {/* Toast */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 bg-green-900/90 border border-green-500/30 rounded-xl text-green-400 text-sm shadow-xl animate-in slide-in-from-bottom-2 duration-200">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          {toastMsg}
+        </div>
+      )}
+
       {/* Built-in */}
       <div>
         <h3 className="text-xs font-bold uppercase tracking-widest text-textMuted mb-4">Built-in Recipes ({builtIn.length})</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {builtIn.map(r => <RecipeCard key={r.id} recipe={r} />)}
+          {builtIn.map(r => (
+            <RecipeCard
+              key={r.id} recipe={r}
+              stats={recipeStats[r.id]}
+              onFork={() => { setForkRecipe(r); setCustomBuilderOpen(true); }}
+            />
+          ))}
         </div>
       </div>
 
@@ -766,6 +970,7 @@ function RecipesPanel({ apiUrl }: { apiUrl: string }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {community.map(r => (
               <RecipeCard key={r.id} recipe={r} community
+                stats={recipeStats[r.id]}
                 onDelete={async () => {
                   await fetch(`${apiUrl}/api/settings/recipes/custom/${r.id}`, { method: 'DELETE' });
                   load();
@@ -776,23 +981,40 @@ function RecipesPanel({ apiUrl }: { apiUrl: string }) {
         </div>
       )}
 
-      <button
-        onClick={() => setImportOpen(true)}
-        className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors px-4 py-2.5 border border-dashed border-border rounded-xl"
-      >
-        <Plus className="w-4 h-4" /> Import Community Recipe…
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setImportOpen(true)}
+          className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors px-4 py-2.5 border border-dashed border-border rounded-xl"
+        >
+          <Plus className="w-4 h-4" /> Import Community Recipe…
+        </button>
+        <button
+          onClick={() => { setForkRecipe(null); setCustomBuilderOpen(true); }}
+          className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors px-4 py-2.5 border border-dashed border-border rounded-xl"
+        >
+          <Code2 className="w-4 h-4" /> Create Custom Recipe…
+        </button>
+      </div>
 
       <ImportRecipeModal
         open={importOpen}
-        onClose={() => { setImportOpen(false); load(); }}
+        onClose={() => setImportOpen(false)}
+        onSuccess={() => { load(); showToast('Recipe imported successfully!'); }}
         apiUrl={apiUrl}
+      />
+
+      <CustomRecipeModal
+        open={customBuilderOpen}
+        onClose={() => { setCustomBuilderOpen(false); setForkRecipe(null); }}
+        onSuccess={() => { load(); showToast(forkRecipe ? `Forked "${forkRecipe.name}" as a custom recipe!` : 'Custom recipe created!'); setCustomBuilderOpen(false); setForkRecipe(null); }}
+        apiUrl={apiUrl}
+        initial={forkRecipe}
       />
     </div>
   );
 }
 
-function ImportRecipeModal({ open, onClose, apiUrl }: { open: boolean; onClose: () => void; apiUrl: string }) {
+function ImportRecipeModal({ open, onClose, onSuccess, apiUrl }: { open: boolean; onClose: () => void; onSuccess?: () => void; apiUrl: string }) {
   const [url, setUrl] = useState('');
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
@@ -812,7 +1034,7 @@ function ImportRecipeModal({ open, onClose, apiUrl }: { open: boolean; onClose: 
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? 'Import failed'); return; }
       setSuccess(`Imported ${data.imported ?? 'recipe(s)'} successfully!`);
-      setTimeout(() => onClose(), 1500);
+      setTimeout(() => { onClose(); onSuccess?.(); }, 1200);
     } finally {
       setImporting(false);
     }
@@ -873,7 +1095,14 @@ function ImportRecipeModal({ open, onClose, apiUrl }: { open: boolean; onClose: 
   );
 }
 
-function RecipeCard({ recipe, community, onDelete }: { recipe: Recipe; community?: boolean; onDelete?: () => void }) {
+function RecipeCard({ recipe, community, onDelete, stats, onFork }: {
+  recipe: Recipe; community?: boolean; onDelete?: () => void;
+  stats?: { avgFps: number; jobCount: number };
+  onFork?: () => void;
+}) {
+  const [showArgs, setShowArgs] = useState(false);
+  const hasArgs = community && (recipe.ffmpegArgs?.length ?? 0) > 0;
+
   return (
     <div className="card-hover bg-surface border border-border rounded-2xl p-5">
       <div className="flex items-start gap-3 mb-3">
@@ -892,17 +1121,173 @@ function RecipeCard({ recipe, community, onDelete }: { recipe: Recipe; community
         {recipe.estimatedReduction !== undefined && recipe.estimatedReduction > 0 && (
           <Badge label={`~${recipe.estimatedReduction}% smaller`} color="green" />
         )}
+        {stats && stats.jobCount > 0 && (
+          <span className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg border bg-background text-textMuted border-border/50">
+            <Zap className="w-3 h-3 text-primary/60" /> {stats.avgFps.toFixed(1)} fps avg
+          </span>
+        )}
       </div>
-      {community && onDelete && (
-        <div className="flex justify-end mt-3 pt-3 border-t border-border">
+      {hasArgs && (
+        <>
           <button
-            onClick={onDelete}
-            className="flex items-center gap-1.5 text-xs text-textMuted hover:text-red-400 transition-colors"
+            onClick={() => setShowArgs(s => !s)}
+            className="mt-3 flex items-center gap-1.5 text-xs text-textMuted/60 hover:text-textMuted transition-colors"
           >
-            <Trash2 className="w-3.5 h-3.5" /> Remove recipe
+            <Code2 className="w-3 h-3" />
+            {showArgs ? 'Hide' : 'Show'} ffmpeg args ({recipe.ffmpegArgs!.length})
           </button>
+          {showArgs && (
+            <div className="mt-2 p-3 bg-background rounded-lg font-mono text-[10px] text-textMuted/80 leading-relaxed break-all">
+              {recipe.ffmpegArgs!.join(' ')}
+            </div>
+          )}
+        </>
+      )}
+      {(onFork || (community && onDelete)) && (
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
+          {onFork && (
+            <button
+              onClick={onFork}
+              className="flex items-center gap-1.5 text-xs text-textMuted hover:text-primary transition-colors"
+            >
+              <Copy className="w-3.5 h-3.5" /> Fork recipe
+            </button>
+          )}
+          {community && onDelete && (
+            <button
+              onClick={onDelete}
+              className="flex items-center gap-1.5 text-xs text-textMuted hover:text-red-400 transition-colors ml-auto"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Remove
+            </button>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+function CustomRecipeModal({ open, onClose, onSuccess, apiUrl, initial }: {
+  open: boolean; onClose: () => void; onSuccess: () => void; apiUrl: string; initial?: Recipe | null;
+}) {
+  const [form, setForm] = useState({ name: '', description: '', icon: '⚙️', targetCodec: 'hevc', targetContainer: 'mkv', ffmpegArgs: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open) { setError(''); return; }
+    if (initial) {
+      setForm({
+        name:            `${initial.name} (copy)`,
+        description:     initial.description,
+        icon:            initial.icon,
+        targetCodec:     initial.targetCodec,
+        targetContainer: initial.targetContainer,
+        ffmpegArgs:      initial.ffmpegArgs?.join(' ') ?? '',
+      });
+    } else {
+      setForm({ name: '', description: '', icon: '⚙️', targetCodec: 'hevc', targetContainer: 'mkv', ffmpegArgs: '' });
+    }
+  }, [open, initial]);
+
+  const save = async () => {
+    if (!form.name.trim()) { setError('Name is required'); return; }
+    setSaving(true); setError('');
+    try {
+      const payload = {
+        name: form.name.trim(), description: form.description.trim(),
+        icon: form.icon || '⚙️', targetCodec: form.targetCodec, targetContainer: form.targetContainer,
+        ffmpegArgs: form.ffmpegArgs.trim() ? form.ffmpegArgs.trim().split(/\s+/) : undefined,
+      };
+      const res = await fetch(`${apiUrl}/api/settings/recipes/custom`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? 'Save failed'); return; }
+      onSuccess();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200">
+      <div className="bg-surface border border-border rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-white font-bold flex items-center gap-2">
+            <Code2 className="w-4 h-4 text-primary" />
+            {initial ? `Fork: ${initial.name}` : 'Create Custom Recipe'}
+          </h2>
+          <button onClick={onClose} className="text-textMuted hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-xs text-textMuted">
+            Custom recipes let you define arbitrary ffmpeg arguments. Leave ffmpeg args empty to use the built-in encoder logic for the selected codec.
+          </p>
+          <div className="grid grid-cols-[1fr_5rem] gap-3">
+            <div>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Recipe Name</label>
+              <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))}
+                placeholder="My Custom Recipe" autoFocus
+                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50" />
+            </div>
+            <div>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Icon</label>
+              <input value={form.icon} onChange={e => setForm(f => ({...f, icon: e.target.value}))}
+                placeholder="⚙️" maxLength={4}
+                className="w-full bg-background border border-border rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none text-center text-xl" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-textMuted font-medium mb-1.5 block">Description</label>
+            <input value={form.description} onChange={e => setForm(f => ({...f, description: e.target.value}))}
+              placeholder="Brief description of what this recipe does"
+              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Target Codec</label>
+              <select value={form.targetCodec} onChange={e => setForm(f => ({...f, targetCodec: e.target.value}))}
+                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none">
+                <option value="hevc">H.265 (HEVC)</option>
+                <option value="h264">H.264 (AVC)</option>
+                <option value="av1">AV1</option>
+                <option value="copy">Copy (Remux)</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-textMuted font-medium mb-1.5 block">Container</label>
+              <select value={form.targetContainer} onChange={e => setForm(f => ({...f, targetContainer: e.target.value}))}
+                className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none">
+                <option value="mkv">MKV</option>
+                <option value="mp4">MP4</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-textMuted font-medium mb-1.5 block">
+              ffmpeg Args <span className="text-textMuted/50">(optional — overrides built-in encoder logic)</span>
+            </label>
+            <textarea
+              value={form.ffmpegArgs}
+              onChange={e => setForm(f => ({...f, ffmpegArgs: e.target.value}))}
+              placeholder="-vf scale=1280:720 -crf 23 -preset slow"
+              rows={3}
+              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-primary/50 resize-none"
+            />
+            <p className="text-xs text-textMuted/50 mt-1">Space-separated arguments. Input/output paths are added automatically.</p>
+          </div>
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+        </div>
+        <div className="flex gap-2 px-6 py-4 border-t border-border">
+          <button onClick={save} disabled={saving || !form.name.trim()}
+            className="flex items-center gap-2 px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            {initial ? 'Save Fork' : 'Create Recipe'}
+          </button>
+          <button onClick={onClose} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">Cancel</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -911,22 +1296,28 @@ function RecipeCard({ recipe, community, onDelete }: { recipe: Recipe; community
 
 function TransferPanel({ apiUrl }: { apiUrl: string }) {
   const [workers, setWorkers] = useState<WorkerInfo[]>([]);
+  const [speedLimit, setSpeedLimit] = useState('');
+  const [speedSaved, setSpeedSaved] = useState(false);
 
   useEffect(() => {
     fetch(`${apiUrl}/api/workers`)
       .then(r => r.json())
       .then((ws: WorkerInfo[]) => setWorkers(ws.filter(w => w.status !== 'pending')))
       .catch(() => {});
+    fetch(`${apiUrl}/api/settings/general`)
+      .then(r => r.json())
+      .then(data => setSpeedLimit(data.transfer_speed_limit_mbps ?? ''))
+      .catch(() => {});
   }, [apiUrl]);
 
-  if (workers.length === 0) {
-    return (
-      <div className="bg-surface border border-dashed border-border rounded-2xl p-10 text-center">
-        <p className="text-white font-medium mb-1">No accepted workers</p>
-        <p className="text-textMuted text-sm">Accept a worker in the Fleet tab first, then configure its transfer mode here.</p>
-      </div>
-    );
-  }
+  const saveSpeedLimit = async () => {
+    await fetch(`${apiUrl}/api/settings/general`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transfer_speed_limit_mbps: speedLimit }),
+    });
+    setSpeedSaved(true);
+    setTimeout(() => setSpeedSaved(false), 2000);
+  };
 
   return (
     <div className="animate-section space-y-5">
@@ -939,9 +1330,41 @@ function TransferPanel({ apiUrl }: { apiUrl: string }) {
         </p>
       </div>
 
-      {workers.map(w => (
-        <WorkerTransferCard key={w.id} worker={w} apiUrl={apiUrl} />
-      ))}
+      {/* Bandwidth throttle — applies to all wireless transfers */}
+      <div className="card-hover bg-surface border border-border rounded-2xl p-5">
+        <div className="flex items-center gap-3 mb-1">
+          <Gauge className="w-4 h-4 text-textMuted shrink-0" />
+          <h3 className="text-white font-semibold text-sm">Transfer Speed Limit</h3>
+        </div>
+        <p className="text-xs text-textMuted mb-4 ml-7">Throttle wireless file transfers (download to worker + upload from worker). Set to 0 or leave empty for unlimited.</p>
+        <div className="flex items-center gap-3">
+          <input
+            type="number" min={0} step={1}
+            value={speedLimit}
+            onChange={e => { setSpeedLimit(e.target.value); setSpeedSaved(false); }}
+            placeholder="0 (unlimited)"
+            className="w-36 bg-background border border-border rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-primary/40"
+          />
+          <span className="text-textMuted text-sm">Mbps</span>
+          <button
+            onClick={saveSpeedLimit}
+            className={`ml-auto px-4 py-2 text-sm font-bold rounded-xl transition-colors ${speedSaved ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-primary text-background hover:bg-primary/90'}`}
+          >
+            {speedSaved ? '✓ Saved' : 'Save'}
+          </button>
+        </div>
+      </div>
+
+      {workers.length === 0 ? (
+        <div className="bg-surface border border-dashed border-border rounded-2xl p-10 text-center">
+          <p className="text-white font-medium mb-1">No accepted workers</p>
+          <p className="text-textMuted text-sm">Accept a worker in the Fleet tab first, then configure its transfer mode here.</p>
+        </div>
+      ) : (
+        workers.map(w => (
+          <WorkerTransferCard key={w.id} worker={w} apiUrl={apiUrl} />
+        ))
+      )}
     </div>
   );
 }
@@ -952,6 +1375,8 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
   const [saving, setSaving]     = useState(false);
   const [saveOk, setSaveOk]     = useState(false);
   const [dirty, setDirty]       = useState(false);
+  const [testingConn, setTestingConn] = useState(false);
+  const [connResult, setConnResult]   = useState<'ok' | 'fail' | null>(null);
   const initializedRef          = useRef(false);
 
   // Mark dirty when user changes mode or mappings (skip on initial mount)
@@ -1007,6 +1432,19 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
     } finally {
       setSaving(false);
     }
+  };
+
+  const testConnection = async () => {
+    setTestingConn(true);
+    setConnResult(null);
+    try {
+      const r = await fetch(`${apiUrl}/api/workers/${worker.id}/fs`, { signal: AbortSignal.timeout(5000) });
+      setConnResult(r.ok ? 'ok' : 'fail');
+    } catch {
+      setConnResult('fail');
+    }
+    setTestingConn(false);
+    setTimeout(() => setConnResult(null), 5000);
   };
 
   return (
@@ -1155,12 +1593,28 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
           </div>
         )}
 
-        {/* Save */}
-        <div className="flex justify-end pt-1 border-t border-border">
+        {/* Save + Test */}
+        <div className="flex items-center justify-between pt-1 border-t border-border gap-3 flex-wrap">
+          {mode === 'smb' && (
+            <button
+              onClick={testConnection}
+              disabled={testingConn}
+              className={`mt-4 flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl border transition-colors disabled:opacity-50
+                ${connResult === 'ok'   ? 'border-green-500/40 text-green-400 bg-green-500/10'
+                : connResult === 'fail' ? 'border-red-500/40 text-red-400 bg-red-500/10'
+                : 'border-border text-textMuted hover:text-white hover:border-primary/40'}`}
+            >
+              {testingConn
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Testing…</>
+                : connResult === 'ok'   ? '✓ Connected'
+                : connResult === 'fail' ? '✗ Unreachable'
+                : <><FlaskConical className="w-3.5 h-3.5" /> Test Connection</>}
+            </button>
+          )}
           <button
             onClick={save}
             disabled={saving || (!dirty && saveOk)}
-            className={`mt-4 px-5 py-2.5 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 flex items-center gap-1.5
+            className={`mt-4 ml-auto px-5 py-2.5 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 flex items-center gap-1.5
               ${saveOk && !dirty ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-primary text-background hover:bg-primary/90'}`}
           >
             {saving ? 'Saving…' : saveOk && !dirty ? '✓ Saved' : 'Save Transfer Config'}
@@ -1175,7 +1629,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
 
 function GeneralPanel() {
   const { apiUrl, meta } = useAppState();
-  const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '', preferred_audio_lang: '', preferred_subtitle_lang: '' });
+  const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '', preferred_audio_lang: '', preferred_subtitle_lang: '', diskSafeguardGb: '', activeHoursEnabled: false, activeHoursStart: '22', activeHoursEnd: '6' });
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
@@ -1190,6 +1644,10 @@ function GeneralPanel() {
         mainUrl:                data.mainUrl                ?? s.mainUrl,
         preferred_audio_lang:   data.preferred_audio_lang   ?? '',
         preferred_subtitle_lang: data.preferred_subtitle_lang ?? '',
+        diskSafeguardGb:        data.disk_safeguard_gb      ?? '',
+        activeHoursEnabled:     !!data.active_hours,
+        activeHoursStart:       data.active_hours ? (() => { try { return String(JSON.parse(data.active_hours).start ?? 22); } catch { return '22'; } })() : '22',
+        activeHoursEnd:         data.active_hours ? (() => { try { return String(JSON.parse(data.active_hours).end   ?? 6);  } catch { return '6';  } })() : '6',
       }));
     }).catch(() => {});
   }, [apiUrl]);
@@ -1197,7 +1655,12 @@ function GeneralPanel() {
   const save = async () => {
     setSaving(true);
     try {
-      const payload = { ...settings, max_concurrent_jobs: settings.maxConcurrentJobs };
+      const { diskSafeguardGb, activeHoursEnabled, activeHoursStart, activeHoursEnd, ...rest } = settings;
+      const payload: Record<string, string> = { ...rest, max_concurrent_jobs: settings.maxConcurrentJobs };
+      payload.disk_safeguard_gb = diskSafeguardGb;
+      payload.active_hours = activeHoursEnabled
+        ? JSON.stringify({ start: parseInt(activeHoursStart) || 22, end: parseInt(activeHoursEnd) || 6 })
+        : '';
       await fetch(`${apiUrl}/api/settings/general`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1301,6 +1764,58 @@ function GeneralPanel() {
                 {LANG_OPTIONS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
               </select>
             </Field>
+
+            <Field label="Disk Space Safeguard">
+              <div className="flex items-center gap-3">
+                <input
+                  type="number" min={0} step={0.5}
+                  value={settings.diskSafeguardGb}
+                  onChange={e => setSettings(s => ({ ...s, diskSafeguardGb: e.target.value }))}
+                  placeholder="0"
+                  className="w-28 bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/40"
+                />
+                <span className="text-textMuted text-sm">GB minimum free space</span>
+              </div>
+              <p className="text-xs text-textMuted/60 mt-1.5 ml-1">Transcoding pauses if free disk space drops below this. Set to 0 to disable.</p>
+            </Field>
+
+            <Field label="Active Hours (Transcoding Window)">
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.activeHoursEnabled}
+                    onChange={e => setSettings(s => ({ ...s, activeHoursEnabled: e.target.checked }))}
+                    className="w-4 h-4 accent-primary"
+                  />
+                  <span className="text-sm text-white">Schedule enabled</span>
+                </label>
+                {settings.activeHoursEnabled && (
+                  <>
+                    <span className="text-textMuted text-sm">from</span>
+                    <input
+                      type="number" min={0} max={23}
+                      value={settings.activeHoursStart}
+                      onChange={e => setSettings(s => ({ ...s, activeHoursStart: e.target.value }))}
+                      className="w-16 bg-background border border-border rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none text-center"
+                    />
+                    <span className="text-textMuted text-sm">:00 to</span>
+                    <input
+                      type="number" min={0} max={23}
+                      value={settings.activeHoursEnd}
+                      onChange={e => setSettings(s => ({ ...s, activeHoursEnd: e.target.value }))}
+                      className="w-16 bg-background border border-border rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none text-center"
+                    />
+                    <span className="text-textMuted text-sm">:00</span>
+                  </>
+                )}
+              </div>
+              {settings.activeHoursEnabled && (
+                <p className="text-xs text-textMuted/60 mt-1.5 ml-1">
+                  Dispatch only runs in this window. Wraps midnight — e.g. <strong className="text-white">22 → 6</strong> means 10 PM to 6 AM.
+                </p>
+              )}
+            </Field>
           </>
         )}
 
@@ -1369,6 +1884,16 @@ interface Webhook {
   events: string;
   secret?: string;
   enabled: number;
+  last_fired?: number;
+  last_delivery_ok?: number;
+}
+
+function relativeTime(unixSec: number): string {
+  const secs = Math.floor(Date.now() / 1000) - unixSec;
+  if (secs < 60)    return 'just now';
+  if (secs < 3600)  return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
 }
 
 function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
@@ -1379,6 +1904,7 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
   const [adding, setAdding] = useState(false);
   const [testResult, setTestResult] = useState<Record<string, string>>({});
   const [showSecret, setShowSecret] = useState(false);
+  const [editShowSecret, setEditShowSecret] = useState(false);
   const [editingHookId, setEditingHookId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ url: '', events: [] as string[], secret: '' });
 
@@ -1418,12 +1944,20 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
   const test = async (id: string) => {
     setTestResult(r => ({ ...r, [id]: 'sending…' }));
     try {
-      await fetch(`${apiUrl}/api/settings/webhooks/${id}/test`, { method: 'POST' });
-      setTestResult(r => ({ ...r, [id]: '✓ Sent!' }));
+      const res = await fetch(`${apiUrl}/api/settings/webhooks/${id}/test`, { method: 'POST' });
+      if (res.ok) {
+        setTestResult(r => ({ ...r, [id]: '✓ Delivered' }));
+        setHooks(prev => prev.map(h => h.id === id ? { ...h, last_fired: Math.floor(Date.now() / 1000), last_delivery_ok: 1 } : h));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        const errMsg = (data.error ?? 'Failed').slice(0, 40);
+        setTestResult(r => ({ ...r, [id]: `✗ ${errMsg}` }));
+        setHooks(prev => prev.map(h => h.id === id ? { ...h, last_fired: Math.floor(Date.now() / 1000), last_delivery_ok: 0 } : h));
+      }
     } catch {
-      setTestResult(r => ({ ...r, [id]: '✗ Failed' }));
+      setTestResult(r => ({ ...r, [id]: '✗ Network error' }));
     }
-    setTimeout(() => setTestResult(r => { const n = { ...r }; delete n[id]; return n; }), 3000);
+    setTimeout(() => setTestResult(r => { const n = { ...r }; delete n[id]; return n; }), 4000);
   };
 
   return (
@@ -1468,6 +2002,12 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                         return <span key={e} className={`px-1.5 py-0.5 text-[10px] rounded border ${tagStyle}`}>{e}</span>;
                       })}
                     </div>
+                    {(hook.last_fired ?? 0) > 0 && (
+                      <p className="text-[10px] text-textMuted/50 mt-1.5 flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${hook.last_delivery_ok === 1 ? 'bg-green-400' : 'bg-red-400'}`} />
+                        {hook.last_delivery_ok === 1 ? 'Delivered' : 'Failed'} · {relativeTime(hook.last_fired!)}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <button
@@ -1516,6 +2056,27 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                         </label>
                       ))}
                     </div>
+                    <div>
+                      <label className="text-xs text-textMuted font-medium mb-1 block">
+                        HMAC Secret <span className="text-textMuted/40">(leave empty to keep current)</span>
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={editShowSecret ? 'text' : 'password'}
+                          value={editForm.secret}
+                          onChange={e => setEditForm(f => ({...f, secret: e.target.value}))}
+                          placeholder="Leave empty to keep current"
+                          className="w-full bg-background border border-border rounded-lg px-3 py-2 pr-10 text-sm text-white placeholder:text-textMuted/40 focus:outline-none focus:border-primary/40"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setEditShowSecret(s => !s)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-textMuted hover:text-white transition-colors"
+                        >
+                          {editShowSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
                     <div className="flex gap-2">
                       <button onClick={async () => {
                         await fetch(`${apiUrl}/api/settings/webhooks/${hook.id}`, {
@@ -1523,11 +2084,12 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                           body: JSON.stringify({ url: editForm.url, events: editForm.events, secret: editForm.secret || undefined }),
                         });
                         setEditingHookId(null);
+                        setEditShowSecret(false);
                         load();
                       }} className="px-3 py-1.5 bg-primary text-background text-xs font-bold rounded-lg hover:bg-primary/90 transition-colors">
                         Save
                       </button>
-                      <button onClick={() => setEditingHookId(null)} className="px-3 py-1.5 text-textMuted text-xs hover:text-white transition-colors">Cancel</button>
+                      <button onClick={() => { setEditingHookId(null); setEditShowSecret(false); }} className="px-3 py-1.5 text-textMuted text-xs hover:text-white transition-colors">Cancel</button>
                     </div>
                   </div>
                 )}

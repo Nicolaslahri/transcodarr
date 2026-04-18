@@ -1,7 +1,7 @@
 'use client';
 
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
-import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown } from 'lucide-react';
+import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown, FilePlus2, X, Plus, BookOpen } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import gsap from 'gsap';
@@ -203,6 +203,11 @@ export default function QueuePage() {
   const { jobs, workers, scanSummary, scanProgress, apiUrl } = useAppState();
   const [localScan, setLocalScan] = useState<ScanSummary | null>(null);
   const [orderedActiveIds, setOrderedActiveIds] = useState<string[]>([]);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickFilePath, setQuickFilePath] = useState('');
+  const [quickRecipe, setQuickRecipe] = useState('space-saver');
+  const [quickAdding, setQuickAdding] = useState(false);
+  const [quickError, setQuickError] = useState('');
 
   useEffect(() => { if (scanSummary) setLocalScan(scanSummary); }, [scanSummary]);
 
@@ -290,16 +295,96 @@ export default function QueuePage() {
           <h1 className="text-2xl md:text-4xl font-bold tracking-tight text-white mb-1 md:mb-2">Queue</h1>
           <p className="text-textMuted text-sm">Active transcodes and processing history.</p>
         </div>
-        <button
-          onClick={clearHistory}
-          disabled={!canClear}
-          className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-xs md:text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent shrink-0"
-        >
-          <Trash2 className="w-4 h-4" />
-          <span className="hidden sm:inline">Clear History</span>
-          <span className="sm:hidden">Clear</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => { setQuickAddOpen(true); setQuickError(''); }}
+            className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-primary/10 border border-primary/30 rounded-xl text-primary hover:bg-primary/20 transition-all text-xs md:text-sm font-medium"
+          >
+            <FilePlus2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Add File</span>
+          </button>
+          <button
+            onClick={clearHistory}
+            disabled={!canClear}
+            className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-xs md:text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Clear History</span>
+            <span className="sm:hidden">Clear</span>
+          </button>
+        </div>
       </header>
+
+      {/* Quick-add file modal */}
+      {quickAddOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200">
+          <div className="bg-surface border border-border rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h2 className="text-white font-bold flex items-center gap-2">
+                <FilePlus2 className="w-4 h-4 text-primary" /> Add Single File
+              </h2>
+              <button onClick={() => setQuickAddOpen(false)} className="text-textMuted hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-textMuted text-sm">Manually queue a single file for transcoding. The file must be accessible to the Main node.</p>
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block">File Path</label>
+                <input
+                  value={quickFilePath}
+                  onChange={e => setQuickFilePath(e.target.value)}
+                  placeholder="/media/movies/example.mkv"
+                  autoFocus
+                  className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white font-mono placeholder:text-textMuted/50 focus:outline-none focus:border-primary/50"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-textMuted font-medium mb-1.5 block flex items-center gap-1.5">
+                  <BookOpen className="w-3.5 h-3.5" /> Recipe
+                </label>
+                <select
+                  value={quickRecipe}
+                  onChange={e => setQuickRecipe(e.target.value)}
+                  className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
+                >
+                  {BUILT_IN_RECIPES.map(r => (
+                    <option key={r.id} value={r.id}>{r.icon} {r.name}</option>
+                  ))}
+                </select>
+              </div>
+              {quickError && <p className="text-red-400 text-sm flex items-center gap-1.5"><XCircle className="w-4 h-4 shrink-0" />{quickError}</p>}
+            </div>
+            <div className="flex gap-2 px-6 py-4 border-t border-border">
+              <button
+                onClick={async () => {
+                  if (!quickFilePath.trim()) { setQuickError('File path is required'); return; }
+                  setQuickAdding(true); setQuickError('');
+                  try {
+                    const res = await fetch(`${apiUrl}/api/jobs`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ filePath: quickFilePath.trim(), recipe: quickRecipe }),
+                    });
+                    if (!res.ok) {
+                      const d = await res.json().catch(() => ({}));
+                      setQuickError(d.error ?? 'Failed to queue file');
+                    } else {
+                      setQuickAddOpen(false);
+                      setQuickFilePath('');
+                      setQuickRecipe('space-saver');
+                    }
+                  } catch { setQuickError('Network error'); }
+                  setQuickAdding(false);
+                }}
+                disabled={quickAdding || !quickFilePath.trim()}
+                className="flex items-center gap-2 px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
+              >
+                {quickAdding ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {quickAdding ? 'Queuing…' : 'Queue File'}
+              </button>
+              <button onClick={() => setQuickAddOpen(false)} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <LiveStrip jobs={jobs} />
 

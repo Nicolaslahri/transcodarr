@@ -23,7 +23,15 @@
       "Bash(grep -l \"hardware\\\\|HARDWARE\\\\|PROFILE\" apps/web/components/*.tsx)",
       "Bash(node -e ':*)",
       "Bash(git add:*)",
-      "Bash(git commit -m ':*)"
+      "Bash(git commit -m ':*)",
+      "Bash(node -e ' *)",
+      "Bash(\"C:\\\\Users\\\\Nicolas\\\\Documents\\\\Transcodarr\\\\apps\\\\web\\\\node_modules\\\\.bin\\\\tsc\" --noEmit --project \"C:\\\\Users\\\\Nicolas\\\\Documents\\\\Transcodarr\\\\apps\\\\web\\\\tsconfig.json\")",
+      "Bash(node -e \"const {execSync}=require\\('child_process'\\);try{const r=execSync\\('cd \\\\\"C:\\\\\\\\\\\\\\\\Users\\\\\\\\\\\\\\\\Nicolas\\\\\\\\\\\\\\\\Documents\\\\\\\\\\\\\\\\Transcodarr\\\\\\\\\\\\\\\\apps\\\\\\\\\\\\\\\\web\\\\\" && npx tsc --noEmit',{shell:'cmd.exe',timeout:90000}\\);console.log\\(r.toString\\(\\)\\);}catch\\(e\\){console.log\\(e.stdout?.toString\\(\\)\\);console.log\\(e.stderr?.toString\\(\\)\\);}\")",
+      "Bash(powershell -Command \"Set-Location 'C:\\\\Users\\\\Nicolas\\\\Documents\\\\Transcodarr\\\\apps\\\\web'; npx tsc --noEmit 2>&1 | Select-Object -First 30\")",
+      "Bash(sed -i 's/\"version\": \"1.0.38\"/\"version\": \"1.0.39\"/g' package.json apps/main/package.json apps/worker/package.json apps/web/package.json)",
+      "Bash(sed -i 's/\"version\": \"1.0.36\"/\"version\": \"1.0.39\"/g' packages/shared/package.json)",
+      "Bash(cat apps/web/app/layout.tsx)",
+      "Bash(cat apps/web/app/layout.ts)"
     ]
   }
 }

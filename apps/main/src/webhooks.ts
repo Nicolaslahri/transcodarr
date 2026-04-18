@@ -20,21 +20,30 @@ function isPrivateUrl(urlStr: string): boolean {
 }
 
 async function deliverWithRetry(
+  hookId: string,
   url: string,
   headers: Record<string, string>,
   body: string,
   attempt = 1,
 ): Promise<void> {
+  const markDelivery = (ok: boolean) => {
+    try {
+      getDb().prepare('UPDATE webhooks SET last_fired = ?, last_delivery_ok = ? WHERE id = ?')
+        .run(Math.floor(Date.now() / 1000), ok ? 1 : 0, hookId);
+    } catch { /* non-critical */ }
+  };
   try {
     const res = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    markDelivery(true);
   } catch (err: any) {
     if (attempt >= 3) {
       console.warn(`[Webhooks] Delivery failed after 3 attempts (${url}):`, err.message);
+      markDelivery(false);
       return;
     }
     // Exponential backoff: 5s, 10s
-    setTimeout(() => deliverWithRetry(url, headers, body, attempt + 1), attempt * 5_000);
+    setTimeout(() => deliverWithRetry(hookId, url, headers, body, attempt + 1), attempt * 5_000);
   }
 }
 
@@ -64,6 +73,6 @@ export async function fireWebhooks(event: string, data: unknown): Promise<void> 
     }
 
     // Fire-and-forget with retry — don't await so we don't block the caller
-    deliverWithRetry(hook.url, headers, body).catch(() => {});
+    deliverWithRetry(hook.id, hook.url, headers, body).catch(() => {});
   }
 }

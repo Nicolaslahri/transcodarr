@@ -228,7 +228,12 @@ async function dispatchOne(): Promise<boolean> {
   // Mark the worker as active in DB immediately before the async fetch,
   // so the next iteration of dispatchOne() doesn't try to use the same worker.
   getDb().prepare('UPDATE workers SET status = ? WHERE id = ?').run('active', worker.id);
-  updateJobStatus(job.id, 'dispatched', { worker_id: worker.id, callback_token: callbackToken, dispatched_at: Math.floor(Date.now() / 1000) });
+  updateJobStatus(job.id, 'dispatched', {
+    worker_id: worker.id,
+    callback_token: callbackToken,
+    dispatched_at: Math.floor(Date.now() / 1000),
+    transfer_mode: connectionMode, // record actual mode used so the DB column isn't dead weight
+  });
 
   let payload: JobPayload;
 

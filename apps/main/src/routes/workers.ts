@@ -429,6 +429,14 @@ export async function workersRoutes(app: FastifyInstance) {
         return reply.status(401).send({ error: 'Unauthorized' });
       }
 
+      // Reject absurdly large uploads early — before streaming to disk.
+      // Fastify's bodyLimit doesn't apply to raw-stream routes so we check Content-Length.
+      const MAX_UPLOAD_BYTES = 100 * 1024 * 1024 * 1024; // 100 GB hard cap
+      const contentLength = parseInt(req.headers['content-length'] ?? '0');
+      if (contentLength > MAX_UPLOAD_BYTES) {
+        return reply.status(413).send({ error: `Upload exceeds 100 GB limit (got ${(contentLength / 1e9).toFixed(1)} GB)` });
+      }
+
       const origPath   = job.file_path;
       // Fix: parseInt(...) || expr has wrong precedence — must use explicit ternary
       const sizeHeader = parseInt(req.headers['x-size-before'] ?? '0');

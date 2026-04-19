@@ -14,6 +14,7 @@ import { jobsRoutes } from './routes/jobs.js';
 import { settingsRoutes } from './routes/settings.js';
 import { getDb } from './db.js';
 import { dispatchNext } from './dispatcher.js';
+import { rowToWorker } from './mappers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,14 +32,6 @@ export function broadcast<T>(event: WsEventType, data: T): void {
 }
 
 // ─── Worker Health Poller ─────────────────────────────────────────────────────
-
-function rowToWorker(row: any) {
-  return {
-    id: row.id, name: row.name, host: row.host, port: row.port,
-    status: row.status, hardware: JSON.parse(row.hardware ?? '{}'),
-    smbMappings: JSON.parse(row.smb_mappings ?? '[]'), lastSeen: row.last_seen,
-  };
-}
 
 export function startWorkerHealthPoller() {
   const INTERVAL_MS = 20_000; // ping every 20 seconds

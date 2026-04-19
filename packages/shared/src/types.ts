@@ -53,7 +53,7 @@ export type ConnectionMode = 'smb' | 'wireless';
  *   'sending'     — worker is uploading the result back to Main (wireless only)
  *   'swapping'    — Main is atomically replacing the original file
  */
-export type TransferPhase = 'receiving' | 'transcoding' | 'sending' | 'swapping' | 'finalizing';
+export type TransferPhase = 'receiving' | 'transcoding' | 'sending' | 'swapping';
 
 // ─── Worker ──────────────────────────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ export interface Job {
   codecIn?: string;
   codecOut?: string;        // target codec from the recipe
   resolution?: string;
-  bitratIn?: number;
+  bitrateIn?: number;
   recipe: string;
   status: JobStatus;
   workerId?: string;

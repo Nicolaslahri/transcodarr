@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Web UI (Next.js)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:web"],
+      "port": 3000
+    },
+    {
+      "name": "Main Node (Fastify API + WebSocket)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:main"],
+      "port": 3001
+    },
+    {
+      "name": "Worker Node (Fastify transcoder)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:worker"],
+      "port": 3002
+    },
+    {
+      "name": "All (parallel via Turbo)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    }
+  ]
+}

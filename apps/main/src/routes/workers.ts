@@ -4,13 +4,13 @@ import { broadcast } from '../server.js';
 import { dispatchNext } from '../dispatcher.js';
 import { getStats, recordProcessedFile, getJob, recordJobEvent } from '../queue.js';
 import { fireWebhooks } from '../webhooks.js';
+import { rowToWorker, MAIN_VERSION } from '../mappers.js';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
 import { ProgressUpdateSchema, JobCompletePayloadSchema } from '@transcodarr/shared';
 import fs from 'fs';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { Transform } from 'stream';
-import { createRequire } from 'module';
 
 // Token-bucket throttle: limits throughput to bytesPerSec
 class ThrottleTransform extends Transform {
@@ -42,28 +42,6 @@ function getSpeedLimitBytesPerSec(): number {
   return 0; // 0 = unlimited
 }
 
-const require = createRequire(import.meta.url);
-const MAIN_VERSION: string = (() => {
-  try { return require('../../../package.json').version; } catch { return 'unknown'; }
-})();
-
-function rowToWorker(row: any): WorkerInfo {
-  const workerVersion    = row.version ?? undefined;
-  const versionMismatch  = workerVersion != null && workerVersion !== MAIN_VERSION;
-  return {
-    id:              row.id,
-    name:            row.name,
-    host:            row.host,
-    port:            row.port,
-    status:          row.status,
-    hardware:        JSON.parse(row.hardware ?? '{}'),
-    smbMappings:     JSON.parse(row.smb_mappings ?? '[]'),
-    connectionMode:  (row.connection_mode ?? 'smb') as ConnectionMode,
-    lastSeen:        row.last_seen,
-    version:         workerVersion,
-    versionMismatch,
-  };
-}
 
 /**
  * Perform a version + capability sanity check between Main and a newly

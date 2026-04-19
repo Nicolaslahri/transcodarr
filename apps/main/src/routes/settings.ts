@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { addWatchedPath, manualScanDirectory, cancelScan } from '../watcher.js';
+import { invalidateSettingsCache } from '../settings-cache.js';
 import { fireWebhooks } from '../webhooks.js';
 
 /**
@@ -310,6 +311,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     for (const [key, value] of Object.entries(req.body)) {
       stmt.run(key, value);
     }
+    invalidateSettingsCache(); // bust cache so next dispatch reads fresh values
     return { ok: true };
   });
 

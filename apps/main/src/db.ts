@@ -101,8 +101,19 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_jobs_worker ON jobs(worker_id);
   `);
 
-  // Migrations — safely add columns if they don't exist yet
-  const migrate = (sql: string) => { try { db.exec(sql); } catch { /* column exists */ } };
+  // Migrations — safely add columns/indexes that may already exist.
+  // Narrow the catch to only swallow expected "already exists" errors so real
+  // failures (disk full, syntax errors, permission issues) are still logged.
+  const migrate = (sql: string) => {
+    try {
+      db.exec(sql);
+    } catch (err: any) {
+      const msg: string = err?.message ?? '';
+      if (!msg.includes('duplicate column') && !msg.includes('already exists')) {
+        console.error('[DB Migration] Unexpected error — schema may be incomplete:', msg, '\nSQL:', sql);
+      }
+    }
+  };
   migrate(`ALTER TABLE watched_paths ADD COLUMN recurse INTEGER DEFAULT 1`);
   migrate(`ALTER TABLE watched_paths ADD COLUMN extensions TEXT DEFAULT '.mkv,.mp4,.avi,.ts,.mov'`);
   migrate(`ALTER TABLE watched_paths ADD COLUMN priority TEXT DEFAULT 'normal'`);
@@ -153,4 +164,6 @@ export function initDb(): void {
   // v12 migrations — webhook delivery tracking + scheduled dispatch
   migrate(`ALTER TABLE webhooks ADD COLUMN last_fired INTEGER`);
   migrate(`ALTER TABLE webhooks ADD COLUMN last_delivery_ok INTEGER DEFAULT 1`);
+  // v13 migrations — bitrate_in (fixes bitratIn typo; now properly stored and surfaced)
+  migrate(`ALTER TABLE jobs ADD COLUMN bitrate_in INTEGER`);
 }

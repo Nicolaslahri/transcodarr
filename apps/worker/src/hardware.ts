@@ -57,7 +57,8 @@ export async function ensureFfmpeg(): Promise<void> {
 
 function isExecutable(cmd: string): boolean {
   try {
-    execSync(`${cmd} -version`, { stdio: 'ignore', timeout: 5000 });
+    // Use execFileSync (no shell) — avoids injection if cmd ever becomes user-configurable
+    execFileSync(cmd, ['-version'], { stdio: 'ignore', timeout: 5000 });
     return true;
   } catch {
     return false;

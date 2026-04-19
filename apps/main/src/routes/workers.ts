@@ -452,7 +452,9 @@ export async function workersRoutes(app: FastifyInstance) {
       }
 
       const origPath   = job.file_path;
-      const sizeBefore = parseInt(req.headers['x-size-before'] ?? '0') || fs.existsSync(origPath) ? fs.statSync(origPath).size : 0;
+      // Fix: parseInt(...) || expr has wrong precedence — must use explicit ternary
+      const sizeHeader = parseInt(req.headers['x-size-before'] ?? '0');
+      const sizeBefore = sizeHeader > 0 ? sizeHeader : (fs.existsSync(origPath) ? fs.statSync(origPath).size : 0);
       const outFilename = req.headers['x-output-filename'] as string | undefined;
       const ext         = outFilename ? path.extname(outFilename) : path.extname(origPath);
       const base        = path.basename(origPath, path.extname(origPath));

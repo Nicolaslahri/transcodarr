@@ -152,6 +152,10 @@ export async function jobsRoutes(app: FastifyInstance) {
     rateEntry.count++;
     enqueueRateMap.set(ip, rateEntry);
     if (rateEntry.count > 10) return reply.status(429).send({ error: 'Rate limit exceeded — max 10 manual enqueues per minute' });
+    // Prune expired entries to prevent unbounded map growth on long-running servers
+    if (enqueueRateMap.size > 500) {
+      for (const [k, v] of enqueueRateMap) { if (Date.now() > v.resetAt) enqueueRateMap.delete(k); }
+    }
 
     const job = enqueueFile(req.body.filePath, req.body.recipe, true);
     if (!job) return reply.status(400).send({ error: 'Could not enqueue file (already queued, skipped, or unreadable)' });

@@ -1,5 +1,5 @@
 import { getDb } from './db.js';
-import { getJobsByStatus, updateJobStatus, getJob, recordJobEvent } from './queue.js';
+import { getJobsByStatus, updateJobStatus, getJob, getStats, recordJobEvent } from './queue.js';
 import { broadcast } from './server.js';
 import type { WorkerInfo, JobPayload, SmbMapping, ConnectionMode, LangPrefs } from '@transcodarr/shared';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
@@ -69,6 +69,9 @@ export function startDispatcher(): void {
 
 // Re-entrancy guard: prevents concurrent dispatchNext() calls from racing each other
 let dispatching = false;
+// If dispatchNext() is called while a loop is already running (e.g. job:complete fires
+// mid-dispatch), set this flag so the loop runs one more pass after it finishes.
+let pendingDispatch = false;
 
 // Circuit breaker: track consecutive dispatch failures per worker
 // After 3 failures, mark the worker offline until it re-registers
@@ -77,7 +80,11 @@ const workerFailCount = new Map<string, number>();
 // Exported so routes/jobs.ts, watcher.ts, and workers.ts can trigger dispatch immediately.
 // Loops until no more idle workers or no more queued jobs (handles max_concurrent_jobs).
 export async function dispatchNext(): Promise<void> {
-  if (dispatching) return; // already running — new jobs will be picked up by the ongoing loop
+  if (dispatching) {
+    // A pass is already running; signal it to run again when done so this call isn't lost
+    pendingDispatch = true;
+    return;
+  }
   dispatching = true;
   try {
     // Loop until no more idle workers or no more queued jobs
@@ -87,6 +94,11 @@ export async function dispatchNext(): Promise<void> {
     }
   } finally {
     dispatching = false;
+    // If something called dispatchNext() while we were running, do one more pass now
+    if (pendingDispatch) {
+      pendingDispatch = false;
+      dispatchNext().catch(() => {});
+    }
   }
 }
 
@@ -242,11 +254,19 @@ async function dispatchOne(): Promise<boolean> {
   } else {
     const translated = translatePath(job.filePath, workerMappings);
     if (!translated) {
-      // No SMB mapping covers this file path — release worker and skip rather than dispatching a broken payload
-      console.warn(`⚠️  [Dispatcher] No SMB mapping covers "${job.filePath}" on worker "${worker.name}" — skipping this worker`);
+      // No SMB mapping covers this file — if we just re-queue it will retry every 30s forever.
+      // Mark it failed with a clear message so the user knows exactly what to fix.
+      console.warn(`⚠️  [Dispatcher] No SMB mapping covers "${job.filePath}" on worker "${worker.name}" — marking job failed`);
       getDb().prepare('UPDATE workers SET status = ? WHERE id = ?').run('idle', worker.id);
-      updateJobStatus(job.id, 'queued', { worker_id: null, callback_token: null, dispatched_at: null });
-      return false;
+      updateJobStatus(job.id, 'failed', {
+        worker_id: null,
+        callback_token: null,
+        dispatched_at: null,
+        error: `No SMB path mapping covers this file on worker "${worker.name}". Add a mapping in Settings → Transfer.`,
+      });
+      broadcast('job:failed', getJob(job.id));
+      broadcast('stats:update', getStats());
+      return true; // keep looping — next job might have a valid mapping
     }
     payload = {
       jobId:        job.id,

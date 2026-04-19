@@ -70,7 +70,7 @@ const PHASE_CONFIG: Record<string, {
   sending:     { label: 'Uploading Result',  Icon: Upload,          accent: 'text-violet-400',  border: 'border-l-violet-500/60',     barBg: 'bg-violet-400', chip: 'bg-violet-500/10 border-violet-500/30 text-violet-400', sortPriority: 2 },
   finalizing:  { label: 'Finalizing',        Icon: RefreshCw,       accent: 'text-amber-400',   border: 'border-l-amber-500/60',      barBg: 'bg-amber-400',  chip: 'bg-amber-500/10 border-amber-500/30 text-amber-400',    sortPriority: 3 },
   swapping:    { label: 'Finishing Up',      Icon: RefreshCw,       accent: 'text-orange-400',  border: 'border-l-orange-500/60',     barBg: 'bg-orange-400', chip: 'bg-orange-500/10 border-orange-500/30 text-orange-400', sortPriority: 3 },
-  dispatched:  { label: 'Ready to Dispatch', Icon: Timer,           accent: 'text-yellow-400',  border: 'border-l-yellow-500/40',     barBg: 'bg-yellow-500', chip: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400', sortPriority: 4 },
+  dispatched:  { label: 'Sent to Worker', Icon: Timer,           accent: 'text-yellow-400',  border: 'border-l-yellow-500/40',     barBg: 'bg-yellow-500', chip: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400', sortPriority: 4 },
   queued:      { label: 'Queued',            Icon: Clock,           accent: 'text-blue-400',    border: 'border-l-blue-500/40',       barBg: 'bg-blue-500',   chip: 'bg-blue-500/10 border-blue-500/30 text-blue-400',       sortPriority: 5 },
   paused:      { label: 'Paused',            Icon: PauseCircle,     accent: 'text-textMuted',   border: 'border-l-white/10',          barBg: 'bg-white/20',   chip: 'bg-white/5 border-white/10 text-textMuted',             sortPriority: 6 },
 };
@@ -208,6 +208,16 @@ export default function QueuePage() {
   const [quickRecipe, setQuickRecipe] = useState('space-saver');
   const [quickAdding, setQuickAdding] = useState(false);
   const [quickError, setQuickError] = useState('');
+  const [allRecipes, setAllRecipes] = useState<typeof BUILT_IN_RECIPES>([...BUILT_IN_RECIPES]);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  useEffect(() => {
+    if (!apiUrl) return;
+    fetch(`${apiUrl}/api/settings/recipes`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (Array.isArray(data)) setAllRecipes(data); })
+      .catch(() => {});
+  }, [apiUrl]);
 
   useEffect(() => { if (scanSummary) setLocalScan(scanSummary); }, [scanSummary]);
 
@@ -304,7 +314,7 @@ export default function QueuePage() {
             <span className="hidden sm:inline">Add File</span>
           </button>
           <button
-            onClick={clearHistory}
+            onClick={() => setConfirmClear(true)}
             disabled={!canClear}
             className="flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 bg-surface border border-border rounded-xl text-textMuted hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 transition-all text-xs md:text-sm font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-textMuted disabled:hover:border-border disabled:hover:bg-transparent"
           >
@@ -346,7 +356,7 @@ export default function QueuePage() {
                   onChange={e => setQuickRecipe(e.target.value)}
                   className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none appearance-none"
                 >
-                  {BUILT_IN_RECIPES.map(r => (
+                  {allRecipes.map(r => (
                     <option key={r.id} value={r.id}>{r.icon} {r.name}</option>
                   ))}
                 </select>
@@ -386,6 +396,28 @@ export default function QueuePage() {
         </div>
       )}
 
+      {confirmClear && (
+        <div className="flex items-center gap-3 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-sm animate-in fade-in duration-150">
+          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+          <span className="text-white flex-1">Remove all completed and failed jobs? This cannot be undone.</span>
+          <button
+            onClick={() => {
+              fetch(`${apiUrl}/api/jobs`, { method: 'DELETE' });
+              setConfirmClear(false);
+            }}
+            className="px-3 py-1 bg-red-500 text-white text-xs font-bold rounded-lg hover:bg-red-600 transition-colors"
+          >
+            Delete
+          </button>
+          <button
+            onClick={() => setConfirmClear(false)}
+            className="px-3 py-1 text-textMuted text-xs hover:text-white transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       <LiveStrip jobs={jobs} />
 
       {scanProgress && <ScanProgressBanner progress={scanProgress} />}
@@ -412,9 +444,9 @@ export default function QueuePage() {
                   <JobRow
                     key={job.id}
                     job={job}
-                    onResume={() => resumeJob(job.id)}
+                    onResume={() => fetch(`${apiUrl}/api/jobs/${job.id}/resume`, { method: 'POST' })}
                     onRemove={() => removeJob(job.id)}
-                    onCancel={() => cancelJob(job.id)}
+                    onCancel={() => fetch(`${apiUrl}/api/jobs/${job.id}/cancel`, { method: 'POST' })}
                     idleWorkers={idleWorkers}
                     apiUrl={apiUrl}
                     draggable={draggableIds.includes(job.id)}
@@ -424,6 +456,13 @@ export default function QueuePage() {
             </div>
           </SortableContext>
         </DndContext>
+        {activeJobs.some(j => j.status === 'queued' || j.status === 'dispatched') && workers.length === 0 && (
+          <div className="flex items-center gap-3 p-4 mt-2 rounded-xl border bg-amber-500/5 border-amber-500/20 text-sm">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="text-amber-200 flex-1">No workers connected — jobs will dispatch automatically when a worker comes online.</span>
+            <a href="/fleet" className="text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2 shrink-0">Add Worker →</a>
+          </div>
+        )}
       </section>
 
       {pausedJobs.length > 0 && (
@@ -436,9 +475,9 @@ export default function QueuePage() {
               <JobRow
                 key={job.id}
                 job={job}
-                onResume={() => resumeJob(job.id)}
+                onResume={() => fetch(`${apiUrl}/api/jobs/${job.id}/resume`, { method: 'POST' })}
                 onRemove={() => removeJob(job.id)}
-                onCancel={() => cancelJob(job.id)}
+                onCancel={() => fetch(`${apiUrl}/api/jobs/${job.id}/cancel`, { method: 'POST' })}
                 idleWorkers={idleWorkers}
                 apiUrl={apiUrl}
                 draggable={false}
@@ -596,8 +635,8 @@ function JobRow({
 }: {
   job: Job;
   onRemove: () => void;
-  onCancel: () => void;
-  onResume: () => void;
+  onCancel: () => Promise<Response>;
+  onResume: () => Promise<Response>;
   idleWorkers: WorkerInfo[];
   apiUrl: string;
   draggable: boolean;
@@ -605,6 +644,7 @@ function JobRow({
   // Optimistic override — show pause/play state immediately on button click,
   // without waiting for the WS event to arrive (fixes race condition).
   const [overrideStatus, setOverrideStatus] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState('');
   useEffect(() => { setOverrideStatus(null); }, [job.status]);
   const displayStatus = overrideStatus ?? job.status;
 
@@ -728,6 +768,11 @@ function JobRow({
               <WorkerPicker job={job} workers={idleWorkers} apiUrl={apiUrl} />
             </div>
           )}
+          {cancelError && (
+            <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
+              <AlertTriangle className="w-2.5 h-2.5 shrink-0" />{cancelError}
+            </p>
+          )}
         </div>
 
         {/* Progress + controls */}
@@ -743,12 +788,14 @@ function JobRow({
 
           <div className="w-20 md:w-28 space-y-1.5">
             <div className="flex items-center justify-end gap-1.5">
-              {job.eta && job.eta > Date.now() && (
+              {(job.progress >= 99 || job.phase === 'swapping') ? (
+                <span className="text-[10px] text-amber-400/80 animate-pulse shrink-0">Finishing up…</span>
+              ) : job.eta && job.eta > Date.now() ? (
                 <span className="text-[10px] text-textMuted flex items-center gap-0.5 shrink-0">
                   <Clock className="w-2.5 h-2.5" />
                   {formatEta(job.eta)}
                 </span>
-              )}
+              ) : null}
               <span className={`text-xs font-semibold tabular-nums shrink-0 ${isProcessing ? cfg.accent : 'text-textMuted'}`}>
                 {job.progress}%
               </span>
@@ -763,7 +810,20 @@ function JobRow({
 
           {isProcessing ? (
             <button
-              onClick={() => { setOverrideStatus('paused'); onCancel(); }}
+              onClick={async () => {
+                setCancelError('');
+                setOverrideStatus('paused');
+                try {
+                  const res = await onCancel();
+                  if (!res.ok) {
+                    setOverrideStatus(null);
+                    setCancelError('Failed to pause — try again');
+                  }
+                } catch {
+                  setOverrideStatus(null);
+                  setCancelError('Network error');
+                }
+              }}
               title="Pause — stops transcoding, keeps job in queue"
               className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-amber-400 transition-colors"
             >
@@ -772,7 +832,20 @@ function JobRow({
           ) : isPaused ? (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => { setOverrideStatus(null); onResume(); }}
+                onClick={async () => {
+                  setCancelError('');
+                  setOverrideStatus('queued');
+                  try {
+                    const res = await onResume();
+                    if (!res.ok) {
+                      setOverrideStatus(null);
+                      setCancelError('Failed to resume — try again');
+                    }
+                  } catch {
+                    setOverrideStatus(null);
+                    setCancelError('Network error');
+                  }
+                }}
                 title="Resume — put back in queue"
                 className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-green-400 transition-colors"
               >

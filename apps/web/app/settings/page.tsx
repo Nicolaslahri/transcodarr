@@ -234,6 +234,8 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   const [folderStats, setFolderStats] = useState<Record<string, FolderStats>>({});
   const [dryRunResult, setDryRunResult] = useState<{ id: string; total: number; wouldQueue: number; alreadyProcessed: number; alreadyActive: number } | null>(null);
   const [dryRunLoading, setDryRunLoading] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const load = () => fetch('/api/settings/paths').then(r => r.json()).then(setPaths).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -350,24 +352,42 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
       scan_interval_hours:     scanIntervalHours,
       move_to:                 moveTo || null,
     };
-    if (editingId) {
-      await fetch(`/api/settings/paths/${editingId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      closeForm();
-      load();
-    } else {
-      const res = await fetch('/api/settings/paths', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const newPath = await res.json();
-      closeForm();
-      load();
-      if (newPath?.id) setPostAddId(newPath.id);
+    setSaving(true);
+    setSaveError('');
+    try {
+      if (editingId) {
+        const res = await fetch(`/api/settings/paths/${editingId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          setSaveError(d.error ?? 'Save failed — please try again');
+          return;
+        }
+        closeForm();
+        load();
+      } else {
+        const res = await fetch('/api/settings/paths', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          setSaveError(d.error ?? 'Save failed — please try again');
+          return;
+        }
+        const newPath = await res.json();
+        closeForm();
+        load();
+        if (newPath?.id) setPostAddId(newPath.id);
+      }
+    } catch {
+      setSaveError('Network error — check your connection');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -707,15 +727,21 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
             <div className="flex gap-2 px-6 py-4 border-t border-border shrink-0">
               <button
                 onClick={save}
-                disabled={!form.path || !form.recipe}
-                className="px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
+                disabled={saving || !form.path || !form.recipe}
+                className="flex items-center gap-2 px-5 py-2 bg-primary text-background text-sm font-bold rounded-xl hover:bg-primary/90 disabled:opacity-40 transition-colors"
               >
-                {editingId ? 'Save Changes' : 'Add Folder'}
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                {saving ? 'Saving…' : (editingId ? 'Save Changes' : 'Add Folder')}
               </button>
               <button onClick={closeForm} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">
                 Cancel
               </button>
             </div>
+            {saveError && (
+              <p className="text-red-400 text-xs flex items-center gap-1.5 px-6 pb-3">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{saveError}
+              </p>
+            )}
           </div>
         </div>
       )}

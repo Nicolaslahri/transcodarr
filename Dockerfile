@@ -22,11 +22,15 @@ COPY apps/main/ ./apps/main/
 COPY apps/worker/ ./apps/worker/
 COPY apps/web/  ./apps/web/
 
-# Build all packages via Turbo
-RUN npx turbo build --filter=@transcodarr/shared
-RUN npx turbo build --filter=@transcodarr/web
-RUN npx turbo build --filter=@transcodarr/main
-RUN npx turbo build --filter=@transcodarr/worker
+# Build all packages via Turbo.
+#  - --output-logs=full surfaces every tsc/Next error line (default truncates noisy output)
+#  - NODE_OPTIONS raises the V8 heap so tsc doesn't OOM on RAM-constrained hosts (e.g. small VPSes / Pi)
+ENV NODE_OPTIONS=--max-old-space-size=2048
+
+RUN npx turbo build --filter=@transcodarr/shared --output-logs=full
+RUN npx turbo build --filter=@transcodarr/web    --output-logs=full
+RUN npx turbo build --filter=@transcodarr/main   --output-logs=full
+RUN npx turbo build --filter=@transcodarr/worker --output-logs=full
 
 # ─── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime

@@ -322,11 +322,16 @@ export function buildFfmpegArgs(recipe, hw, langs) {
             args.push('-c:a', 'aac', '-b:a', '128k');
             break;
         }
-        // ── Anime Cleaner — JP+EN tracks, H.265 ──────────────────────────────
+        // ── Anime Cleaner — JP+EN tracks, H.265 10-bit ───────────────────────
         case 'anime-cleaner': {
             // Explicit per-language mapping — lang prefs from watched folder are intentionally ignored
             const enc = getVideoEncoder(hw, 'h265');
-            args.push('-map', '0:v', '-map', '0:a:m:language:jpn?', '-map', '0:a:m:language:eng?', '-map', '0:s?', '-c:v', enc, ...encodeH265(enc, 'high'), '-c:a', 'copy', '-c:s', 'copy');
+            // 10-bit pixel format reduces colour banding in anime (gradients, skies)
+            const pixFmt = enc === 'libx265' ? 'yuv420p10le' : 'p010le';
+            // main10 profile required for 10-bit output on hardware encoders
+            const profileArgs = (enc !== 'libx265') ? ['-profile:v', 'main10'] : [];
+            args.push('-map', '0:v', '-map', '0:a:m:language:jpn?', '-map', '0:a:m:language:eng?', '-map', '0:s?', '-map', '0:t?', // font attachments — required for styled .ass subtitles
+            '-c:v', enc, ...encodeH265(enc, 'high'), '-pix_fmt', pixFmt, ...profileArgs, '-c:a', 'copy', '-c:s', 'copy', '-c:t', 'copy');
             break;
         }
         // ── Audio Normalizer — copy video, normalize audio to EBU R128 ───────

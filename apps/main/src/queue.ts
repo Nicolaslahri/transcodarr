@@ -47,7 +47,8 @@ export function analyzeFile(filePath: string): ExtendedFileAnalysis | null {
       container:      probe.format?.format_name ?? 'unknown',
       hasSubtitles:   subtitleStreams.length > 0,
     };
-  } catch {
+  } catch (err: any) {
+    console.warn(`[ffprobe] Failed to analyze "${filePath}": ${err.message ?? err}`);
     return null;
   }
 }
@@ -130,9 +131,9 @@ export function enqueueFile(filePath: string, recipeId: string, force = false, p
   const sortOrder = (maxOrder ?? 0) + 1;
 
   db.prepare(`
-    INSERT INTO jobs (id, file_path, file_name, file_size, codec_in, resolution, recipe, status, has_subtitles, sort_order, pinned_worker_id, content_key, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(id, filePath, path.basename(filePath), analysis.fileSize, analysis.codec, analysis.resolution, recipeId, 'queued', analysis.hasSubtitles ? 1 : 0, sortOrder, pinnedWorkerId ?? null, contentKey, now, now);
+    INSERT INTO jobs (id, file_path, file_name, file_size, codec_in, resolution, bitrate_in, recipe, status, has_subtitles, sort_order, pinned_worker_id, content_key, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(id, filePath, path.basename(filePath), analysis.fileSize, analysis.codec, analysis.resolution, analysis.bitrate || null, recipeId, 'queued', analysis.hasSubtitles ? 1 : 0, sortOrder, pinnedWorkerId ?? null, contentKey, now, now);
 
   recordJobEvent(id, 'queued');
   return getJob(id);
@@ -156,12 +157,31 @@ export function getJobsByStatus(status: JobStatus): Job[] {
   return (getDb().prepare('SELECT * FROM jobs WHERE status = ? ORDER BY COALESCE(sort_order, 999999) ASC, created_at ASC').all(status) as any[]).map(rowToJob);
 }
 
+// Allowlist of valid column names for updateJobStatus — prevents SQL injection
+// if an untrusted key ever reaches the `extra` map.
+const ALLOWED_JOB_COLUMNS = new Set([
+  'status', 'worker_id', 'progress', 'fps', 'eta', 'phase', 'error',
+  'callback_token', 'dispatched_at', 'sort_order', 'pinned_worker_id',
+  'size_before', 'size_after', 'avg_fps', 'elapsed_seconds',
+  'completed_at', 'updated_at', 'content_key',
+]);
+
 export function updateJobStatus(id: string, status: JobStatus, extra: Record<string, unknown> = {}): void {
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
-  const fields = Object.entries({ status, updated_at: now, ...extra })
+  // Filter to only known-safe column names before interpolating into SQL
+  const safeExtra = Object.fromEntries(
+    Object.entries(extra).filter(([k]) => {
+      if (!ALLOWED_JOB_COLUMNS.has(k)) {
+        console.warn(`[updateJobStatus] Ignoring unknown column: "${k}"`);
+        return false;
+      }
+      return true;
+    })
+  );
+  const fields = Object.entries({ status, updated_at: now, ...safeExtra })
     .map(([k]) => `${k} = ?`).join(', ');
-  const values = Object.values({ status, updated_at: now, ...extra });
+  const values = Object.values({ status, updated_at: now, ...safeExtra });
   db.prepare(`UPDATE jobs SET ${fields} WHERE id = ?`).run(...values, id);
 }
 
@@ -199,6 +219,7 @@ function rowToJob(row: any): Job {
     fileSize:        row.file_size,
     codecIn:         row.codec_in,
     resolution:      row.resolution,
+    bitrateIn:       row.bitrate_in ?? undefined,
     recipe:          row.recipe,
     status:          row.status,
     workerId:        row.worker_id,

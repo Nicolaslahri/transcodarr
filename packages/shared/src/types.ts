@@ -110,7 +110,7 @@ export interface Job {
   codecIn?: string;
   codecOut?: string;        // target codec from the recipe
   resolution?: string;
-  bitratIn?: number;
+  bitrateIn?: number;
   recipe: string;
   status: JobStatus;
   workerId?: string;

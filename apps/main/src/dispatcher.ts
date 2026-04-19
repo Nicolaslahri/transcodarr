@@ -1,7 +1,10 @@
 import { getDb } from './db.js';
 import { getJobsByStatus, updateJobStatus, getJob, getStats, recordJobEvent } from './queue.js';
 import { broadcast } from './server.js';
+import { rowToWorker } from './mappers.js';
+import { getAllSettings } from './settings-cache.js';
 import type { WorkerInfo, JobPayload, SmbMapping, ConnectionMode, LangPrefs } from '@transcodarr/shared';
+// WorkerInfo kept for getWorkers/getAcceptedWorkers return type; ConnectionMode for payload building
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 import { randomBytes } from 'crypto';
 import path from 'path';
@@ -104,11 +107,13 @@ export async function dispatchNext(): Promise<void> {
 
 // Dispatch a single job-worker pair. Returns true if a job was dispatched, false if nothing to do.
 async function dispatchOne(): Promise<boolean> {
+  // Read all settings in one cached query instead of 6+ individual reads
+  const settings = getAllSettings();
+
   // ── Scheduled active hours check ──────────────────────────────────────────
-  const activeHoursRow = getDb().prepare("SELECT value FROM settings WHERE key = 'active_hours'").get() as any;
-  if (activeHoursRow?.value) {
+  if (settings.active_hours) {
     try {
-      const { start, end } = JSON.parse(activeHoursRow.value) as { start: number; end: number };
+      const { start, end } = JSON.parse(settings.active_hours) as { start: number; end: number };
       const hour = new Date().getHours();
       // start=22, end=6 means: active between 22:00–06:00 (wraps midnight)
       const inWindow = start <= end ? (hour >= start && hour < end) : (hour >= start || hour < end);
@@ -119,9 +124,8 @@ async function dispatchOne(): Promise<boolean> {
   }
 
   // ── Disk space safeguard ───────────────────────────────────────────────────
-  const diskGuardRow = getDb().prepare("SELECT value FROM settings WHERE key = 'disk_safeguard_gb'").get() as any;
-  if (diskGuardRow?.value) {
-    const minFreeGb = parseFloat(diskGuardRow.value);
+  if (settings.disk_safeguard_gb) {
+    const minFreeGb = parseFloat(settings.disk_safeguard_gb);
     if (!isNaN(minFreeGb) && minFreeGb > 0) {
       try {
         const checkPath = os.platform() === 'win32' ? (process.env.SystemDrive ?? 'C:\\') : '/';
@@ -140,8 +144,7 @@ async function dispatchOne(): Promise<boolean> {
   if (queuedJobs.length === 0) return false;
 
   // Apply queue strategy ordering (default: fifo = sort_order / created_at from DB)
-  const strategyRow = getDb().prepare("SELECT value FROM settings WHERE key = 'queueStrategy'").get() as any;
-  const strategy = strategyRow?.value ?? 'fifo';
+  const strategy = settings.queueStrategy ?? 'fifo';
   if (strategy === 'largest') {
     queuedJobs = [...queuedJobs].sort((a, b) => (b.fileSize ?? 0) - (a.fileSize ?? 0));
   } else if (strategy === 'smallest') {
@@ -152,8 +155,7 @@ async function dispatchOne(): Promise<boolean> {
   // 'fifo' uses the default sort_order/created_at ordering already applied by getJobsByStatus
 
   // Enforce max_concurrent_jobs setting
-  const maxRow = getDb().prepare("SELECT value FROM settings WHERE key = 'max_concurrent_jobs'").get() as any;
-  const maxConcurrent = maxRow ? parseInt(maxRow.value, 10) : 0;
+  const maxConcurrent = settings.max_concurrent_jobs ? parseInt(settings.max_concurrent_jobs, 10) : 0;
   if (maxConcurrent > 0) {
     const activeCount = (getDb().prepare(
       "SELECT COUNT(*) as cnt FROM jobs WHERE status IN ('dispatched','transcoding','swapping','receiving','sending')"
@@ -195,10 +197,8 @@ async function dispatchOne(): Promise<boolean> {
   }
 
   const recipe = [...BUILT_IN_RECIPES, ...(() => {
-    try {
-      const row = getDb().prepare("SELECT value FROM settings WHERE key = 'custom_recipes'").get() as any;
-      return row ? JSON.parse(row.value) : [];
-    } catch { return []; }
+    try { return settings.custom_recipes ? JSON.parse(settings.custom_recipes) : []; }
+    catch { return []; }
   })()].find((r: any) => r.id === job.recipe);
   if (!recipe) return false;
 
@@ -212,12 +212,8 @@ async function dispatchOne(): Promise<boolean> {
       'SELECT preferred_audio_lang, preferred_subtitle_lang FROM watched_paths WHERE enabled = 1 ORDER BY LENGTH(path) DESC'
     ).all() as any[];
     const matchingPath = watchedPaths.find(wp => job.filePath.startsWith(wp.path));
-    const audioLang    = matchingPath?.preferred_audio_lang
-      ?? (getDb().prepare("SELECT value FROM settings WHERE key = 'preferred_audio_lang'").get() as any)?.value
-      ?? undefined;
-    const subtitleLang = matchingPath?.preferred_subtitle_lang
-      ?? (getDb().prepare("SELECT value FROM settings WHERE key = 'preferred_subtitle_lang'").get() as any)?.value
-      ?? undefined;
+    const audioLang    = matchingPath?.preferred_audio_lang ?? settings.preferred_audio_lang ?? undefined;
+    const subtitleLang = matchingPath?.preferred_subtitle_lang ?? settings.preferred_subtitle_lang ?? undefined;
     const prefs: LangPrefs = {};
     if (audioLang) prefs.audioLang = audioLang;
     if (subtitleLang) prefs.subtitleLang = subtitleLang;
@@ -328,16 +324,3 @@ async function dispatchOne(): Promise<boolean> {
   }
 }
 
-function rowToWorker(row: any): WorkerInfo {
-  return {
-    id:             row.id,
-    name:           row.name,
-    host:           row.host,
-    port:           row.port,
-    status:         row.status,
-    hardware:       JSON.parse(row.hardware ?? '{}'),
-    smbMappings:    JSON.parse(row.smb_mappings ?? '[]'),
-    connectionMode: (row.connection_mode ?? 'smb') as ConnectionMode,
-    lastSeen:       row.last_seen,
-  };
-}

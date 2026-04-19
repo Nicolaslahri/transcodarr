@@ -401,7 +401,10 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
     }
 
     default:
-      throw new Error(`Unknown recipe: ${recipe.id}`);
+      // Don't throw — an unknown recipe ID from a stale DB shouldn't crash the dispatch loop.
+      // Return empty args so the caller can detect the problem and mark the job failed gracefully.
+      console.warn(`[buildFfmpegArgs] Unknown recipe ID: "${recipe.id}" — returning empty args`);
+      break;
   }
 
   return args;

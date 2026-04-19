@@ -75,7 +75,7 @@ export interface Job {
     codecIn?: string;
     codecOut?: string;
     resolution?: string;
-    bitratIn?: number;
+    bitrateIn?: number;
     recipe: string;
     status: JobStatus;
     workerId?: string;

@@ -164,6 +164,7 @@ const ALLOWED_JOB_COLUMNS = new Set([
   'callback_token', 'dispatched_at', 'sort_order', 'pinned_worker_id',
   'size_before', 'size_after', 'avg_fps', 'elapsed_seconds',
   'completed_at', 'updated_at', 'content_key',
+  'transfer_mode', // populated at dispatch time; reflects actual connection mode used
 ]);
 
 export function updateJobStatus(id: string, status: JobStatus, extra: Record<string, unknown> = {}): void {

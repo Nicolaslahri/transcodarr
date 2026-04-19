@@ -163,7 +163,9 @@ export async function createServer(isSetup = false) {
       const resetFlag = path.join(CONFIG_DIR, 'reset.flag');
       setTimeout(() => {
         try { fs.writeFileSync(resetFlag, '1'); } catch {}
-        process.exit(0);
+        // Gracefully close Fastify so in-flight HTTP responses are drained before exit.
+        // start.mjs monitors for process exit + the reset.flag and relaunches in the new mode.
+        app.close().then(() => process.exit(0)).catch(() => process.exit(0));
       }, 200);
     });
     return app;

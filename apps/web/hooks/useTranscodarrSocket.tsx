@@ -69,6 +69,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const [apiUrl, setApiUrl] = useState(localUrl);
   const wsRef = useRef<WebSocket | null>(null);
   const metaRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Exponential backoff state for WS reconnects — resets to 1 s on each successful open.
+  const wsReconnectDelayRef = useRef(1_000);
 
   // ─── Accept / Reject ──────────────────────────────────────────────────────
   const acceptWorker = useCallback(async (id: string) => {
@@ -95,13 +97,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
-    ws.onopen = () => setConnected(true);
+    ws.onopen = () => {
+      setConnected(true);
+      wsReconnectDelayRef.current = 1_000; // reset backoff on successful connection
+    };
     ws.onclose = () => {
       setConnected(false);
-      // Auto-reconnect after 5s
+      // Exponential backoff: 1 s → 2 s → 4 s … up to 30 s, with ±20 % jitter.
+      const base  = wsReconnectDelayRef.current;
+      const jitter = base * 0.2 * (Math.random() * 2 - 1); // ±20 %
+      const delay  = Math.round(base + jitter);
+      wsReconnectDelayRef.current = Math.min(base * 2, 30_000);
       setTimeout(() => {
         if (wsRef.current === ws) connectTo(targetUrl);
-      }, 5000);
+      }, delay);
     };
 
     ws.onmessage = (msg) => {

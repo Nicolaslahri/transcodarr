@@ -5,7 +5,7 @@ import { BUILT_IN_RECIPES } from '@transcodarr/shared';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { addWatchedPath, manualScanDirectory } from '../watcher.js';
+import { addWatchedPath, manualScanDirectory, cancelScan } from '../watcher.js';
 import { fireWebhooks } from '../webhooks.js';
 
 /**
@@ -286,6 +286,9 @@ export async function settingsRoutes(app: FastifyInstance) {
   });
 
   app.delete<{ Params: { id: string } }>('/paths/:id', async (req) => {
+    // Cancel any in-progress scan for this path before removing it
+    const row = getDb().prepare('SELECT path FROM watched_paths WHERE id = ?').get(req.params.id) as any;
+    if (row?.path) cancelScan(row.path);
     getDb().prepare('DELETE FROM watched_paths WHERE id = ?').run(req.params.id);
     return { ok: true };
   });

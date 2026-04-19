@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import type { JobPayload, HardwareProfile, ProgressUpdate } from '@transcodarr/shared';
@@ -31,8 +31,10 @@ function findFileRecursively(dir: string, filename: string, depth = 0): string |
 
 function getFileDuration(inputPath: string): number {
   try {
-    const out = execSync(
-      `"${resolvedFfprobe}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${inputPath}"`,
+    // Use execFileSync (no shell) so filenames with quotes/special chars can't inject commands
+    const out = execFileSync(
+      resolvedFfprobe,
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', inputPath],
       { encoding: 'utf8', timeout: 30_000 },
     );
     return parseFloat(out.trim()) || 0;
@@ -139,9 +141,10 @@ export async function transcodeFile(
     }
 
     const handleData = (data: Buffer) => {
-      const chunk = data.toString();
-      errorLog += chunk;
-      if (errorLog.length > 5000) errorLog = errorLog.slice(-5000);
+      // Cap each incoming chunk first so a single massive ffmpeg error burst
+      // can't spike memory before the rolling-window check fires
+      const chunk = data.toString().slice(-5000);
+      errorLog = (errorLog + chunk).slice(-5000);
 
       leftover += chunk;
       const parts = leftover.split(/[\r\n]+/);

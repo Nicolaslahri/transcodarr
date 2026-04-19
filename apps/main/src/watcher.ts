@@ -128,6 +128,17 @@ export function addWatchedPath(watchPath: string, recipe: string, triggerScan = 
 // (~200ms each) block the entire server for multi-hundred-file scans.
 const yieldToEventLoop = () => new Promise<void>(r => setImmediate(r));
 
+// Active scan controllers keyed by directory — allows cancellation via cancelScan()
+const activeScanControllers = new Map<string, AbortController>();
+
+/** Cancel an in-progress scan for the given directory, if one is running. */
+export function cancelScan(dir: string): boolean {
+  const ctrl = activeScanControllers.get(dir);
+  if (!ctrl) return false;
+  ctrl.abort();
+  return true;
+}
+
 // Helper to manually scan a directory recursively, broadcasting a summary when done.
 // Runs asynchronously and yields between files so the server stays responsive.
 // Symlink cycle detection prevents infinite recursion on looped symlinks.
@@ -137,12 +148,18 @@ export async function manualScanDirectory(dir: string, recipe: string, excludePa
     return;
   }
 
+  // Register an AbortController so callers can cancel this scan mid-flight
+  const ctrl = new AbortController();
+  activeScanControllers.set(dir, ctrl);
+  const signal = ctrl.signal;
+
   const stats = { enqueued: 0, skipped: 0, alreadyActive: 0, total: 0 };
   const sessionId = Math.random().toString(36).slice(2, 10);
   // Track resolved real paths to break symlink cycles
   const visitedRealPaths = new Set<string>();
 
   const scan = async (current: string) => {
+    if (signal.aborted) return; // bail out if scan was cancelled
     // Resolve the real path to detect symlink loops
     let realCurrent: string;
     try { realCurrent = fs.realpathSync(current); } catch { return; }
@@ -172,6 +189,7 @@ export async function manualScanDirectory(dir: string, recipe: string, excludePa
     // Process files — yield the event loop between each ffprobe so the
     // server can handle WebSocket messages / progress callbacks mid-scan.
     for (const entry of entries) {
+      if (signal.aborted) return; // check before each file so cancellation is responsive
       if (entry.isFile()) {
         const fullPath = path.join(current, entry.name);
         const ext = path.extname(fullPath).toLowerCase();
@@ -210,6 +228,14 @@ export async function manualScanDirectory(dir: string, recipe: string, excludePa
   };
 
   await scan(dir);
+  activeScanControllers.delete(dir); // always clean up
+
+  if (signal.aborted) {
+    const msg = `Scan cancelled for "${path.basename(dir)}" (${stats.total} files processed before cancellation)`;
+    console.log(`  ⛔ ${msg}`);
+    broadcast('scan:summary', { sessionId, dir, recipe, ...stats, cancelled: true, message: msg });
+    return;
+  }
 
   const msg = `Scan complete for "${path.basename(dir)}": ${stats.enqueued} queued, ${stats.skipped} already optimized, ${stats.alreadyActive} in progress (${stats.total} total files found)`;
   console.log(`  📊 ${msg}`);

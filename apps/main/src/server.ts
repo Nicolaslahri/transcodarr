@@ -13,6 +13,7 @@ import { workersRoutes } from './routes/workers.js';
 import { jobsRoutes } from './routes/jobs.js';
 import { settingsRoutes } from './routes/settings.js';
 import { getDb } from './db.js';
+import { dispatchNext } from './dispatcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,6 +70,8 @@ export function startWorkerHealthPoller() {
           broadcast('worker:updated', rowToWorker(
             db.prepare('SELECT * FROM workers WHERE id = ?').get(row.id)
           ));
+          // Worker came back online — kick the dispatcher so queued jobs don't wait up to 30s
+          dispatchNext().catch(() => {});
         } else {
           // Still update last_seen so we know it's alive
           db.prepare('UPDATE workers SET last_seen = ? WHERE id = ?')

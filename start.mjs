@@ -8,8 +8,17 @@ import { spawn, spawnSync } from 'child_process';
 
 const CONFIG_DIR  = path.join(os.homedir(), '.transcodarr');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+const PORT_FILE   = path.join(CONFIG_DIR, 'port');   // persists across config resets
 const RESET_FLAG  = path.join(CONFIG_DIR, 'reset.flag');
 const IS_WIN      = process.platform === 'win32';
+
+/** Read the persisted port (survives config.json resets). Returns null when unset. */
+function loadSavedPort() {
+  try {
+    const p = parseInt(fs.readFileSync(PORT_FILE, 'utf-8').trim(), 10);
+    return isNaN(p) || p < 1 || p > 65535 ? null : p;
+  } catch { return null; }
+}
 
 const ROOT = path.dirname(
   new URL(import.meta.url).pathname.replace(/^\/[a-zA-Z]:/, (m) => m.slice(1))
@@ -106,9 +115,10 @@ async function launchRole(role) {
   const filter  = role === 'main' ? '@transcodarr/main' : '@transcodarr/worker';
   const label   = role === 'main' ? '🧠 Main Node' : '⚡ Worker Node';
 
-  // Main always owns 3001. Worker finds its own free port (3002+).
-  const port = role === 'main' ? 3001 : await findFreePort(3002);
-  if (role === 'main') await waitForPortFree(3001);
+  // Use the persisted port if set; otherwise default (main→3001, worker→first free ≥3002).
+  const savedPort = loadSavedPort();
+  const port = savedPort ?? (role === 'main' ? 3001 : await findFreePort(3002));
+  await waitForPortFree(port);
   console.log(`\n  Starting ${label} on port ${port}...\n`);
 
   // Both roles now use the unified PORT env var. Legacy MAIN_PORT/WORKER_PORT still work
@@ -162,8 +172,11 @@ async function main() {
     return;
   }
 
-  console.log('\n  🚀 First boot — opening Setup UI on http://localhost:3001 ...\n');
-  await waitForPortFree();
+  // After a reset the port file still exists, so setup comes back on the same port
+  // the node was using — the user's bookmark keeps working.
+  const setupPort = loadSavedPort() ?? 3001;
+  console.log(`\n  🚀 Setup — opening http://localhost:${setupPort} ...\n`);
+  await waitForPortFree(setupPort);
 
   const isProd = process.env.NODE_ENV === 'production';
 
@@ -172,7 +185,7 @@ async function main() {
       stdio: 'inherit',
       cwd: ROOT,
       detached: !IS_WIN,
-      env: { ...process.env, SETUP_MODE: '1' }
+      env: { ...process.env, SETUP_MODE: '1', PORT: String(setupPort) }
     });
   } else {
     currentChild = spawn('npm', ['run', 'dev', '--workspace=@transcodarr/main'], {
@@ -180,7 +193,7 @@ async function main() {
       shell: true,
       cwd: ROOT,
       detached: !IS_WIN,
-      env: { ...process.env, SETUP_MODE: '1' }
+      env: { ...process.env, SETUP_MODE: '1', PORT: String(setupPort) }
     });
   }
 

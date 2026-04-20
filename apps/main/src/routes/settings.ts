@@ -281,14 +281,28 @@ export async function settingsRoutes(app: FastifyInstance) {
   });
 
   // ─── General Settings (key-value) ────────────────────────────────────────────
+  const PORT_FILE = path.join(os.homedir(), '.transcodarr', 'port');
+
   app.get('/general', async () => {
     const rows = getDb().prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
-    return Object.fromEntries(rows.map(r => [r.key, r.value]));
+    const out = Object.fromEntries(rows.map(r => [r.key, r.value])) as Record<string, string>;
+    // Expose persisted port so the UI can show it (stored in a file separate from DB)
+    try { out.port = fs.readFileSync(PORT_FILE, 'utf-8').trim(); } catch { /* not yet saved */ }
+    return out;
   });
 
   app.put<{ Body: Record<string, string> }>('/general', async (req) => {
+    const { port: portStr, ...rest } = req.body;
+    // Port lives in its own file (survives config.json resets) — not in the DB
+    if (portStr !== undefined) {
+      const p = parseInt(portStr, 10);
+      if (!isNaN(p) && p >= 1 && p <= 65535) {
+        try { fs.mkdirSync(path.dirname(PORT_FILE), { recursive: true }); } catch {}
+        fs.writeFileSync(PORT_FILE, String(p));
+      }
+    }
     const stmt = getDb().prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
-    for (const [key, value] of Object.entries(req.body)) {
+    for (const [key, value] of Object.entries(rest)) {
       stmt.run(key, value);
     }
     invalidateSettingsCache(); // bust cache so next dispatch reads fresh values

@@ -127,17 +127,23 @@ export async function createWorkerServer(port: number) {
   });
 
   // Settings stubs — Worker has only General settings (no DB)
-  app.get('/api/settings/general', async () => ({
-    nodeName: process.env.WORKER_NAME ?? workerId,
-    mainUrl,
-  }));
+  app.get('/api/settings/general', async () => {
+    const { default: fs } = await import('fs');
+    const { default: os } = await import('os');
+    const { default: path } = await import('path');
+    const portFile = path.join(os.homedir(), '.transcodarr', 'port');
+    let savedPort: string | undefined;
+    try { savedPort = fs.readFileSync(portFile, 'utf-8').trim(); } catch { /* not set */ }
+    return { nodeName: process.env.WORKER_NAME ?? workerId, mainUrl, port: savedPort };
+  });
 
-  app.put<{ Body: { nodeName?: string; mainUrl?: string } }>('/api/settings/general', async (req, reply) => {
+  app.put<{ Body: { nodeName?: string; mainUrl?: string; port?: string } }>('/api/settings/general', async (req, reply) => {
     const { default: fs } = await import('fs');
     const { default: os } = await import('os');
     const { default: path } = await import('path');
     const dir        = path.join(os.homedir(), '.transcodarr');
     const configFile = path.join(dir, 'config.json');
+    const portFile   = path.join(dir, 'port');
 
     try {
       let config: any = { role: 'worker' };
@@ -146,9 +152,17 @@ export async function createWorkerServer(port: number) {
       }
       if (req.body.nodeName) config.nodeName = req.body.nodeName;
       if (req.body.mainUrl)  config.mainUrl = req.body.mainUrl;
-      
+      // Port lives in its own file so it survives future config resets
+      if (req.body.port) {
+        const p = parseInt(req.body.port, 10);
+        if (!isNaN(p) && p >= 1 && p <= 65535) {
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(portFile, String(p));
+        }
+      }
+
       fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
-      
+
       // Send response then exit after 500ms so start.mjs restarts it with new config
       setTimeout(() => process.exit(0), 500);
       return reply.send({ ok: true, message: 'Worker is restarting to apply changes' });

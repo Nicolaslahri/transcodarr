@@ -95,6 +95,7 @@ export function startWorkerHealthPoller() {
 
 const CONFIG_DIR = path.join(os.homedir(), '.transcodarr');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+const PORT_FILE   = path.join(CONFIG_DIR, 'port'); // survives config resets
 
 export async function createServer(isSetup = false) {
   const app = Fastify({ logger: { level: 'warn' } });
@@ -151,11 +152,17 @@ export async function createServer(isSetup = false) {
       });
     });
     
-    app.post<{ Body: { role: 'main' | 'worker'; mainUrl?: string } }>('/api/setup', async (req, reply) => {
+    app.post<{ Body: { role: 'main' | 'worker'; mainUrl?: string; port?: number } }>('/api/setup', async (req, reply) => {
       fs.mkdirSync(CONFIG_DIR, { recursive: true });
       const cfg: any = { role: req.body.role, savedAt: new Date().toISOString() };
       if (req.body.role === 'worker' && req.body.mainUrl) {
         cfg.mainUrl = req.body.mainUrl;
+      }
+      // Persist the chosen port separately — survives future config resets so the
+      // node always comes back on the same port (setup and role both use it).
+      const chosenPort = req.body.port;
+      if (chosenPort && chosenPort >= 1 && chosenPort <= 65535) {
+        fs.writeFileSync(PORT_FILE, String(chosenPort));
       }
       fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
       reply.send({ ok: true });

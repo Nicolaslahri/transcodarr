@@ -1655,7 +1655,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
 
 function GeneralPanel() {
   const { apiUrl, meta } = useAppState();
-  const [settings, setSettings] = useState({ nodeName: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '', preferred_audio_lang: '', preferred_subtitle_lang: '', diskSafeguardGb: '', activeHoursEnabled: false, activeHoursStart: '22', activeHoursEnd: '6' });
+  const [settings, setSettings] = useState({ nodeName: '', port: '', maxConcurrentJobs: '2', queueStrategy: 'fifo', autoAcceptWorkers: 'false', mainUrl: '', preferred_audio_lang: '', preferred_subtitle_lang: '', diskSafeguardGb: '', activeHoursEnabled: false, activeHoursStart: '22', activeHoursEnd: '6' });
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
@@ -1664,6 +1664,7 @@ function GeneralPanel() {
     fetch(`${apiUrl}/api/settings/general`).then(r => r.json()).then(data => {
       setSettings(s => ({
         nodeName:               data.nodeName               ?? s.nodeName,
+        port:                   data.port                   ?? s.port,
         maxConcurrentJobs:      data.max_concurrent_jobs    ?? data.maxConcurrentJobs ?? s.maxConcurrentJobs,
         queueStrategy:          data.queueStrategy          ?? s.queueStrategy,
         autoAcceptWorkers:      data.autoAcceptWorkers      ?? s.autoAcceptWorkers,
@@ -1682,7 +1683,7 @@ function GeneralPanel() {
     setSaving(true);
     try {
       const { diskSafeguardGb, activeHoursEnabled, activeHoursStart, activeHoursEnd, ...rest } = settings;
-      const payload: Record<string, string> = { ...rest, max_concurrent_jobs: settings.maxConcurrentJobs };
+      const payload: Record<string, string> = { ...rest, max_concurrent_jobs: settings.maxConcurrentJobs, port: settings.port };
       payload.disk_safeguard_gb = diskSafeguardGb;
       payload.active_hours = activeHoursEnabled
         ? JSON.stringify({ start: parseInt(activeHoursStart) || 22, end: parseInt(activeHoursEnd) || 6 })
@@ -1714,6 +1715,18 @@ function GeneralPanel() {
             value={settings.nodeName}
             onChange={e => setSettings(s => ({ ...s, nodeName: e.target.value }))}
             placeholder="Transcodarr Main"
+            className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50"
+          />
+        </Field>
+
+        <Field label="Port" hint="The port this node listens on. A restart is required after changing.">
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={settings.port}
+            onChange={e => setSettings(s => ({ ...s, port: e.target.value }))}
+            placeholder={meta.mode === 'worker' ? '3002' : '3001'}
             className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50"
           />
         </Field>

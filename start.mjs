@@ -20,6 +20,20 @@ function loadSavedPort() {
   } catch { return null; }
 }
 
+/** Best-guess LAN IP — skips loopback, Docker bridges, and link-local. */
+function getLocalIp() {
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.family !== 'IPv4' || addr.internal) continue;
+      const p = addr.address.split('.').map(Number);
+      if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) continue; // Docker bridge
+      if (p[0] === 169 && p[1] === 254) continue;              // link-local
+      return addr.address;
+    }
+  }
+  return '127.0.0.1';
+}
+
 const ROOT = path.dirname(
   new URL(import.meta.url).pathname.replace(/^\/[a-zA-Z]:/, (m) => m.slice(1))
 );
@@ -119,7 +133,8 @@ async function launchRole(role) {
   const savedPort = loadSavedPort();
   const port = savedPort ?? (role === 'main' ? 3001 : await findFreePort(3002));
   await waitForPortFree(port);
-  console.log(`\n  Starting ${label} on port ${port}...\n`);
+  console.log(`\n  Starting ${label}`);
+  console.log(`  Dashboard: http://${getLocalIp()}:${port}\n`);
 
   // Both roles now use the unified PORT env var. Legacy MAIN_PORT/WORKER_PORT still work
   // as fallbacks (see apps/*/src/index.ts), but PORT is the canonical var going forward.
@@ -175,7 +190,7 @@ async function main() {
   // After a reset the port file still exists, so setup comes back on the same port
   // the node was using — the user's bookmark keeps working.
   const setupPort = loadSavedPort() ?? 3001;
-  console.log(`\n  🚀 Setup — opening http://localhost:${setupPort} ...\n`);
+  console.log(`\n  🚀 Setup — open http://${getLocalIp()}:${setupPort} in your browser\n`);
   await waitForPortFree(setupPort);
 
   const isProd = process.env.NODE_ENV === 'production';

@@ -315,8 +315,14 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post('/reset', async (req, reply) => {
     const dir        = path.join(os.homedir(), '.transcodarr');
     const configFile = path.join(dir, 'config.json');
+    const portFile   = path.join(os.homedir(), '.transcodarr', 'port');
     const resetFlag  = path.join(dir, 'reset.flag');
     try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    // Persist current port so setup comes back on the same URL after reset.
+    const currentPort = process.env.PORT ?? process.env.MAIN_PORT;
+    if (currentPort) {
+      try { fs.writeFileSync(portFile, currentPort); } catch {}
+    }
     try { fs.writeFileSync(resetFlag, '1'); } catch {}
     try { if (fs.existsSync(configFile)) fs.unlinkSync(configFile); } catch {}
     return reply.send({ ok: true });

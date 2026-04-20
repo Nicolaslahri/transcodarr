@@ -9,7 +9,9 @@ import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 const WORKER_VERSION: string = (() => {
-  try { return require('../../package.json').version; } catch { return 'unknown'; }
+  // ../package.json = apps/worker/package.json (one level up from src/ or dist/)
+  // All workspace packages share the same version as the monorepo root.
+  try { return require('../package.json').version; } catch { return 'unknown'; }
 })();
 
 let config: any = {};

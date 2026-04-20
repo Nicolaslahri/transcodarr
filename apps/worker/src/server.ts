@@ -178,8 +178,15 @@ export async function createWorkerServer(port: number) {
     const { default: path } = await import('path');
     const dir        = path.join(os.homedir(), '.transcodarr');
     const configFile = path.join(dir, 'config.json');
+    const portFile   = path.join(dir, 'port');
     const resetFlag  = path.join(dir, 'reset.flag');
     try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    // Persist the current port BEFORE resetting so setup comes back on the same URL.
+    // PORT is set by start.mjs when it launches the worker process.
+    const currentPort = process.env.PORT ?? process.env.WORKER_PORT;
+    if (currentPort) {
+      try { fs.writeFileSync(portFile, currentPort); } catch {}
+    }
     try { fs.writeFileSync(resetFlag, '1'); } catch {}
     try { fs.unlinkSync(configFile); } catch {}
     return reply.send({ ok: true });

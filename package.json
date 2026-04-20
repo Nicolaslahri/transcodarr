@@ -10,10 +10,11 @@
   "scripts": {
     "start": "node start.mjs",
     "build": "turbo build",
-    "dev": "turbo dev --parallel",
-    "dev:main": "turbo dev --filter=@transcodarr/main",
-    "dev:worker": "turbo dev --filter=@transcodarr/worker",
-    "dev:web": "turbo dev --filter=@transcodarr/web",
+    "shared:build": "npm run -w @transcodarr/shared build",
+    "dev": "npm run shared:build && turbo dev --parallel",
+    "dev:main": "npm run shared:build && turbo dev --filter=@transcodarr/main",
+    "dev:worker": "npm run shared:build && turbo dev --filter=@transcodarr/worker",
+    "dev:web": "npm run shared:build && turbo dev --filter=@transcodarr/web",
     "lint": "turbo lint",
     "type-check": "turbo type-check"
   },

@@ -25,7 +25,7 @@ async function main() {
   // 2. Start Fastify server
   const app = await createServer(isSetup);
   await app.listen({ port: PORT, host: HOST });
-  console.log(`✅ API server listening on http://${HOST}:${PORT}`);
+  console.log(`✅ API server listening on http://${getLocalIp()}:${PORT}`);
 
   if (!isSetup) {
     // 3. Start file watcher

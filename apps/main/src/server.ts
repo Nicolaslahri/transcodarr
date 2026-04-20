@@ -133,22 +133,35 @@ export async function createServer(isSetup = false) {
     const pkgVersion = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')).version;
     app.get('/api/meta', async () => ({ mode: 'loading_setup', name: 'Transcodarr Setup', version: pkgVersion }));
     
-    // Auto-discover Main Nodes on the network
+    // Auto-discover Main Nodes on the network via mDNS
     app.get('/api/setup/discover', async () => {
       const { Bonjour } = await import('bonjour-service');
       return new Promise((resolve) => {
         const bonjour = new Bonjour();
         const browser = bonjour.find({ type: 'transcodarr-main' });
-        const nodes: string[] = [];
+        const seen = new Map<string, { host: string; port: number }>();
+
         browser.on('up', (service) => {
-          const host = service.addresses?.[0] ?? service.host;
-          nodes.push(host);
+          // Prefer a real routable IP over an mDNS .local hostname
+          const allAddresses: string[] = service.addresses ?? [];
+          const ip = allAddresses.find(a => {
+            const p = a.split('.').map(Number);
+            return p.length === 4                                      // IPv4
+              && !(p[0] === 172 && p[1] >= 16 && p[1] <= 31)          // not Docker bridge
+              && !(p[0] === 169 && p[1] === 254)                       // not link-local
+              && !(p[0] === 127);                                       // not loopback
+          }) ?? service.host;
+
+          const key = `${ip}:${service.port}`;
+          if (!seen.has(key)) seen.set(key, { host: ip, port: service.port });
         });
+
+        // 4 s — enough for Pi mDNS (Avahi) which can be slower than Windows Bonjour
         setTimeout(() => {
           browser.stop();
           bonjour.destroy();
-          resolve(Array.from(new Set(nodes))); // return unique IPs
-        }, 1500); // 1.5 seconds is plenty for local network broadcast
+          resolve(Array.from(seen.values()));
+        }, 4000);
       });
     });
     

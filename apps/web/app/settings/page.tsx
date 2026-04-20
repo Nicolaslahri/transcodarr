@@ -1659,6 +1659,7 @@ function GeneralPanel() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
+  const [pingState, setPingState] = useState<'idle' | 'pinging' | 'ok' | 'fail'>('idle');
 
   useEffect(() => {
     fetch(`${apiUrl}/api/settings/general`).then(r => r.json()).then(data => {
@@ -1860,15 +1861,33 @@ function GeneralPanel() {
 
         {meta.mode === 'worker' && (
           <Field label="Main Node URL">
-            <input
-              value={settings.mainUrl}
-              onChange={e => setSettings(s => ({ ...s, mainUrl: e.target.value }))}
-              placeholder="http://192.168.1.50:3001"
-              className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
-            />
+            <div className="flex gap-2">
+              <input
+                value={settings.mainUrl}
+                onChange={e => { setSettings(s => ({ ...s, mainUrl: e.target.value })); setPingState('idle'); }}
+                placeholder="http://192.168.0.63:3001"
+                className="flex-1 bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
+              />
+              <button
+                onClick={async () => {
+                  if (!settings.mainUrl) return;
+                  setPingState('pinging');
+                  try {
+                    const res = await fetch(`${settings.mainUrl}/api/health`, { signal: AbortSignal.timeout(4000) });
+                    setPingState(res.ok ? 'ok' : 'fail');
+                  } catch { setPingState('fail'); }
+                }}
+                disabled={pingState === 'pinging' || !settings.mainUrl}
+                className="shrink-0 px-3 py-2.5 rounded-xl border border-border text-xs font-medium text-textMuted hover:text-white hover:border-textMuted/50 transition-colors disabled:opacity-40 flex items-center gap-1.5"
+              >
+                {pingState === 'pinging' ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…</> : 'Test'}
+              </button>
+            </div>
+            {pingState === 'ok'   && <p className="mt-1.5 text-xs text-green-400 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Main Node reachable</p>}
+            {pingState === 'fail' && <p className="mt-1.5 text-xs text-red-400 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Cannot reach Main Node — check IP, port, and firewall</p>}
             <div className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/20">
               <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-400/80">Requires a manual restart of the worker to apply. Stop the process and relaunch.</p>
+              <p className="text-xs text-amber-400/80">Requires a restart to apply. Save, then stop and relaunch the worker process.</p>
             </div>
           </Field>
         )}

@@ -22,9 +22,9 @@ COPY apps/main/ ./apps/main/
 COPY apps/worker/ ./apps/worker/
 COPY apps/web/  ./apps/web/
 
-# Build packages directly with npm scripts — bypasses turbo cache-invalidation quirks
-# in Docker layer environments (turbo hashes can differ on Linux vs Windows).
+# Build packages directly with npm scripts (no turbo — avoids layer-cache issues on Linux).
 # NODE_OPTIONS raises the V8 heap so tsc doesn't OOM on RAM-constrained hosts.
+# cache-bust: 2
 ENV NODE_OPTIONS=--max-old-space-size=2048
 
 # 1. Build shared first — main, worker, and web all import from its dist/

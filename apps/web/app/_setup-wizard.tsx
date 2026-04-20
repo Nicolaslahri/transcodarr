@@ -1,24 +1,48 @@
 'use client';
 
 import { useState } from 'react';
-import { Cpu, Server, CheckCircle2, Loader2, ChevronRight } from 'lucide-react';
+import { Cpu, Server, CheckCircle2, Loader2, ChevronRight, Wifi, WifiOff } from 'lucide-react';
 
 type Role = 'main' | 'worker';
+type DiscoveredNode = { host: string; port: number };
+type ScanState = 'idle' | 'scanning' | 'done';
 
 export default function SetupWizard() {
-  const [step, setStep]             = useState<'role' | 'configure'>('role');
+  const [step, setStep]                 = useState<'role' | 'configure'>('role');
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
-  const [port, setPort]             = useState('');
-  const [mainUrl, setMainUrl]       = useState('');
-  const [saving, setSaving]         = useState(false);
-  const [portError, setPortError]   = useState('');
+  const [port, setPort]                 = useState('');
+  const [mainUrl, setMainUrl]           = useState('');
+  const [saving, setSaving]             = useState(false);
+  const [portError, setPortError]       = useState('');
+  const [scanState, setScanState]       = useState<ScanState>('idle');
+  const [discovered, setDiscovered]     = useState<DiscoveredNode[]>([]);
 
   const defaultPort = selectedRole === 'main' ? 3001 : 3002;
+  const apiBase = typeof window !== 'undefined'
+    ? `http://${window.location.hostname}:${window.location.port || 3001}`
+    : '';
 
   const handleRoleClick = (role: Role) => {
     setSelectedRole(role);
     setPort(role === 'main' ? '3001' : '3002');
+    setDiscovered([]);
+    setScanState('idle');
     setStep('configure');
+  };
+
+  const handleScan = async () => {
+    setScanState('scanning');
+    setDiscovered([]);
+    try {
+      const res  = await fetch(`${apiBase}/api/setup/discover`);
+      const data = await res.json() as DiscoveredNode[];
+      setDiscovered(data);
+      setScanState('done');
+      // If exactly one found, auto-fill
+      if (data.length === 1) setMainUrl(`http://${data[0].host}:${data[0].port}`);
+    } catch {
+      setScanState('done');
+    }
   };
 
   const validatePort = (v: string) => {
@@ -34,11 +58,7 @@ export default function SetupWizard() {
     setSaving(true);
 
     try {
-      const apiUrl = typeof window !== 'undefined'
-        ? `http://${window.location.hostname}:${window.location.port || 3001}`
-        : '';
-
-      await fetch(`${apiUrl}/api/setup`, {
+      await fetch(`${apiBase}/api/setup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -49,7 +69,7 @@ export default function SetupWizard() {
       });
 
       // Node restarts on the newly chosen port — redirect there
-      const newPort = parseInt(port, 10);
+      const newPort   = parseInt(port, 10);
       const newOrigin = `http://${window.location.hostname}:${newPort}`;
       setTimeout(() => {
         if (newPort === (window.location.port ? parseInt(window.location.port) : 80)) {
@@ -78,12 +98,10 @@ export default function SetupWizard() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-            {/* Main Node */}
             <button
               onClick={() => handleRoleClick('main')}
               className="relative group text-left bg-surface border-2 border-border hover:border-textMuted/50 hover:bg-surface/80 rounded-3xl p-8 transition-all duration-300 overflow-hidden"
             >
-              <div className="absolute top-0 left-0 w-full h-1 bg-transparent" />
               <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6 bg-background text-textMuted group-hover:text-white transition-colors duration-300">
                 <Server className="w-7 h-7" />
               </div>
@@ -99,12 +117,10 @@ export default function SetupWizard() {
               </div>
             </button>
 
-            {/* Worker Node */}
             <button
               onClick={() => handleRoleClick('worker')}
               className="relative group text-left bg-surface border-2 border-border hover:border-textMuted/50 hover:bg-surface/80 rounded-3xl p-8 transition-all duration-300 overflow-hidden"
             >
-              <div className="absolute top-0 left-0 w-full h-1 bg-transparent" />
               <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6 bg-background text-textMuted group-hover:text-white transition-colors duration-300">
                 <Cpu className="w-7 h-7" />
               </div>
@@ -126,8 +142,7 @@ export default function SetupWizard() {
   }
 
   // ─── Step 2: Configure port (+ Main URL for worker) ──────────────────────────
-  const accentColor = selectedRole === 'main' ? 'primary' : 'yellow-500';
-  const Icon        = selectedRole === 'main' ? Server : Cpu;
+  const Icon = selectedRole === 'main' ? Server : Cpu;
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 selection:bg-primary/30">
@@ -167,28 +182,71 @@ export default function SetupWizard() {
             />
             {portError && <p className="mt-1.5 text-xs text-red-400">{portError}</p>}
             <p className="mt-1.5 text-xs text-textMuted">
-              Default: {defaultPort}. Change if that port is already in use on this machine.
+              Default: {defaultPort}. Change only if that port is already in use on this machine.
             </p>
           </div>
 
           {/* Main URL — worker only */}
           {selectedRole === 'worker' && (
             <div>
-              <label className="block text-sm font-semibold text-white mb-2">
-                Main Node URL <span className="text-textMuted font-normal">(optional — set later in Settings)</span>
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-semibold text-white">
+                  Main Node URL
+                </label>
+                <button
+                  onClick={handleScan}
+                  disabled={saving || scanState === 'scanning'}
+                  className="flex items-center gap-1.5 text-xs text-textMuted hover:text-white transition-colors disabled:opacity-40"
+                >
+                  {scanState === 'scanning'
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Scanning (4 s)…</>
+                    : <><Wifi className="w-3.5 h-3.5" /> Scan network</>
+                  }
+                </button>
+              </div>
+
+              {/* Scan results */}
+              {scanState === 'done' && discovered.length > 0 && (
+                <div className="mb-2 space-y-1">
+                  {discovered.map(n => (
+                    <button
+                      key={`${n.host}:${n.port}`}
+                      onClick={() => setMainUrl(`http://${n.host}:${n.port}`)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors
+                        ${mainUrl === `http://${n.host}:${n.port}`
+                          ? 'border-yellow-500/60 bg-yellow-500/10 text-white'
+                          : 'border-border bg-background text-textMuted hover:text-white hover:border-textMuted/50'
+                        }`}
+                    >
+                      <span className="font-mono">{n.host}:{n.port}</span>
+                      {mainUrl === `http://${n.host}:${n.port}` && <CheckCircle2 className="w-4 h-4 text-yellow-500" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {scanState === 'done' && discovered.length === 0 && (
+                <div className="mb-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-background border border-border">
+                  <WifiOff className="w-4 h-4 text-textMuted shrink-0" />
+                  <p className="text-xs text-textMuted">
+                    No Main Nodes found via mDNS. Enter the IP address manually below
+                    — e.g. <span className="text-white font-mono">http://192.168.0.63:3001</span>
+                  </p>
+                </div>
+              )}
+
               <input
                 type="url"
                 value={mainUrl}
                 onChange={e => setMainUrl(e.target.value)}
-                placeholder="http://192.168.1.100:3001"
+                placeholder="http://192.168.0.63:3001"
                 disabled={saving}
                 className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white text-base
                   placeholder:text-textMuted/50 focus:outline-none focus:border-yellow-500/60 transition-colors
-                  disabled:opacity-50"
+                  disabled:opacity-50 font-mono"
               />
               <p className="mt-1.5 text-xs text-textMuted">
-                The address of your Main Node. You can set or change this later in Worker Settings.
+                You can change this later in Worker Settings if needed.
               </p>
             </div>
           )}

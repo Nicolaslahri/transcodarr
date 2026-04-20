@@ -8,9 +8,14 @@ version: "3.9"
 
 services:
   transcodarr-main:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
+      # To force a clean rebuild (bypass Docker's layer cache), redeploy with:
+      #   CACHE_BUST=$(date +%s) docker compose up --build
+      # or in Portainer: set build arg CACHE_BUST to any new value before redeploying.
+      args:
+        CACHE_BUST: ${CACHE_BUST:-3}
     container_name: transcodarr-main
     restart: unless-stopped
     ports:

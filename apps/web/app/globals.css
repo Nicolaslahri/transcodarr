@@ -176,6 +176,16 @@ a[role="button"] {
   0%   { opacity: 0; }
   100% { opacity: 1; }
 }
+/* Pure-opacity page-enter animation. Used by app/template.tsx instead of
+   Tailwind's `animate-in fade-in` because that utility wraps every entry
+   keyframe in a `transform: translate3d(0,0,0)`, even for fade-only
+   variants. A `transform` on an ancestor creates a containing block for
+   `position: fixed` descendants — so during the page-enter animation
+   every modal in the app would anchor to the template div instead of
+   the viewport. This class touches ONLY opacity. */
+.page-fade-in {
+  animation: fade-in 0.3s ease both;
+}
 @keyframes scale-in {
   0%   { opacity: 0; transform: scale(0.94); }
   100% { opacity: 1; transform: scale(1); }

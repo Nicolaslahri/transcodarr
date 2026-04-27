@@ -300,7 +300,7 @@ function WorkerCard({ worker, activeJob }: { worker: WorkerInfo; activeJob: Job 
 
       {/* Last seen */}
       {worker.lastSeen > 0 && (
-        <p className="text-xs text-textMuted/40 text-right mt-2">
+        <p className="text-xs text-textMuted/70 text-right mt-2">
           {lastSeenLabel(worker.lastSeen)}
         </p>
       )}

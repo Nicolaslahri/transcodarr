@@ -13,34 +13,66 @@ const SmbMappingSchema = z.object({
 // recipe args MUST be screened for these tokens.
 //
 // Kept in sync with worker/src/transcoder.ts sanitizeFfmpegArgs (defence in depth).
+//
+// Single-token substring patterns. Anything matching as a substring of any
+// argv entry is rejected. Lowercased before comparison.
 const DANGEROUS_FFMPEG_PATTERNS = [
-  'concat:', 'subfile:', 'pipe:', 'file:',
-  'tcp://', 'udp://', 'rtmp://', 'rtsp://', 'srt://', 'sftp://', 'ftp://', 'http://', 'https://',
-  'movie=', 'amovie=', 'subfile=',
-  '-f lavfi',
+  // URL-protocol family — ffmpeg can read/write these from -i / -vf movie= / output
+  'concat:', 'subfile:', 'pipe:', 'file:', 'fd:', 'tee:',
+  'cache:', 'crypto:', 'async:', 'data:', 'md5:', 'unix:',
+  'tcp://', 'udp://', 'rtmp://', 'rtsp://', 'srt://', 'sftp://',
+  'ftp://', 'http://', 'https://', 'tls://', 'gopher://', 'gophers://',
+  'mmsh://', 'mmst://', 'bluray:', 'prompeg:',
+  // Filter family — `movie=` / `amovie=` open arbitrary files via lavfi
+  'movie=', 'amovie=',
+  'subfile=', // subtitle filter loading external file
+];
+
+// Two-arg sequences that are dangerous when split across argv entries. The
+// substring check above can't catch `['-f', 'lavfi']` because the space
+// version `'-f lavfi'` never appears in a single argv entry. We need to walk
+// argv pairwise to detect this.
+const DANGEROUS_FFMPEG_PAIRS: Array<[string, string]> = [
+  ['-f', 'lavfi'],          // virtual filter graph as input
+  ['-f', 'concat'],         // demuxer that opens lines from a playlist file
+  ['-f', 'image2'],         // glob pattern can read arbitrary files
+  ['-f', 'tee'],
+  ['-init_hw_device', ''],  // can target arbitrary device strings — empty 2nd matches any
 ];
 
 function ffmpegArgsAreSafe(args: string[]): boolean {
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (typeof arg !== 'string') return false;
     const lower = arg.toLowerCase();
     if (DANGEROUS_FFMPEG_PATTERNS.some(p => lower.includes(p))) return false;
     if (arg === '-i' || arg === '-y' || arg === '-Y') return false;
+    // Pairwise check: does (args[i], args[i+1]) match a dangerous 2-arg form?
+    if (i + 1 < args.length) {
+      const next = (args[i + 1] ?? '').toLowerCase();
+      for (const [a, b] of DANGEROUS_FFMPEG_PAIRS) {
+        if (lower === a && (b === '' || next === b)) return false;
+      }
+    }
   }
   return true;
 }
 
 const FfmpegArgsSchema = z.array(z.string().max(2000)).max(200).refine(ffmpegArgsAreSafe, {
-  message: 'Recipe args contain a disallowed pattern (concat:/subfile:/pipe:/file:/movie=/-f lavfi/-i/-y).',
+  message: 'Recipe args contain a disallowed pattern (URL protocol / lavfi / movie= / -i / -y / -f lavfi).',
 });
 
 const RecipeSchema = z.object({
   id:             z.string().min(1),
   name:           z.string().min(1),
-  description:    z.string(),
+  description:    z.string().optional().default(''),
   targetCodec:    z.string().min(1),
-  targetContainer: z.enum(['mkv', 'mp4']),
-  icon:           z.string(),
-  color:          z.string(),
+  // Default to mkv when community-recipe JSON omits the field — historically
+  // it was optional with an mkv default; making it required broke imports
+  // from older community feeds.
+  targetContainer: z.enum(['mkv', 'mp4']).optional().default('mkv'),
+  icon:           z.string().optional().default('🔧'),
+  color:          z.string().optional().default('#6b7280'),
   estimatedReduction: z.number().optional(),
   ffmpegArgs:     FfmpegArgsSchema.optional(),
   sourceUrl:      z.string().url().optional(),

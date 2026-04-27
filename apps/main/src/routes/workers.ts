@@ -55,7 +55,8 @@ function sanityCheck(workerId: string, workerName: string, workerVersion?: strin
     const msg = `${workerName} is running v${workerVersion} but Main is v${MAIN_VERSION}. `
       + `Update both nodes to the same version to avoid compatibility issues.`;
     console.warn(`⚠️  [Sanity] Version mismatch with ${workerName}: worker=${workerVersion} main=${MAIN_VERSION}`);
-    broadcast('worker:updated', rowToWorker(getDb().prepare('SELECT * FROM workers WHERE id = ?').get(workerId) as any));
+    // Caller is responsible for the worker:updated broadcast — sanityCheck
+    // used to fire its own which produced a duplicate event on the wire.
     broadcast('system:warning', { title: 'Worker version mismatch', message: msg, workerId });
   } else {
     console.log(`✅ [Sanity] ${workerName} version OK (v${workerVersion})`);
@@ -128,41 +129,68 @@ export async function workersRoutes(app: FastifyInstance) {
         // running. A brief network blip can cause re-registration mid-job, and
         // re-queuing a job the worker is still transcoding races a second ffmpeg
         // against the same temp file → corrupted output.
-        let stillBusyJobId: string | null = null;
+        //
+        // Three outcomes from the /status probe:
+        //   - 'busy:<jobId>' — worker reports a current job; leave that job alone.
+        //   - 'idle'         — worker has no current job; safe to re-queue all.
+        //   - 'unknown'      — probe failed (timeout, network error, 5xx). DO NOT
+        //                       re-queue — that would re-introduce the original
+        //                       race (slow worker still transcoding while Main
+        //                       dispatches a duplicate). Wait for the next health
+        //                       cycle when the worker has recovered.
+        let probeOutcome: { kind: 'busy'; jobId: string } | { kind: 'idle' } | { kind: 'unknown' } = { kind: 'unknown' };
         if (wasAccepted) {
           try {
             const statusRes = await fetch(`http://${realHost}:${port}/status`, { signal: AbortSignal.timeout(2000) });
             if (statusRes.ok) {
               const statusJson = await statusRes.json() as { currentJob?: { jobId?: string } | null };
-              stillBusyJobId = statusJson.currentJob?.jobId ?? null;
+              const jobId = statusJson.currentJob?.jobId;
+              probeOutcome = jobId ? { kind: 'busy', jobId } : { kind: 'idle' };
             }
-          } catch { /* worker unreachable — treat as truly orphaned */ }
+            // Non-2xx response: probeOutcome stays 'unknown'
+          } catch {
+            probeOutcome = { kind: 'unknown' };
+          }
         }
 
-        const newStatus = wasAccepted ? (stillBusyJobId ? 'active' : 'idle') : existing.status;
+        // Status: 'active' if known busy, 'idle' if known idle. On 'unknown'
+        // keep whatever the previous status was — flipping to idle would let
+        // the dispatcher hand a NEW job to a worker that may still be running
+        // its previous one.
+        const newStatus = wasAccepted
+          ? (probeOutcome.kind === 'busy'    ? 'active'
+            : probeOutcome.kind === 'idle'   ? 'idle'
+            : existing.status)
+          : existing.status;
         db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ?, status = ?, version = ? WHERE id = ?')
           .run(realHost, port, JSON.stringify(hardware), now, newStatus, version ?? null, id);
 
         if (wasAccepted) {
-          // Re-queue jobs ONLY if the worker no longer claims to be running them.
-          // (`stillBusyJobId` is the single job the worker reports as in-flight.)
-          const orphaned = db.prepare(
-            "SELECT id FROM jobs WHERE worker_id = ? AND status IN ('dispatched','transcoding','receiving','sending','swapping')"
-          ).all(id) as any[];
-          let requeued = 0;
-          for (const row of orphaned) {
-            if (row.id === stillBusyJobId) continue; // worker still working on this — leave alone
-            db.prepare(
-              "UPDATE jobs SET status = 'queued', worker_id = NULL, phase = NULL, progress = 0, fps = NULL, eta = NULL, error = 'Worker restarted', updated_at = ? WHERE id = ?"
-            ).run(now, row.id);
-            broadcast('job:queued', getJob(row.id));
-            requeued++;
-          }
-          if (requeued > 0) {
-            console.log(`♻️  Re-queued ${requeued} orphaned job(s) from ${name}` + (stillBusyJobId ? ` (kept ${stillBusyJobId} — worker still running it)` : ''));
-            dispatchNext().catch(() => {});
-          } else if (stillBusyJobId) {
-            console.log(`🔁 ${name} re-registered while still running ${stillBusyJobId} — no re-queue needed`);
+          if (probeOutcome.kind === 'unknown') {
+            // No re-queue — leave jobs in whatever state they were. The next
+            // health-poll cycle (worker server.ts startWorkerHealthPoller) will
+            // pick them up if the worker is truly gone.
+            console.log(`⚠️  ${name} re-registered but /status probe failed — skipping orphan re-queue (will retry on next health poll)`);
+          } else {
+            const stillBusyJobId = probeOutcome.kind === 'busy' ? probeOutcome.jobId : null;
+            const orphaned = db.prepare(
+              "SELECT id FROM jobs WHERE worker_id = ? AND status IN ('dispatched','transcoding','receiving','sending','swapping')"
+            ).all(id) as any[];
+            let requeued = 0;
+            for (const row of orphaned) {
+              if (row.id === stillBusyJobId) continue; // worker still working on this — leave alone
+              db.prepare(
+                "UPDATE jobs SET status = 'queued', worker_id = NULL, phase = NULL, progress = 0, fps = NULL, eta = NULL, error = 'Worker restarted', updated_at = ? WHERE id = ?"
+              ).run(now, row.id);
+              broadcast('job:queued', getJob(row.id));
+              requeued++;
+            }
+            if (requeued > 0) {
+              console.log(`♻️  Re-queued ${requeued} orphaned job(s) from ${name}` + (stillBusyJobId ? ` (kept ${stillBusyJobId} — worker still running it)` : ''));
+              dispatchNext().catch(() => {});
+            } else if (stillBusyJobId) {
+              console.log(`🔁 ${name} re-registered while still running ${stillBusyJobId} — no re-queue needed`);
+            }
           }
           broadcast('worker:updated', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
           console.log(`🔄 Worker re-registered (HTTP): ${name} v${version ?? '?'} → ${newStatus}`);
@@ -372,7 +400,11 @@ export async function workersRoutes(app: FastifyInstance) {
           throw txErr;
         }
 
-        // Post-processing: move file if the source watched path has move_to configured (fs op outside transaction)
+        // Post-processing: move file if the source watched path has move_to configured.
+        // The fs rename happens FIRST; then DB UPDATE + fingerprint write run inside
+        // a small transaction so on-disk state and DB stay consistent. If the rename
+        // succeeds but the DB update fails, we attempt to rename back; if both fail
+        // we log loudly so the operator can recover manually.
         if (targetDbPath && fs.existsSync(targetDbPath)) {
           const moveTo = (db.prepare(
             "SELECT move_to FROM watched_paths WHERE ? LIKE path || '%' AND move_to IS NOT NULL ORDER BY LENGTH(path) DESC LIMIT 1"
@@ -385,12 +417,29 @@ export async function workersRoutes(app: FastifyInstance) {
               if (!dest.startsWith(path.resolve(moveTo) + path.sep) && dest !== path.resolve(moveTo)) {
                 console.warn(`⚠️  move_to path traversal blocked — dest "${dest}" is outside "${moveTo}"`);
               } else {
-                fs.renameSync(targetDbPath, dest);
-                db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
-                  .run(dest, path.basename(dest), req.params.jobId);
-                // Also fingerprint the destination path so a scan of move_to won't re-queue it
-                if (jobFull) {
-                  recordProcessedFile(dest, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
+                const sourceForRollback = targetDbPath;
+                fs.renameSync(sourceForRollback, dest);
+                // Atomically: update file_path AND fingerprint for `dest`. If either
+                // fails we roll back the rename so the DB and FS stay consistent.
+                db.exec('BEGIN');
+                try {
+                  db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
+                    .run(dest, path.basename(dest), req.params.jobId);
+                  if (jobFull) {
+                    recordProcessedFile(dest, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
+                  }
+                  db.exec('COMMIT');
+                } catch (txErr) {
+                  db.exec('ROLLBACK');
+                  // Try to put the file back where it was so the DB row's file_path
+                  // still resolves on disk. If rollback also fails, log loudly.
+                  try {
+                    fs.renameSync(dest, sourceForRollback);
+                  } catch (rollbackErr) {
+                    console.error(`⚠️  CRITICAL: move_to DB update failed AND rename rollback failed. ` +
+                      `File is at "${dest}" but DB still says "${sourceForRollback}". Manual recovery needed.`, rollbackErr);
+                  }
+                  throw txErr;
                 }
               }
             } catch (moveErr: any) {

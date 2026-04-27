@@ -6,7 +6,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { addWatchedPath, manualScanDirectory, cancelScan } from '../watcher.js';
+import { addWatchedPath, removeWatchedPath, manualScanDirectory, cancelScan } from '../watcher.js';
 import { invalidateSettingsCache } from '../settings-cache.js';
 import { fireWebhooks } from '../webhooks.js';
 import { isPrivateUrl } from '../ssrf.js';
@@ -17,10 +17,17 @@ const BUILT_IN_RECIPE_IDS = new Set(BUILT_IN_RECIPES.map(r => r.id));
 
 // Body schema for POST /recipes/custom — validates name, codec, container, AND
 // runs ffmpegArgs through the shared denylist (concat:/file:/movie=/...).
+//
+// `ffmpegArgs` MUST be non-empty: a custom recipe with no args produces no
+// output and fails every job silently. The base FfmpegArgsSchema allows
+// `[]` for compatibility with built-in recipes that have no args (they use
+// the recipes.ts switch instead) — we tighten the rule here for customs.
 const CustomRecipeCreateSchema = z.object({
   name:            z.string().min(1).max(80),
   description:     z.string().max(500).optional().default(''),
-  ffmpegArgs:      FfmpegArgsSchema,
+  ffmpegArgs:      FfmpegArgsSchema.refine(a => a.length > 0, {
+    message: 'Custom recipes must have at least one ffmpeg argument.',
+  }),
   targetCodec:     z.string().min(1).max(20),
   targetContainer: z.enum(['mkv', 'mp4']).optional().default('mkv'),
   icon:            z.string().max(8).optional().default('🔧'),
@@ -320,14 +327,28 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.delete<{ Params: { id: string } }>('/paths/:id', async (req) => {
     // Cancel any in-progress scan for this path before removing it
     const row = getDb().prepare('SELECT path FROM watched_paths WHERE id = ?').get(req.params.id) as any;
-    if (row?.path) cancelScan(row.path);
+    if (row?.path) {
+      cancelScan(row.path);
+      // Drop the path from the live watcher's in-memory state — without this,
+      // newly-added files under the deleted path would still enqueue jobs.
+      removeWatchedPath(row.path);
+    }
     getDb().prepare('DELETE FROM watched_paths WHERE id = ?').run(req.params.id);
     return { ok: true };
   });
 
   app.put<{ Params: { id: string }; Body: { enabled: boolean } }>('/paths/:id/toggle', async (req) => {
+    const row = getDb().prepare('SELECT path, recipe FROM watched_paths WHERE id = ?').get(req.params.id) as any;
     getDb().prepare('UPDATE watched_paths SET enabled = ? WHERE id = ?')
       .run(req.body.enabled ? 1 : 0, req.params.id);
+    // Sync the live watcher: stop watching when disabled, re-add when re-enabled.
+    if (row?.path) {
+      if (req.body.enabled) {
+        addWatchedPath(row.path, row.recipe, false);
+      } else {
+        removeWatchedPath(row.path);
+      }
+    }
     return { ok: true };
   });
 

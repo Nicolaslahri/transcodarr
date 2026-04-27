@@ -1,5 +1,5 @@
 import { initDb } from './db.js';
-import { createServer, startWorkerHealthPoller } from './server.js';
+import { createServer, startWorkerHealthPoller, reconcileOrphanedJobs } from './server.js';
 import { startWatcher, startPeriodicScanPoller } from './watcher.js';
 import { startMdns } from './mdns.js';
 import { ensureFfmpeg } from './ffmpeg.js';
@@ -20,6 +20,12 @@ async function main() {
     // 2. Init SQLite
     initDb();
     console.log('✅ Database ready');
+
+    // 2a. Reconcile any jobs left in non-terminal states from a previous run.
+    // Crash mid-completion can leave 'sending'/'swapping' rows whose file is
+    // already on disk — we promote those to 'complete' instead of re-queueing,
+    // so the user doesn't see successful files re-transcoded.
+    reconcileOrphanedJobs();
   }
 
   // 2. Start Fastify server

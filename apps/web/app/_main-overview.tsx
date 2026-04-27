@@ -64,7 +64,10 @@ export default function OverviewPage() {
       return;
     }
     const ctx = gsap.context(() => {
-      gsap.from('.stat-card', { y: 20, opacity: 0, duration: 0.7, stagger: 0.08, ease: 'power3.out' });
+      // clearProps:'all' so the inline opacity/transform GSAP applies during
+      // the FROM-state setup gets removed when the tween completes. Without
+      // it, an unmount mid-tween could leave the card stuck at opacity:0.
+      gsap.from('.stat-card', { y: 20, opacity: 0, duration: 0.7, stagger: 0.08, ease: 'power3.out', clearProps: 'all' });
       gsap.utils.toArray<HTMLElement>('.stat-value').forEach((el) => {
         const end = parseFloat(el.dataset.value || '0');
         // Use a proxy object rather than setting innerText inside onUpdate to avoid hydration warnings

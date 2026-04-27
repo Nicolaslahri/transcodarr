@@ -52,8 +52,16 @@ export type ConnectionMode = 'smb' | 'wireless';
  *   'transcoding' — ffmpeg is running
  *   'sending'     — worker is uploading the result back to Main (wireless only)
  *   'swapping'    — Main is atomically replacing the original file
+ *   'finalizing'  — post-swap cleanup (fingerprint write, move_to, callbacks).
+ *                   Both 'swapping' and 'finalizing' are forced past the worker's
+ *                   500 ms progress rate-limiter because the UI needs to reflect
+ *                   long silent stages so users don't think the job hung.
+ *
+ * MUST be kept in sync with the Zod enum in `schemas.ts` ProgressUpdateSchema —
+ * a previous main-side commit added 'finalizing' there but not here, breaking
+ * the worker's `update.phase === 'finalizing'` checks at the type level.
  */
-export type TransferPhase = 'receiving' | 'transcoding' | 'sending' | 'swapping';
+export type TransferPhase = 'receiving' | 'transcoding' | 'sending' | 'swapping' | 'finalizing';
 
 // ─── Worker ──────────────────────────────────────────────────────────────────
 

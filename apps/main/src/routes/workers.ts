@@ -122,25 +122,47 @@ export async function workersRoutes(app: FastifyInstance) {
       const existing = db.prepare('SELECT id, status FROM workers WHERE id = ?').get(id) as any;
       if (existing) {
         const wasAccepted = ['idle', 'active', 'offline', 'online'].includes(existing.status);
-        const newStatus = wasAccepted ? 'idle' : existing.status;
         const now = Math.floor(Date.now() / 1000);
+
+        // Before assuming the worker is idle, ask it what (if anything) it's still
+        // running. A brief network blip can cause re-registration mid-job, and
+        // re-queuing a job the worker is still transcoding races a second ffmpeg
+        // against the same temp file → corrupted output.
+        let stillBusyJobId: string | null = null;
+        if (wasAccepted) {
+          try {
+            const statusRes = await fetch(`http://${realHost}:${port}/status`, { signal: AbortSignal.timeout(2000) });
+            if (statusRes.ok) {
+              const statusJson = await statusRes.json() as { currentJob?: { jobId?: string } | null };
+              stillBusyJobId = statusJson.currentJob?.jobId ?? null;
+            }
+          } catch { /* worker unreachable — treat as truly orphaned */ }
+        }
+
+        const newStatus = wasAccepted ? (stillBusyJobId ? 'active' : 'idle') : existing.status;
         db.prepare('UPDATE workers SET host = ?, port = ?, hardware = ?, last_seen = ?, status = ?, version = ? WHERE id = ?')
           .run(realHost, port, JSON.stringify(hardware), now, newStatus, version ?? null, id);
+
         if (wasAccepted) {
-          // Re-queue any jobs that were orphaned when this worker went offline/restarted.
-          // The worker lost its ffmpeg process so those jobs can never complete — put them back in queue.
+          // Re-queue jobs ONLY if the worker no longer claims to be running them.
+          // (`stillBusyJobId` is the single job the worker reports as in-flight.)
           const orphaned = db.prepare(
             "SELECT id FROM jobs WHERE worker_id = ? AND status IN ('dispatched','transcoding','receiving','sending','swapping')"
           ).all(id) as any[];
+          let requeued = 0;
           for (const row of orphaned) {
+            if (row.id === stillBusyJobId) continue; // worker still working on this — leave alone
             db.prepare(
               "UPDATE jobs SET status = 'queued', worker_id = NULL, phase = NULL, progress = 0, fps = NULL, eta = NULL, error = 'Worker restarted', updated_at = ? WHERE id = ?"
             ).run(now, row.id);
             broadcast('job:queued', getJob(row.id));
+            requeued++;
           }
-          if (orphaned.length > 0) {
-            console.log(`♻️  Re-queued ${orphaned.length} orphaned job(s) from ${name}`);
+          if (requeued > 0) {
+            console.log(`♻️  Re-queued ${requeued} orphaned job(s) from ${name}` + (stillBusyJobId ? ` (kept ${stillBusyJobId} — worker still running it)` : ''));
             dispatchNext().catch(() => {});
+          } else if (stillBusyJobId) {
+            console.log(`🔁 ${name} re-registered while still running ${stillBusyJobId} — no re-queue needed`);
           }
           broadcast('worker:updated', rowToWorker(db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as any));
           console.log(`🔄 Worker re-registered (HTTP): ${name} v${version ?? '?'} → ${newStatus}`);
@@ -245,7 +267,16 @@ export async function workersRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const parsed = ProgressUpdateSchema.safeParse({ ...req.body, jobId: req.params.jobId });
       if (!parsed.success) return reply.status(400).send({ error: 'Invalid progress payload', details: parsed.error.flatten() });
-      const { workerId, progress, fps, eta, phase, gpuStats } = { ...req.body, ...parsed.data } as any;
+      const raw = { ...req.body, ...parsed.data } as any;
+      const workerId = raw.workerId;
+      const phase    = raw.phase;
+      const eta      = raw.eta;
+      // Defensive bounds clamping. The schema enforces 0..100 but malformed external
+      // workers (or a subtly-buggy parseProgressLine output) could bypass with NaN
+      // pre-coerce. Math.floor on NaN gives NaN which corrupts the bar string below.
+      const progress = Math.max(0, Math.min(100, Number.isFinite(raw.progress) ? Math.round(raw.progress) : 0));
+      const fps      = Number.isFinite(raw.fps) ? Math.max(0, raw.fps) : undefined;
+      const gpuStats = raw.gpuStats;
       const db = getDb();
       const jobRow = db.prepare('SELECT callback_token FROM jobs WHERE id = ?').get(req.params.jobId) as any;
       if (jobRow?.callback_token) {
@@ -326,8 +357,15 @@ export async function workersRoutes(app: FastifyInstance) {
           db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
             .run('complete', sizeBefore ?? null, sizeAfter ?? null, jobFull?.fps ?? null, elapsed, now, now, req.params.jobId);
           db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(workerId);
-          // Persist fingerprint so "Clear All" doesn't re-queue this file
-          if (jobFull) recordProcessedFile(jobFull.file_path, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
+          // Persist fingerprint so future scans skip this content. Record under BOTH
+          // the original and the (possibly extension-changed) final path so a scan
+          // of either matches.
+          if (jobFull) {
+            recordProcessedFile(jobFull.file_path, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
+            if (targetDbPath && targetDbPath !== jobFull.file_path) {
+              recordProcessedFile(targetDbPath, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
+            }
+          }
           db.exec('COMMIT');
         } catch (txErr) {
           db.exec('ROLLBACK');
@@ -350,6 +388,10 @@ export async function workersRoutes(app: FastifyInstance) {
                 fs.renameSync(targetDbPath, dest);
                 db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
                   .run(dest, path.basename(dest), req.params.jobId);
+                // Also fingerprint the destination path so a scan of move_to won't re-queue it
+                if (jobFull) {
+                  recordProcessedFile(dest, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
+                }
               }
             } catch (moveErr: any) {
               console.warn(`⚠️  move_to failed: ${moveErr.message}`);
@@ -468,31 +510,24 @@ export async function workersRoutes(app: FastifyInstance) {
         const elapsed = jobMeta?.dispatched_at ? now - jobMeta.dispatched_at : null;
         const wirelessName = jobMeta?.file_path ? path.basename(jobMeta.file_path) : undefined;
 
-        // DB transaction FIRST — if swap fails after this the job shows 'complete' but original
-        // file is still present, which is recoverable. Inverse (file gone, job stuck transcoding) is not.
-        db.exec('BEGIN');
-        try {
-          if (finalPath !== origPath) {
-            db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
-              .run(finalPath, path.basename(finalPath), req.params.jobId);
-          }
-          db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
-            .run('complete', sizeBefore, sizeAfter, jobMeta?.fps ?? null, elapsed, now, now, req.params.jobId);
-          db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
-          if (jobMeta) recordProcessedFile(jobMeta.file_path, sizeBefore, jobMeta.recipe, jobMeta.content_key ?? undefined);
-          db.exec('COMMIT');
-        } catch (txErr) {
-          db.exec('ROLLBACK');
-          throw txErr;
-        }
-
-        // File swap AFTER DB commit — original file preserved until rename succeeds
+        // ── File swap FIRST ─────────────────────────────────────────────────
+        // Previously the DB committed first and the swap could fail silently,
+        // leaving the job marked 'complete' with no file on disk. Now we do
+        // the swap up-front; if it fails we mark the job 'failed' and the
+        // worker idle, so retry semantics are clean and no DB state implies
+        // a file that doesn't exist.
         const bakPath = origPath + '.bak';
+        let swapSucceeded = false;
         try {
           if (fs.existsSync(origPath)) fs.renameSync(origPath, bakPath);
           fs.renameSync(tmpPath, finalPath);
+          // Verify the new file exists and is non-empty before destroying the backup
+          const finalStat = fs.statSync(finalPath);
+          if (finalStat.size === 0) throw new Error('Output file is empty after rename');
           if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
+          swapSucceeded = true;
         } catch (swapErr: any) {
+          // Roll back: restore origPath from .bak so we don't lose the source file
           try {
             if (fs.existsSync(bakPath)) {
               fs.renameSync(bakPath, origPath);
@@ -502,8 +537,48 @@ export async function workersRoutes(app: FastifyInstance) {
             console.error('[Main] CRITICAL: wireless swap failed AND restore failed — manual recovery needed:', restoreErr);
           }
           try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
-          // Don't throw — DB is already committed; log the swap failure and continue
-          console.error('[Main] Wireless swap error (DB already updated):', swapErr.message);
+          // Mark job failed in a small transaction so we don't leak partial state.
+          db.exec('BEGIN');
+          try {
+            db.prepare('UPDATE jobs SET status = ?, phase = NULL, error = ?, updated_at = ? WHERE id = ?')
+              .run('failed', `Swap failed: ${swapErr.message}`, now, req.params.jobId);
+            db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
+            db.exec('COMMIT');
+          } catch (txErr) { db.exec('ROLLBACK'); throw txErr; }
+          recordJobEvent(req.params.jobId, 'failed', undefined, { error: `Swap failed: ${swapErr.message}` });
+          broadcast('job:failed', { jobId: req.params.jobId, error: swapErr.message, fileName: wirelessName });
+          broadcast('stats:update', getStats());
+          fireWebhooks('job:failed', { jobId: req.params.jobId, fileName: wirelessName ?? '', error: swapErr.message });
+          dispatchNext().catch(() => {});
+          return reply.status(500).send({ error: `Swap failed: ${swapErr.message}` });
+        }
+
+        // ── DB transaction AFTER successful swap ───────────────────────────
+        if (!swapSucceeded) {
+          // Defensive — should not reach here without the early-return above
+          return reply.status(500).send({ error: 'Swap did not succeed' });
+        }
+        db.exec('BEGIN');
+        try {
+          if (finalPath !== origPath) {
+            db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
+              .run(finalPath, path.basename(finalPath), req.params.jobId);
+          }
+          db.prepare('UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_before = ?, size_after = ?, avg_fps = ?, elapsed_seconds = ?, completed_at = ?, updated_at = ? WHERE id = ?')
+            .run('complete', sizeBefore, sizeAfter, jobMeta?.fps ?? null, elapsed, now, now, req.params.jobId);
+          db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
+          // Record fingerprint under BOTH the original and final paths so future scans
+          // of either location skip this content.
+          if (jobMeta) {
+            recordProcessedFile(jobMeta.file_path, sizeBefore, jobMeta.recipe, jobMeta.content_key ?? undefined);
+            if (finalPath !== jobMeta.file_path) {
+              recordProcessedFile(finalPath, sizeBefore, jobMeta.recipe, jobMeta.content_key ?? undefined);
+            }
+          }
+          db.exec('COMMIT');
+        } catch (txErr) {
+          db.exec('ROLLBACK');
+          throw txErr;
         }
 
         recordJobEvent(req.params.jobId, 'complete', job.worker_id ? (getDb().prepare('SELECT name FROM workers WHERE id=?').get(job.worker_id) as any)?.name : undefined, { sizeBefore, sizeAfter });

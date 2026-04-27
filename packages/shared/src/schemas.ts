@@ -7,6 +7,32 @@ const SmbMappingSchema = z.object({
   localBasePath:   z.string().min(1),
 });
 
+// ffmpeg flags / patterns that can read or write arbitrary files via ffmpeg's
+// own URL-protocol or filter surface. spawn() blocks shell injection, but ffmpeg
+// itself can open `concat:`, `subfile:`, `pipe:`, `file:` etc. so any custom
+// recipe args MUST be screened for these tokens.
+//
+// Kept in sync with worker/src/transcoder.ts sanitizeFfmpegArgs (defence in depth).
+const DANGEROUS_FFMPEG_PATTERNS = [
+  'concat:', 'subfile:', 'pipe:', 'file:',
+  'tcp://', 'udp://', 'rtmp://', 'rtsp://', 'srt://', 'sftp://', 'ftp://', 'http://', 'https://',
+  'movie=', 'amovie=', 'subfile=',
+  '-f lavfi',
+];
+
+function ffmpegArgsAreSafe(args: string[]): boolean {
+  for (const arg of args) {
+    const lower = arg.toLowerCase();
+    if (DANGEROUS_FFMPEG_PATTERNS.some(p => lower.includes(p))) return false;
+    if (arg === '-i' || arg === '-y' || arg === '-Y') return false;
+  }
+  return true;
+}
+
+const FfmpegArgsSchema = z.array(z.string().max(2000)).max(200).refine(ffmpegArgsAreSafe, {
+  message: 'Recipe args contain a disallowed pattern (concat:/subfile:/pipe:/file:/movie=/-f lavfi/-i/-y).',
+});
+
 const RecipeSchema = z.object({
   id:             z.string().min(1),
   name:           z.string().min(1),
@@ -16,9 +42,13 @@ const RecipeSchema = z.object({
   icon:           z.string(),
   color:          z.string(),
   estimatedReduction: z.number().optional(),
-  ffmpegArgs:     z.array(z.string()).max(200).optional(),
+  ffmpegArgs:     FfmpegArgsSchema.optional(),
   sourceUrl:      z.string().url().optional(),
 });
+
+// Re-export so server-side custom-recipe creation can use the same denylist
+// without going through the full RecipeSchema (e.g. when only validating args).
+export { FfmpegArgsSchema, ffmpegArgsAreSafe, DANGEROUS_FFMPEG_PATTERNS, RecipeSchema };
 
 const LangPrefsSchema = z.object({
   audioLang:    z.string().length(3).optional(),

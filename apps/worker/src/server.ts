@@ -22,6 +22,9 @@ export let cancelController: AbortController | null = null;
 // Polled every 3 s via nvidia-smi (NVIDIA only); null on non-NVIDIA workers.
 export let latestGpuStats: GpuStats | null = null;
 
+// Exported handle so gracefulShutdown can clearInterval on SIGTERM/SIGINT.
+let gpuStatsTimer: NodeJS.Timeout | null = null;
+
 export function startGpuStatsPoller(): void {
   const poll = () => {
     execFile(
@@ -45,7 +48,11 @@ export function startGpuStatsPoller(): void {
     );
   };
   poll();
-  setInterval(poll, 3_000);
+  gpuStatsTimer = setInterval(poll, 3_000);
+}
+
+export function stopGpuStatsPoller(): void {
+  if (gpuStatsTimer) { clearInterval(gpuStatsTimer); gpuStatsTimer = null; }
 }
 
 export function initWorkerServer(hw: HardwareProfile, wid: string, mUrl: string) {
@@ -87,7 +94,9 @@ export async function createWorkerServer(port: number) {
 
   // POST /job — receive a job from Main
   app.post<{ Body: JobPayload }>('/job', async (req, reply) => {
-    // Guard: reject if already processing a job
+    // Guard: reject if already processing a job. Done first synchronously so two
+    // near-simultaneous POSTs can't both pass the check (Node is single-threaded
+    // for JS execution but any await in the handler would otherwise create a window).
     if (currentJob !== null) {
       return reply.status(409).send({ error: 'Worker already busy', activeJobId: currentJob.jobId });
     }
@@ -99,6 +108,13 @@ export async function createWorkerServer(port: number) {
     }
     const payload = parsed.data as JobPayload;
     const mode = payload.transferMode ?? (payload.smbPath ? 'smb' : 'wireless');
+
+    // Claim the slot SYNCHRONOUSLY before the next event-loop tick so a second
+    // dispatch arriving milliseconds later sees currentJob !== null and gets 409.
+    const fileName = (payload.smbPath ?? payload.filePath).split(/[\\\/]/).pop() ?? payload.filePath;
+    currentJob = { jobId: payload.jobId, fileName, progress: 0, phase: mode === 'wireless' ? 'receiving' : 'transcoding' };
+    cancelController = new AbortController();
+
     console.log(`\n📥 Job received: ${payload.jobId}`);
     console.log(`   File: ${payload.smbPath ?? payload.filePath}`);
     console.log(`   Recipe: ${payload.recipe.name}`);
@@ -281,8 +297,8 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
 
   console.log(`   Callback base: ${callbackBase}`);
 
-  currentJob = { jobId: payload.jobId, fileName, progress: 0, phase: mode === 'wireless' ? 'receiving' : 'transcoding' };
-  cancelController = new AbortController();
+  // currentJob and cancelController were claimed synchronously in the /job handler
+  // to close the check-then-set race; nothing more to do here.
 
   // Progress throttle — don't spam Main more than once every 500ms
   let lastProgressSent = 0;

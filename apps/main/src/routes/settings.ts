@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { getDb } from '../db.js';
 import { nanoid } from 'nanoid';
-import { BUILT_IN_RECIPES } from '@transcodarr/shared';
+import { BUILT_IN_RECIPES, FfmpegArgsSchema, RecipeSchema } from '@transcodarr/shared';
+import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -9,6 +10,22 @@ import { addWatchedPath, manualScanDirectory, cancelScan } from '../watcher.js';
 import { invalidateSettingsCache } from '../settings-cache.js';
 import { fireWebhooks } from '../webhooks.js';
 import { isPrivateUrl } from '../ssrf.js';
+
+// Set of built-in recipe IDs — used to reject custom-recipe creation/import that
+// would otherwise shadow built-ins. Lookups happen often; precompute once.
+const BUILT_IN_RECIPE_IDS = new Set(BUILT_IN_RECIPES.map(r => r.id));
+
+// Body schema for POST /recipes/custom — validates name, codec, container, AND
+// runs ffmpegArgs through the shared denylist (concat:/file:/movie=/...).
+const CustomRecipeCreateSchema = z.object({
+  name:            z.string().min(1).max(80),
+  description:     z.string().max(500).optional().default(''),
+  ffmpegArgs:      FfmpegArgsSchema,
+  targetCodec:     z.string().min(1).max(20),
+  targetContainer: z.enum(['mkv', 'mp4']).optional().default('mkv'),
+  icon:            z.string().max(8).optional().default('🔧'),
+  color:           z.string().max(20).optional().default('#6b7280'),
+});
 
 export async function settingsRoutes(app: FastifyInstance) {
   // ─── Recipes ────────────────────────────────────────────────────────────────
@@ -31,19 +48,37 @@ export async function settingsRoutes(app: FastifyInstance) {
       const data = await res.json() as any[];
       if (!Array.isArray(data)) return reply.status(400).send({ error: 'Expected a JSON array of recipes' });
 
-      // Basic schema validation — each item must have id, name, targetCodec
-      const valid = data.filter(r => r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.targetCodec === 'string');
-      if (valid.length === 0) return reply.status(400).send({ error: 'No valid recipes found in the response' });
+      // Strict schema validation per item — also runs ffmpegArgs through the denylist
+      // (concat:/subfile:/file:/movie=/-f lavfi/...). Items that fail validation are
+      // dropped silently and counted as `rejected` so the user knows.
+      const valid: any[] = [];
+      const rejected: { idx: number; reason: string }[] = [];
+      for (let i = 0; i < data.length; i++) {
+        const candidate = { icon: '🔧', color: '#6b7280', description: '', ...data[i] };
+        const parsed = RecipeSchema.safeParse(candidate);
+        if (!parsed.success) {
+          rejected.push({ idx: i, reason: parsed.error.errors[0]?.message ?? 'invalid' });
+          continue;
+        }
+        if (BUILT_IN_RECIPE_IDS.has(parsed.data.id)) {
+          rejected.push({ idx: i, reason: `id "${parsed.data.id}" collides with a built-in recipe` });
+          continue;
+        }
+        valid.push(parsed.data);
+      }
+      if (valid.length === 0) {
+        return reply.status(400).send({ error: 'No valid recipes found', rejected });
+      }
 
       // Tag with sourceUrl, merge with existing custom recipes (deduplicate by id)
       const existing: any[] = getCustomRecipes();
-      const tagged = valid.map(r => ({ ...r, sourceUrl: url, icon: r.icon ?? '🔧', color: r.color ?? '#6b7280' }));
+      const tagged = valid.map(r => ({ ...r, sourceUrl: url }));
       const merged = [...existing.filter(e => !tagged.find((t: any) => t.id === e.id)), ...tagged];
 
       getDb().prepare("INSERT INTO settings (key, value) VALUES ('custom_recipes', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         .run(JSON.stringify(merged));
 
-      return { ok: true, imported: tagged.length };
+      return { ok: true, imported: tagged.length, rejected: rejected.length, rejectedDetails: rejected };
     } catch (err: any) {
       return reply.status(400).send({ error: err.message ?? 'Import failed' });
     }
@@ -68,15 +103,31 @@ export async function settingsRoutes(app: FastifyInstance) {
     return Object.fromEntries(rows.map((r: any) => [r.recipe, { avgFps: Math.round(r.avg_fps), jobCount: r.job_count }]));
   });
 
-  // POST /api/settings/recipes/custom — create a custom recipe from scratch
-  app.post<{ Body: { name: string; description?: string; ffmpegArgs: string[]; targetCodec: string; targetContainer?: string; icon?: string; color?: string } }>('/recipes/custom', async (req, reply) => {
-    const { name, description = '', ffmpegArgs, targetCodec, targetContainer = 'mkv', icon = '🔧', color = '#6b7280' } = req.body;
-    if (!name || !ffmpegArgs?.length || !targetCodec) return reply.status(400).send({ error: 'name, ffmpegArgs, and targetCodec are required' });
+  // POST /api/settings/recipes/custom — create a custom recipe from scratch.
+  // Body is validated by CustomRecipeCreateSchema which runs ffmpegArgs through
+  // the same denylist used for imports + the worker-side sanitiser (defence in depth).
+  app.post('/recipes/custom', async (req, reply) => {
+    const parsed = CustomRecipeCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: 'Invalid recipe',
+        details: parsed.error.flatten(),
+      });
+    }
+    const { name, description, ffmpegArgs, targetCodec, targetContainer, icon, color } = parsed.data;
     const id = `custom-${nanoid(8)}`;
+
+    // Defensive: id collision with a built-in recipe is impossible because
+    // built-in ids don't start with "custom-", but reject explicitly anyway.
+    if (BUILT_IN_RECIPE_IDS.has(id)) {
+      return reply.status(409).send({ error: `Generated id "${id}" collides with a built-in recipe — try again` });
+    }
+
     const existing: any[] = getCustomRecipes();
     const newRecipe = { id, name, description, ffmpegArgs, targetCodec, targetContainer, icon, color };
     existing.push(newRecipe);
-    getDb().prepare("INSERT INTO settings (key, value) VALUES ('custom_recipes', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(existing));
+    getDb().prepare("INSERT INTO settings (key, value) VALUES ('custom_recipes', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(JSON.stringify(existing));
     return newRecipe;
   });
 

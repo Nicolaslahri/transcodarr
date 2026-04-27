@@ -131,26 +131,101 @@ export const BUILT_IN_RECIPES: Recipe[] = [
 
 // ─── Hardware-Aware Encoder Selection ────────────────────────────────────────
 
-function getVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | 'av1'): string {
+/**
+ * Picks the best available encoder for the given codec on the given worker.
+ *
+ * Returns `null` if the worker has neither a matching hardware encoder NOR the
+ * software fallback compiled into its ffmpeg build. Caller (dispatcher or
+ * worker) is responsible for surfacing that as a clean failure rather than
+ * letting ffmpeg exit with "Unknown encoder" mid-job.
+ *
+ * NOTE: `hw.encoders` should now contain BOTH GPU encoders (hevc_nvenc, ...)
+ *       AND software encoders (libx265, libsvtav1, ...) — see
+ *       `apps/worker/src/hardware.ts:detectHardware()`. Older worker builds
+ *       only populated GPU encoders; for backward compat the software branch
+ *       still falls through to the legacy lib name when the array is empty.
+ */
+export function pickVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | 'av1'): string | null {
+  const has = (name: string) => hw.encoders.includes(name);
+
   if (codec === 'h265') {
-    if (hw.gpu === 'nvidia' && hw.encoders.includes('hevc_nvenc')) return 'hevc_nvenc';
-    if (hw.gpu === 'amd'    && hw.encoders.includes('hevc_amf'))   return 'hevc_amf';
-    if (hw.gpu === 'intel'  && hw.encoders.includes('hevc_qsv'))   return 'hevc_qsv';
-    return 'libx265';
+    if (hw.gpu === 'nvidia' && has('hevc_nvenc')) return 'hevc_nvenc';
+    if (hw.gpu === 'amd'    && has('hevc_amf'))   return 'hevc_amf';
+    if (hw.gpu === 'intel'  && has('hevc_qsv'))   return 'hevc_qsv';
+    if (has('libx265')) return 'libx265';
+    // Backward compat: assume libx265 is available if the encoders list lacks
+    // any libx* entries (older worker that didn't probe software encoders).
+    if (!hw.encoders.some(e => e.startsWith('lib'))) return 'libx265';
+    return null;
   }
   if (codec === 'h264') {
-    if (hw.gpu === 'nvidia' && hw.encoders.includes('h264_nvenc')) return 'h264_nvenc';
-    if (hw.gpu === 'amd'    && hw.encoders.includes('h264_amf'))   return 'h264_amf';
-    if (hw.gpu === 'intel'  && hw.encoders.includes('h264_qsv'))   return 'h264_qsv';
-    return 'libx264';
+    if (hw.gpu === 'nvidia' && has('h264_nvenc')) return 'h264_nvenc';
+    if (hw.gpu === 'amd'    && has('h264_amf'))   return 'h264_amf';
+    if (hw.gpu === 'intel'  && has('h264_qsv'))   return 'h264_qsv';
+    if (has('libx264')) return 'libx264';
+    if (!hw.encoders.some(e => e.startsWith('lib'))) return 'libx264';
+    return null;
   }
   if (codec === 'av1') {
-    if (hw.gpu === 'nvidia' && hw.encoders.includes('av1_nvenc')) return 'av1_nvenc';
-    if (hw.gpu === 'amd'    && hw.encoders.includes('av1_amf'))   return 'av1_amf';
-    if (hw.gpu === 'intel'  && hw.encoders.includes('av1_qsv'))   return 'av1_qsv';
-    return 'libsvtav1';
+    if (hw.gpu === 'nvidia' && has('av1_nvenc')) return 'av1_nvenc';
+    if (hw.gpu === 'amd'    && has('av1_amf'))   return 'av1_amf';
+    if (hw.gpu === 'intel'  && has('av1_qsv'))   return 'av1_qsv';
+    if (has('libsvtav1')) return 'libsvtav1';
+    if (has('libaom-av1')) return 'libaom-av1';
+    // Refuse to silently fall back to libsvtav1 on Pi/CPU-only workers — it OOMs
+    // or runs at <1 fps. Caller will mark the job failed with a clear message.
+    return null;
   }
-  return 'libx264';
+  return null;
+}
+
+// Internal helper kept for the existing recipe switch — throws when no encoder
+// is usable so the worker exits cleanly instead of running ffmpeg with "Unknown
+// encoder" or wasting hours on libsvtav1 on an unsuitable host.
+function getVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | 'av1'): string {
+  const enc = pickVideoEncoder(hw, codec);
+  if (!enc) {
+    throw new Error(
+      `No usable ${codec.toUpperCase()} encoder on this worker. ` +
+      `GPU: ${hw.gpuName} (${hw.gpu}). ` +
+      `Available encoders: ${hw.encoders.join(', ') || 'none'}. ` +
+      (codec === 'av1'
+        ? 'AV1 needs an NVIDIA RTX 40-series / AMD RX 7000 / Intel Arc GPU, or libsvtav1 in ffmpeg.'
+        : `Install an ffmpeg build that includes lib${codec === 'h265' ? 'x265' : 'x264'}.`),
+    );
+  }
+  return enc;
+}
+
+/**
+ * Public predicate so the dispatcher can skip workers that can't run a given
+ * recipe before dispatching. Returns `{ ok: false, reason }` when the worker
+ * can't satisfy the recipe's encoder needs.
+ */
+export function isRecipeSupportedByWorker(recipe: Recipe, hw: HardwareProfile): { ok: true } | { ok: false; reason: string } {
+  // Custom recipes with raw ffmpegArgs — we don't inspect args here, assume OK.
+  if (recipe.ffmpegArgs && recipe.ffmpegArgs.length > 0) return { ok: true };
+
+  // Map recipe.id → the codec it requires (null = copy / audio-only)
+  const codecMap: Record<string, 'h265' | 'h264' | 'av1' | null> = {
+    'space-saver':       'h265',
+    'quality-archive':   'h265',
+    'av1-balanced':      'av1',
+    'plex-ready':        'h265',
+    'universal-player':  'h264',
+    'web-optimized':     'h264',
+    'remux-to-mkv':      null,
+    'downscale-1080p':   'h265',
+    'downscale-720p':    'h265',
+    'anime-cleaner':     'h265',
+    'audio-normalizer':  null,
+    'hdr-to-sdr':        'h265',
+  };
+  const need = codecMap[recipe.id];
+  if (!need) return { ok: true };
+  const enc = pickVideoEncoder(hw, need);
+  if (!enc) return { ok: false, reason: `${need.toUpperCase()} encoder not available on worker ${hw.gpuName}` };
+  return { ok: true };
 }
 
 // ─── Encoder Quality Args ─────────────────────────────────────────────────────
@@ -239,17 +314,32 @@ function encodeAV1(enc: string, tier: AV1Tier): string[] {
 /**
  * Returns explicit -map args for selecting preferred audio/subtitle tracks.
  * When no langs are specified, returns [] and ffmpeg's default stream selection applies.
+ *
+ * Notes:
+ *  - Language codes are normalised to lowercase. ffmpeg's `language:eng` matcher
+ *    is case-sensitive; "ENG" or "Eng" entered by the user would silently match
+ *    nothing, leaving the output with zero audio streams.
+ *  - When a preferred audio language is set we ALSO add an unconditional
+ *    `-map 0:a:0?` fallback so files where no track matches the preferred
+ *    language (or untagged "und" tracks — common in fansub anime releases)
+ *    still end up with at least one audio stream.
  */
 function buildLangMaps(langs: LangPrefs | undefined): string[] {
   if (!langs?.audioLang && !langs?.subtitleLang) return [];
   const m: string[] = ['-map', '0:v'];
   if (langs.audioLang) {
-    m.push('-map', `0:a:m:language:${langs.audioLang}?`);
+    const lang = langs.audioLang.toLowerCase();
+    m.push('-map', `0:a:m:language:${lang}?`);
+    // Backstop: if no audio track is tagged with the preferred language, keep
+    // the first audio track so playback isn't muted. The `?` makes both
+    // selectors optional, so an audio-less file still proceeds.
+    m.push('-map', '0:a:0?');
   } else {
     m.push('-map', '0:a');
   }
   if (langs.subtitleLang) {
-    m.push('-map', `0:s:m:language:${langs.subtitleLang}?`);
+    const lang = langs.subtitleLang.toLowerCase();
+    m.push('-map', `0:s:m:language:${lang}?`);
   } else {
     m.push('-map', '0:s?');
   }
@@ -312,7 +402,17 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
       args.push(...buildLangMaps(langs));
       const enc = getVideoEncoder(hw, 'h264');
       args.push('-c:v', enc, ...encodeH264(enc, 'balanced'));
-      args.push('-c:a', 'aac', '-b:a', '192k', '-c:s', 'mov_text');
+      // -pix_fmt yuv420p forces 8-bit output — without it, 10-bit HEVC sources
+      // produce H.264 High10 which most "legacy" devices and browsers cannot decode,
+      // and h264_nvenc errors outright when given 10-bit input under -profile:v high.
+      args.push('-pix_fmt', 'yuv420p');
+      // -sn drops subtitles. MP4 only supports mov_text (text); transcoding image
+      // subs (PGS / VOBSUB) to mov_text fails the entire job. Users wanting subs
+      // should pick an MKV recipe instead.
+      args.push('-c:a', 'aac', '-b:a', '192k', '-sn');
+      // +faststart relocates the moov atom to the start so streaming/seeking works
+      // on the older smart TVs and embedded players this recipe targets.
+      args.push('-movflags', '+faststart');
       break;
     }
 
@@ -320,17 +420,30 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
     case 'web-optimized': {
       args.push(...buildLangMaps(langs));
       // scale= is a CPU-only filter — zero-copy CUDA mode is suppressed via CUDA_INCOMPATIBLE_RECIPES
-      args.push('-vf', "scale='min(1920,iw)':-2:flags=lanczos");
+      // format=yuv420p chained into the filter graph guarantees 8-bit output
+      // (most browser MSE pipelines reject H.264 High10).
+      args.push('-vf', "scale='min(1920,iw)':-2:flags=lanczos,format=yuv420p");
       const enc = getVideoEncoder(hw, 'h264');
       args.push('-c:v', enc, ...encodeH264(enc, 'balanced'));
-      args.push('-movflags', '+faststart', '-c:a', 'aac', '-b:a', '192k', '-c:s', 'mov_text');
+      // Drop subs entirely — see universal-player above for rationale.
+      args.push('-movflags', '+faststart', '-c:a', 'aac', '-b:a', '192k', '-sn');
       break;
     }
 
-    // ── Remux to MKV — stream copy, no re-encode ─────────────────────────
+    // ── Remux to MKV — stream copy, preserve EVERY stream ────────────────
     case 'remux-to-mkv': {
-      args.push(...buildLangMaps(langs));
-      args.push('-c:v', 'copy', '-c:a', 'copy', '-c:s', 'copy');
+      // -map 0 selects every stream of every type from input 0 — when no lang
+      // prefs are set this preserves attachments (fonts), data streams, every
+      // audio track, every subtitle. Without -map 0, ffmpeg's default selector
+      // picks one of each type and the description's "preserve every stream"
+      // promise quietly becomes a lie.
+      const langMaps = buildLangMaps(langs);
+      if (langMaps.length === 0) {
+        args.push('-map', '0', '-map', '-0:d?'); // exclude data streams that MKV can't mux
+      } else {
+        args.push(...langMaps, '-map', '0:t?');  // attachments
+      }
+      args.push('-c', 'copy');
       break;
     }
 
@@ -367,6 +480,9 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
         '-map', '0:v',
         '-map', '0:a:m:language:jpn?',
         '-map', '0:a:m:language:eng?',
+        // Backstop for fansub releases that tag tracks as "und" — without this
+        // an undertagged JP-only release ends up with zero audio streams.
+        '-map', '0:a:0?',
         '-map', '0:s?',
         '-map', '0:t?',           // font attachments — required for styled .ass subtitles
         '-c:v', enc,
@@ -375,16 +491,26 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
         ...profileArgs,
         '-c:a', 'copy',
         '-c:s', 'copy',
-        '-c:t', 'copy',           // copy embedded fonts (MKV attachment streams)
+        // No `-c:t copy` — attachment streams are stream-copied implicitly by
+        // ffmpeg when -map'd, and `-c:t copy` errors on certain ffmpeg builds
+        // ("Could not find codec 'copy' for stream type 'attachment'").
       );
       break;
     }
 
     // ── Audio Normalizer — copy video, normalize audio to EBU R128 ───────
     case 'audio-normalizer': {
-      args.push(...buildLangMaps(langs));
+      // Map every stream type explicitly. Default ffmpeg stream selection only
+      // picks one of each — the recipe's claim of "video stream is copied with
+      // no quality loss" then quietly drops every subtitle and attachment.
+      const langMaps = buildLangMaps(langs);
+      if (langMaps.length === 0) {
+        args.push('-map', '0:v', '-map', '0:a', '-map', '0:s?', '-map', '0:t?');
+      } else {
+        args.push(...langMaps, '-map', '0:t?');
+      }
       // Copy video bitstream — no video re-encode; goal is audio only
-      args.push('-c:v', 'copy');
+      args.push('-c:v', 'copy', '-c:s', 'copy');
       args.push('-af', 'loudnorm=I=-23:LRA=7:TP=-2', '-c:a', 'aac', '-b:a', '192k');
       break;
     }
@@ -392,8 +518,25 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
     // ── HDR → SDR Tonemap — zscale tonemapping → H.265 ───────────────────
     case 'hdr-to-sdr': {
       args.push(...buildLangMaps(langs));
-      // zscale is CPU-only — zero-copy CUDA mode is suppressed via CUDA_INCOMPATIBLE_RECIPES
-      args.push('-vf', 'zscale=transfer=linear,tonemap=hable,zscale=transfer=bt709,format=yuv420p');
+      // Correct HDR10 → SDR BT.709 chain. The previous version omitted the
+      // input transfer/primaries/matrix tags so zscale assumed BT.709 input on
+      // a BT.2020/PQ source, producing washed-out output (the very thing this
+      // recipe claims to fix). Steps:
+      //   1. zscale t=linear:npl=100 — convert PQ to linear light, set peak
+      //      luminance for the tonemap. Explicit tin/pin/min carry the HDR10
+      //      tagging through; without them, missing/incorrect side-data on
+      //      some sources defaults to BT.709.
+      //   2. format=gbrpf32le — float linear-light pipeline for tonemap to
+      //      avoid quantisation banding.
+      //   3. zscale p=bt709 — convert primaries to Rec.709.
+      //   4. tonemap=hable:desat=0 — Hable curve, no extra desaturation.
+      //   5. zscale t=bt709:m=bt709:r=tv — back to gamma BT.709 with TV range.
+      //   6. format=yuv420p — final 8-bit chroma format.
+      // zscale is CPU-only — zero-copy CUDA mode is suppressed via CUDA_INCOMPATIBLE_RECIPES.
+      args.push(
+        '-vf',
+        'zscale=t=linear:npl=100:tin=smpte2084:pin=bt2020:min=bt2020nc,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p',
+      );
       const enc = getVideoEncoder(hw, 'h265');
       args.push('-c:v', enc, ...encodeH265(enc, 'balanced'));
       args.push('-c:a', 'copy');

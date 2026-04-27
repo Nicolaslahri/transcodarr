@@ -573,17 +573,25 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
       {/* Add / Edit modal */}
       {adding && (
         <div
+          // Layout pattern: backdrop is the scroll container (overflow-y-auto),
+          // an inner min-h-full flex centers the dialog on tall viewports while
+          // letting the outer scroll on short ones. Without this, `flex
+          // items-center` on the backdrop ALONE pushed the dialog above the
+          // viewport whenever the modal exceeded `100vh - top padding`,
+          // leaving the title + close button unreachable.
+          //
           // No onClick={closeForm} on the backdrop — this is a form with up to
           // a dozen fields and clicking outside used to silently discard all
           // unsaved input. Users close via Esc or the X button instead.
           // No aria-hidden — would propagate to the dialog child.
-          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200"
         >
+        <div className="min-h-full flex items-center justify-center p-4">
           <div
             role="dialog"
             aria-modal="true"
             aria-label={editingId ? 'Edit watched folder' : 'Add watched folder'}
-            className="bg-surface border border-border rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200"
+            className="bg-surface border border-border rounded-2xl w-full max-w-xl max-h-[calc(100vh-2rem)] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200"
           >
             {/* Modal header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
@@ -790,6 +798,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
               </p>
             )}
           </div>
+        </div>
         </div>
       )}
 
@@ -1123,10 +1132,13 @@ function ImportRecipeModal({ open, onClose, onSuccess, apiUrl }: { open: boolean
 
   return (
     <div
-      // No aria-hidden — would propagate to the dialog child.
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
+      // Outer scrolls; inner min-h-full + flex centers content (see settings
+      // WatchedFolderModal for rationale). No aria-hidden — would propagate
+      // to the dialog child.
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200"
       onClick={onClose}
     >
+    <div className="min-h-full flex items-center justify-center p-4">
       <div
         role="dialog"
         aria-modal="true"
@@ -1180,6 +1192,7 @@ function ImportRecipeModal({ open, onClose, onSuccess, apiUrl }: { open: boolean
           </button>
         </div>
       </div>
+    </div>
     </div>
   );
 }
@@ -1303,11 +1316,14 @@ function CustomRecipeModal({ open, onClose, onSuccess, apiUrl, initial }: {
   if (!open) return null;
   return (
     <div
-      // No backdrop-click-close on this form modal — accidental clicks would
-      // discard ffmpeg args and recipe metadata. Close via Esc or X button.
-      // No aria-hidden — would propagate to the dialog child.
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
+      // Outer scrolls; inner min-h-full + flex centers content (see settings
+      // WatchedFolderModal for rationale). No backdrop-click-close on this
+      // form modal — accidental clicks would discard ffmpeg args and recipe
+      // metadata. Close via Esc or X button. No aria-hidden — would
+      // propagate to the dialog child.
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200"
     >
+    <div className="min-h-full flex items-center justify-center p-4">
       <div
         role="dialog"
         aria-modal="true"
@@ -1389,6 +1405,7 @@ function CustomRecipeModal({ open, onClose, onSuccess, apiUrl, initial }: {
           <button onClick={onClose} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">Cancel</button>
         </div>
       </div>
+    </div>
     </div>
   );
 }

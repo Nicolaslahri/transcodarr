@@ -333,12 +333,15 @@ export default function QueuePage() {
       {/* Quick-add file modal */}
       {quickAddOpen && (
         <div
+          // Outer scrolls; inner min-h-full + flex centers content. See
+          // settings/page.tsx WatchedFolderModal for the rationale — without
+          // this pattern, `flex items-center` on a fixed-inset-0 backdrop
+          // pushes tall modals above the viewport on short screens.
           // No backdrop-click-close — this is a form. Close via Esc / X button.
-          // (No aria-hidden on this wrapper — putting it here used to propagate
-          //  to the role="dialog" child and silence the entire modal for screen
-          //  readers, defeating the modal's own a11y attributes.)
-          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
+          // No aria-hidden — would propagate to the dialog child.
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200"
         >
+        <div className="min-h-full flex items-center justify-center p-4">
           <div
             role="dialog"
             aria-modal="true"
@@ -409,6 +412,7 @@ export default function QueuePage() {
               <button onClick={() => setQuickAddOpen(false)} className="px-5 py-2 text-textMuted text-sm rounded-xl hover:text-white transition-colors">Cancel</button>
             </div>
           </div>
+        </div>
         </div>
       )}
 

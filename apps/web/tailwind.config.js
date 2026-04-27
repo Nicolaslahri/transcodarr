@@ -12,8 +12,25 @@ module.exports = {
         surfaceHover: '#1c1c22',
         primary: '#00d9ff',
         text: '#ffffff',
-        textMuted: '#8a8a93',
-        border: '#2a2a35'
+        // Bumped from #8a8a93 → #b4b4c0 to clear WCAG 2.1 AA 4.5:1 against
+        // bg-surface (#121216) for body text. The previous shade failed the
+        // contrast threshold and was particularly bad at 50–60% opacity.
+        textMuted: '#b4b4c0',
+        border: '#2a2a35',
+        // Semantic palette so status colours stay disciplined across pages.
+        // Page-specific code may still use literal hex for brand accents, but
+        // status tokens (queued / active / paused / failed / success) should
+        // use these so the meaning stays consistent.
+        statusInfo:    '#00d9ff',
+        statusWarn:    '#fbbf24',
+        statusError:   '#f87171',
+        statusSuccess: '#4ade80',
+        statusMuted:   '#71717a',
+      },
+      fontSize: {
+        // Smaller-than-xs token so chrome (timestamps, helper text) doesn't
+        // need arbitrary text-[10px] overrides scattered across components.
+        xxs: ['11px', { lineHeight: '14px' }],
       },
       fontFamily: {
         sans: ['var(--font-inter)'],

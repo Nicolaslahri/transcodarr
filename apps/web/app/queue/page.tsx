@@ -1,6 +1,7 @@
 'use client';
 
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown, FilePlus2, X, Plus, BookOpen } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -204,6 +205,8 @@ export default function QueuePage() {
   const [localScan, setLocalScan] = useState<ScanSummary | null>(null);
   const [orderedActiveIds, setOrderedActiveIds] = useState<string[]>([]);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  // Esc closes the quick-add modal (audit fix #7).
+  useEscapeKey(quickAddOpen, () => setQuickAddOpen(false));
   const [quickFilePath, setQuickFilePath] = useState('');
   const [quickRecipe, setQuickRecipe] = useState('space-saver');
   const [quickAdding, setQuickAdding] = useState(false);
@@ -327,13 +330,23 @@ export default function QueuePage() {
 
       {/* Quick-add file modal */}
       {quickAddOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200">
-          <div className="bg-surface border border-border rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
+          onClick={() => setQuickAddOpen(false)}
+          aria-hidden
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quick-add-title"
+            onClick={e => e.stopPropagation()}
+            className="bg-surface border border-border rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200"
+          >
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-              <h2 className="text-white font-bold flex items-center gap-2">
-                <FilePlus2 className="w-4 h-4 text-primary" /> Add Single File
+              <h2 id="quick-add-title" className="text-white font-bold flex items-center gap-2">
+                <FilePlus2 className="w-4 h-4 text-primary" aria-hidden /> Add Single File
               </h2>
-              <button onClick={() => setQuickAddOpen(false)} className="text-textMuted hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+              <button onClick={() => setQuickAddOpen(false)} aria-label="Close dialog" className="text-textMuted hover:text-white transition-colors p-1 rounded"><X className="w-5 h-5" aria-hidden /></button>
             </div>
             <div className="p-6 space-y-4">
               <p className="text-textMuted text-sm">Manually queue a single file for transcoding. The file must be accessible to the Main node.</p>
@@ -538,7 +551,7 @@ function ConversionBadge({ job }: { job: Job }) {
   const same = from.toLowerCase() === to.toLowerCase();
   if (same) return null;
   return (
-    <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
+    <div className="flex items-center gap-1 text-xxs font-mono shrink-0">
       <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
       <ArrowRight className="w-3 h-3 text-textMuted" />
       <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
@@ -558,7 +571,7 @@ function ResolutionBadge({ resolution }: { resolution: string }) {
   else if (w >= 1280) { label = '720p';  color = 'bg-white/5 border-white/10 text-textMuted'; }
   else                { label = 'SD';    color = 'bg-white/5 border-white/10 text-textMuted'; }
   return (
-    <span className={`inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border ${color}`}>
+    <span className={`inline-flex items-center text-xxs font-bold px-1.5 py-0.5 rounded border ${color}`}>
       {label}
     </span>
   );
@@ -571,7 +584,7 @@ function FileSizeBadge({ bytes }: { bytes: number }) {
   if (bytes >= 1e9) label = `${(bytes / 1e9).toFixed(1)} GB`;
   else              label = `${Math.round(bytes / 1e6)} MB`;
   return (
-    <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-textMuted font-mono">
+    <span className="inline-flex items-center text-xxs px-1.5 py-0.5 rounded border bg-white/5 border-white/10 text-textMuted font-mono">
       {label}
     </span>
   );
@@ -585,7 +598,7 @@ function SubtitleWarning({ job }: { job: Job }) {
   if (container !== 'mp4') return null; // MKV preserves subs fine
   return (
     <span
-      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-400"
+      className="inline-flex items-center gap-1 text-xxs px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/30 text-amber-400"
       title="MP4 only supports text subtitles (mov_text). Image-based subtitles (PGS, VOBSUB) will be dropped. Use a MKV recipe to keep all subtitle types."
     >
       <AlertTriangle className="w-2.5 h-2.5" />
@@ -612,12 +625,12 @@ function WorkerPicker({ job, workers, apiUrl }: { job: Job; workers: WorkerInfo[
   if (workers.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-1.5 text-[10px]">
+    <div className="flex items-center gap-1.5 text-xxs">
       <User className="w-3 h-3 text-textMuted" />
       <select
         value={value}
         onChange={handleChange}
-        className="bg-background border border-border text-textMuted rounded px-1.5 py-0.5 text-[10px] cursor-pointer hover:border-primary/40 focus:outline-none focus:border-primary/60 transition-colors"
+        className="bg-background border border-border text-textMuted rounded px-1.5 py-0.5 text-xxs cursor-pointer hover:border-primary/40 focus:outline-none focus:border-primary/60 transition-colors"
       >
         <option value="">Any Worker</option>
         {workers.map(w => (
@@ -711,7 +724,14 @@ function JobRow({
     >
       {/* Progress bar — top of card when active */}
       {isProcessing && job.progress > 0 && (
-        <div className="h-0.5 w-full bg-background relative overflow-hidden">
+        <div
+          className="h-0.5 w-full bg-background relative overflow-hidden"
+          role="progressbar"
+          aria-valuenow={job.progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${job.fileName} ${job.progress}% complete`}
+        >
           <div
             className={`absolute inset-y-0 left-0 ${cfg.barBg} transition-all duration-700 ease-out`}
             style={{ width: `${job.progress}%` }}
@@ -719,20 +739,25 @@ function JobRow({
           <div
             className="absolute inset-y-0 w-24 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"
             style={{ left: `calc(${job.progress}% - 48px)` }}
+            aria-hidden
           />
         </div>
       )}
 
       <div className="p-3 md:p-4 flex items-center gap-2 md:gap-3">
-        {/* Drag handle — hidden on mobile, visible md+ */}
+        {/* Drag handle — hidden on mobile, visible md+. Keyboard users can also
+            reorder via the dnd-kit KeyboardSensor: Tab to focus the handle,
+            Space to lift, arrow keys to move, Space again to drop. */}
         {draggable && (
-          <div
+          <button
+            type="button"
             {...attributes}
             {...listeners}
-            className="hidden md:flex p-1 text-textMuted/40 hover:text-textMuted cursor-grab active:cursor-grabbing shrink-0 touch-none"
+            aria-label={`Reorder ${job.fileName}`}
+            className="hidden md:flex p-1 text-textMuted/60 hover:text-textMuted focus-visible:text-white cursor-grab active:cursor-grabbing shrink-0 touch-none rounded"
           >
             <GripVertical className="w-4 h-4" />
-          </div>
+          </button>
         )}
 
         {/* Icon */}
@@ -748,7 +773,7 @@ function JobRow({
           <h3 className="text-white font-semibold truncate text-sm leading-tight mb-1.5">{job.fileName}</h3>
           {/* Badge row: status chip + file metadata + fps (inline, no layout shift) + conversion + subtitle warning */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
+            <span className={`inline-flex items-center gap-1 text-xxs font-bold px-2 py-0.5 rounded-full border ${cfg.chip}`}>
               <Icon className="w-2.5 h-2.5" />
               {cfg.label}
             </span>
@@ -756,7 +781,7 @@ function JobRow({
             {(job.fileSize ?? job.sizeBefore) != null && <FileSizeBadge bytes={(job.fileSize ?? job.sizeBefore)!} />}
             <ConversionBadge job={job} />
             {job.fps != null && job.fps > 0 && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
+              <span className="text-xxs font-mono px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">
                 {job.fps.toFixed(1)} fps
               </span>
             )}
@@ -769,7 +794,7 @@ function JobRow({
             </div>
           )}
           {cancelError && (
-            <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
+            <p className="text-xxs text-red-400 mt-1 flex items-center gap-1">
               <AlertTriangle className="w-2.5 h-2.5 shrink-0" />{cancelError}
             </p>
           )}
@@ -789,10 +814,10 @@ function JobRow({
           <div className="w-20 md:w-28 space-y-1.5">
             <div className="flex items-center justify-end gap-1.5">
               {(job.progress >= 99 || job.phase === 'swapping') ? (
-                <span className="text-[10px] text-amber-400/80 animate-pulse shrink-0">Finishing up…</span>
+                <span className="text-xxs text-amber-400/80 animate-pulse shrink-0">Finishing up…</span>
               ) : job.eta && job.eta > Date.now() ? (
-                <span className="text-[10px] text-textMuted flex items-center gap-0.5 shrink-0">
-                  <Clock className="w-2.5 h-2.5" />
+                <span className="text-xxs text-textMuted flex items-center gap-0.5 shrink-0">
+                  <Clock className="w-2.5 h-2.5" aria-hidden />
                   {formatEta(job.eta)}
                 </span>
               ) : null}
@@ -800,7 +825,14 @@ function JobRow({
                 {job.progress}%
               </span>
             </div>
-            <div className="h-1.5 bg-background rounded-full overflow-hidden border border-border/60">
+            <div
+              className="h-1.5 bg-background rounded-full overflow-hidden border border-border/60"
+              role="progressbar"
+              aria-valuenow={job.progress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`${job.fileName} progress`}
+            >
               <div
                 className={`h-full rounded-full transition-all duration-700 ease-out ${cfg.barBg}`}
                 style={{ width: `${job.progress}%` }}
@@ -809,26 +841,50 @@ function JobRow({
           </div>
 
           {isProcessing ? (
-            <button
-              onClick={async () => {
-                setCancelError('');
-                setOverrideStatus('paused');
-                try {
-                  const res = await onCancel();
-                  if (!res.ok) {
+            // Two distinct actions on an active job:
+            //   • Pause — stop transcoding but keep the job in the queue.
+            //   • Cancel/Remove — pause AND delete; appears as the X button.
+            // Previously only Pause existed and the X disappeared while running,
+            // forcing users to pause-then-delete. Now both are visible at once
+            // so the intent is unambiguous.
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  setCancelError('');
+                  setOverrideStatus('paused');
+                  try {
+                    const res = await onCancel();
+                    if (!res.ok) {
+                      setOverrideStatus(null);
+                      setCancelError('Failed to pause — try again');
+                    }
+                  } catch {
                     setOverrideStatus(null);
-                    setCancelError('Failed to pause — try again');
+                    setCancelError('Network error');
                   }
-                } catch {
-                  setOverrideStatus(null);
-                  setCancelError('Network error');
-                }
-              }}
-              title="Pause — stops transcoding, keeps job in queue"
-              className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-amber-400 transition-colors"
-            >
-              <PauseCircle className="w-4 h-4" />
-            </button>
+                }}
+                title="Pause — stops transcoding, keeps job in queue"
+                aria-label={`Pause ${job.fileName}`}
+                className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-amber-400 transition-colors"
+              >
+                <PauseCircle className="w-4 h-4" aria-hidden />
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  // Pause first so the worker stops, then immediately remove.
+                  setOverrideStatus('paused');
+                  await onCancel().catch(() => {});
+                  await onRemove();
+                }}
+                title="Stop and remove — cancels transcoding and deletes the job"
+                aria-label={`Stop and remove ${job.fileName}`}
+                className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" aria-hidden />
+              </button>
+            </div>
           ) : isPaused ? (
             <div className="flex items-center gap-1">
               <button
@@ -920,7 +976,7 @@ function FailedJobRow({ job, onRemove, onRetry }: { job: Job; onRemove: () => vo
         <p className="text-white text-sm font-medium truncate">{job.fileName}</p>
         {job.error && <p className="text-red-400/70 text-xs truncate mt-0.5">{job.error}</p>}
       </div>
-      <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
+      <div className="flex items-center gap-1 text-xxs font-mono shrink-0">
         <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
         <ArrowRight className="w-3 h-3 text-textMuted" />
         <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
@@ -953,7 +1009,7 @@ function CompletedJobRow({ job, onRemove }: { job: Job; onRemove: () => void }) 
           <p className="text-textMuted text-xs mt-0.5">{Math.round(job.avgFps)} fps avg{job.elapsedSeconds ? ` · ${Math.round(job.elapsedSeconds / 60)}m` : ''}</p>
         )}
       </div>
-      <div className="flex items-center gap-1 text-[10px] font-mono shrink-0">
+      <div className="flex items-center gap-1 text-xxs font-mono shrink-0">
         <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
         <ArrowRight className="w-3 h-3 text-textMuted" />
         <span className="px-1.5 py-0.5 rounded border bg-green-500/10 border-green-500/20 text-green-400">{to}</span>

@@ -101,7 +101,14 @@ export default function OverviewPage() {
             <h2 className="text-sm font-bold text-white">Queue Status</h2>
             <span className="text-xs text-textMuted">{stats.activeJobs} active · {stats.queueDepth} waiting</span>
           </div>
-          <div className="h-2 bg-background rounded-full overflow-hidden flex">
+          <div
+            className="h-2 bg-background rounded-full overflow-hidden flex"
+            role="progressbar"
+            aria-valuenow={stats.activeJobs + stats.queueDepth}
+            aria-valuemin={0}
+            aria-valuemax={totalQueueBar}
+            aria-label={`Queue depth: ${stats.activeJobs} active and ${stats.queueDepth} waiting`}
+          >
             <div
               className="h-full bg-primary transition-all duration-500"
               style={{ width: `${(stats.activeJobs / totalQueueBar) * 100}%` }}
@@ -241,7 +248,14 @@ function WorkerCard({ worker, activeJob }: { worker: WorkerInfo; activeJob: Job 
             <p className="text-xs text-textMuted mb-2 truncate" title={fileName}>{fileName}</p>
           )}
           <div className="flex items-center gap-2 mb-1">
-            <div className="flex-1 h-1.5 bg-background rounded-full overflow-hidden">
+            <div
+              className="flex-1 h-1.5 bg-background rounded-full overflow-hidden"
+              role="progressbar"
+              aria-valuenow={progress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={fileName ? `${fileName} progress` : 'Worker progress'}
+            >
               <div
                 className="h-full bg-primary rounded-full transition-all duration-500"
                 style={{ width: `${progress}%` }}

@@ -1,7 +1,8 @@
 'use client';
 
 import { useAppState } from '@/hooks/useTranscodarrSocket';
-import { Film, Search, ArrowRight, CheckCircle2, HardDrive, Zap, TrendingDown, BookOpen, RefreshCw } from 'lucide-react';
+import Link from 'next/link';
+import { Film, Search, ArrowRight, CheckCircle2, HardDrive, Zap, TrendingDown, BookOpen, RefreshCw, FolderPlus } from 'lucide-react';
 import type { Job } from '@transcodarr/shared';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { BUILT_IN_RECIPES } from '@transcodarr/shared';
@@ -50,7 +51,7 @@ function ResolutionBadge({ resolution }: { resolution: string }) {
   else if (w >= 1280) { label = '720p';  color = 'bg-white/5 border-white/10 text-textMuted'; }
   else                { label = 'SD';    color = 'bg-white/5 border-white/10 text-textMuted'; }
   return (
-    <span className={`inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border ${color}`}>
+    <span className={`inline-flex items-center text-xxs font-bold px-1.5 py-0.5 rounded border ${color}`}>
       {label}
     </span>
   );
@@ -115,23 +116,23 @@ function LibraryRow({ job }: { job: Job }) {
         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
           {job.resolution && <ResolutionBadge resolution={job.resolution} />}
           {!same && (
-            <div className="flex items-center gap-1 text-[10px] font-mono">
+            <div className="flex items-center gap-1 text-xxs font-mono">
               <span className="px-1.5 py-0.5 rounded border bg-background border-border text-textMuted">{from}</span>
               <ArrowRight className="w-3 h-3 text-textMuted" />
               <span className="px-1.5 py-0.5 rounded border bg-primary/10 border-primary/20 text-primary">{to}</span>
             </div>
           )}
           {savedPct != null && savedPct > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-green-500/10 border-green-500/20 text-green-400 font-semibold">
+            <span className="text-xxs px-1.5 py-0.5 rounded border bg-green-500/10 border-green-500/20 text-green-400 font-semibold">
               −{savedPct}%
             </span>
           )}
           {savedPct != null && savedPct < 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/20 text-amber-400 font-semibold">
+            <span className="text-xxs px-1.5 py-0.5 rounded border bg-amber-500/10 border-amber-500/20 text-amber-400 font-semibold">
               +{Math.abs(savedPct)}% larger
             </span>
           )}
-          <span className="text-[10px] text-textMuted/60">{recipeName(job.recipe)}</span>
+          <span className="text-xxs text-textMuted/60">{recipeName(job.recipe)}</span>
         </div>
       </div>
 
@@ -303,12 +304,22 @@ export default function LibraryPage() {
           <p className="text-textMuted text-sm">Loading history…</p>
         </div>
       ) : (
-        <div className="p-12 bg-surface border border-dashed border-border rounded-2xl flex flex-col items-center text-center gap-3">
-          <Film className="w-10 h-10 text-textMuted/40" />
-          <div>
-            <p className="text-base font-semibold text-white mb-1">No completed jobs yet</p>
-            <p className="text-textMuted text-sm">Completed transcodes will appear here with size savings and performance stats.</p>
+        <div className="p-12 bg-surface border border-dashed border-border rounded-2xl flex flex-col items-center text-center gap-4">
+          <Film className="w-12 h-12 text-textMuted/50" aria-hidden />
+          <div className="space-y-1">
+            <p className="text-base font-semibold text-white">No completed jobs yet</p>
+            <p className="text-textMuted text-sm max-w-sm">
+              Once Transcodarr finishes processing files, they&apos;ll appear here with size savings and per-recipe performance stats.
+            </p>
           </div>
+          {/* CTA — give the user an obvious next step instead of a dead end. */}
+          <Link
+            href="/settings?tab=folders"
+            className="inline-flex items-center gap-2 mt-2 px-4 py-2 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary text-sm font-semibold transition-colors"
+          >
+            <FolderPlus className="w-4 h-4" aria-hidden />
+            Add a watched folder
+          </Link>
         </div>
       )}
     </div>

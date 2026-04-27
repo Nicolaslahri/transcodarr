@@ -5,7 +5,7 @@ import { rowToWorker } from './mappers.js';
 import { getAllSettings } from './settings-cache.js';
 import type { WorkerInfo, JobPayload, SmbMapping, ConnectionMode, LangPrefs } from '@transcodarr/shared';
 // WorkerInfo kept for getWorkers/getAcceptedWorkers return type; ConnectionMode for payload building
-import { BUILT_IN_RECIPES } from '@transcodarr/shared';
+import { BUILT_IN_RECIPES, isRecipeSupportedByWorker } from '@transcodarr/shared';
 import { randomBytes } from 'crypto';
 import path from 'path';
 import os from 'os';
@@ -45,7 +45,13 @@ function translatePath(filePath: string, mappings: SmbMapping[]): { smbPath: str
     const local = mapping.localBasePath.replace(/\\/g, path.sep);
     const normalized = filePath.replace(/\\/g, '/');
 
-    if (normalized.startsWith(base)) {
+    // Case-insensitive prefix match: SMB shares (NTFS, exFAT) and Windows
+    // workers are case-insensitive. A Linux Main matching against a Windows
+    // share where the watcher recorded "Movies/" but the mapping says "movies/"
+    // would otherwise fail and the job would be marked permanently failed.
+    // We compare lowercased versions for the prefix test, then slice using the
+    // ORIGINAL string so the resulting relative path keeps its real casing.
+    if (normalized.toLowerCase().startsWith(base.toLowerCase())) {
       const relative = normalized.slice(base.length).replace(/\//g, path.sep);
       return { smbPath: path.join(local, relative), smbBasePath: local };
     }
@@ -201,6 +207,31 @@ async function dispatchOne(): Promise<boolean> {
     catch { return []; }
   })()].find((r: any) => r.id === job.recipe);
   if (!recipe) return false;
+
+  // Encoder capability check — pre-flight before sending the job to a worker
+  // that doesn't have the required hardware (e.g. AV1 recipe to a Pi worker
+  // without av1_nvenc or libsvtav1). Try to find a different idle worker that
+  // can run this recipe; if none can, mark the job failed with a clear message
+  // so the user knows which worker(s) need attention.
+  const compat = isRecipeSupportedByWorker(recipe as any, worker.hardware as any);
+  if (!compat.ok) {
+    const fallback = idleWorkers.find(w => w.id !== worker.id && isRecipeSupportedByWorker(recipe as any, w.hardware as any).ok);
+    if (fallback) {
+      console.log(`⏭️  Skipping ${worker.name} for recipe "${recipe.name}" (${compat.reason}) — trying ${fallback.name}`);
+      worker = fallback;
+    } else {
+      console.warn(`⚠️  No worker can run recipe "${recipe.name}": ${compat.reason}`);
+      updateJobStatus(job.id, 'failed', {
+        worker_id: null,
+        callback_token: null,
+        dispatched_at: null,
+        error: `No worker can run recipe "${recipe.name}": ${compat.reason}`,
+      });
+      broadcast('job:failed', getJob(job.id));
+      broadcast('stats:update', getStats());
+      return true; // keep looping — next job may have different recipe needs
+    }
+  }
 
   const workerRow = getDb().prepare('SELECT smb_mappings, connection_mode FROM workers WHERE id = ?').get(worker.id) as any;
   const connectionMode: ConnectionMode = (workerRow?.connection_mode ?? 'smb') as ConnectionMode;

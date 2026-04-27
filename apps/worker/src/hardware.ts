@@ -76,20 +76,38 @@ async function downloadFfmpegWindows(): Promise<void> {
   await downloadFile(url, zipPath);
   console.log('  📦 Extracting...');
 
-  // Use PowerShell to extract (no extra deps)
-  execSync(`powershell -Command "Expand-Archive -Force -Path '${zipPath}' -DestinationPath '${BIN_DIR}'"`, { timeout: 60_000 });
+  // Use PowerShell with -EncodedCommand (base64) so paths with apostrophes,
+  // ampersands, semicolons, etc. cannot break out of the script context.
+  const psEncode = (script: string): string =>
+    Buffer.from(script, 'utf16le').toString('base64');
+
+  const extractScript =
+    `Expand-Archive -Force -Path ${psEscape(zipPath)} -DestinationPath ${psEscape(BIN_DIR)}`;
+  execSync(`powershell -NoProfile -NonInteractive -EncodedCommand ${psEncode(extractScript)}`, { timeout: 60_000 });
 
   // Move ffmpeg.exe / ffprobe.exe up from the nested folder
+  const ffmpegDest  = path.join(BIN_DIR, 'ffmpeg.exe');
+  const ffprobeDest = path.join(BIN_DIR, 'ffprobe.exe');
   execSync(
-    `powershell -Command "Get-ChildItem -Path '${BIN_DIR}' -Recurse -Filter 'ffmpeg.exe' | Copy-Item -Destination '${path.join(BIN_DIR, 'ffmpeg.exe')}' -Force"`,
-    { timeout: 10_000 }
+    `powershell -NoProfile -NonInteractive -EncodedCommand ${psEncode(
+      `Get-ChildItem -Path ${psEscape(BIN_DIR)} -Recurse -Filter 'ffmpeg.exe' | Copy-Item -Destination ${psEscape(ffmpegDest)} -Force`,
+    )}`,
+    { timeout: 10_000 },
   );
   execSync(
-    `powershell -Command "Get-ChildItem -Path '${BIN_DIR}' -Recurse -Filter 'ffprobe.exe' | Copy-Item -Destination '${path.join(BIN_DIR, 'ffprobe.exe')}' -Force"`,
-    { timeout: 10_000 }
+    `powershell -NoProfile -NonInteractive -EncodedCommand ${psEncode(
+      `Get-ChildItem -Path ${psEscape(BIN_DIR)} -Recurse -Filter 'ffprobe.exe' | Copy-Item -Destination ${psEscape(ffprobeDest)} -Force`,
+    )}`,
+    { timeout: 10_000 },
   );
 
   console.log('  ✅ ffmpeg installed to ./bin/\n');
+}
+
+// Escape a string as a PowerShell single-quoted literal (doubles internal quotes).
+// Used together with -EncodedCommand to neutralise apostrophes, ampersands, etc.
+function psEscape(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
 }
 
 async function downloadFfmpegLinux(): Promise<void> {
@@ -146,12 +164,19 @@ export function detectHardware(): HardwareProfile {
   // 2. Encoders
   const encOutput = runFfmpeg('-hide_banner', '-encoders');
   const gpuEncoders: string[] = [];
+  // Track which software (libx*) encoders are compiled into this ffmpeg build —
+  // some minimal/distro builds ship without libx265 or libsvtav1 and would fail
+  // with "Unknown encoder" otherwise. Surface this so the dispatcher can match
+  // recipes to capable workers.
+  const softwareEncoders: string[] = [];
   for (const line of encOutput.split('\n')) {
-    const match = line.match(/^\s*V[\w.]+\s+(\w+)\s+/);
+    const match = line.match(/^\s*V[\w.]+\s+([\w\-.]+)\s+/);
     if (!match) continue;
     const name = match[1];
     if (name.includes('nvenc') || name.includes('amf') || name.includes('qsv') || name.includes('vaapi')) {
       gpuEncoders.push(name);
+    } else if (name === 'libx264' || name === 'libx265' || name === 'libsvtav1' || name === 'libaom-av1' || name === 'libvpx-vp9') {
+      softwareEncoders.push(name);
     }
   }
 
@@ -175,7 +200,12 @@ export function detectHardware(): HardwareProfile {
     gpu = 'nvidia';
     try {
       const smiOut = execFileSync('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { encoding: 'utf8', timeout: 5000 });
-      gpuName = smiOut.trim().split('\n')[0] ?? 'NVIDIA GPU';
+      const candidate = smiOut.trim().split('\n')[0]?.trim() ?? '';
+      // Reject obvious driver-error strings — nvidia-smi can return non-zero output
+      // like "Failed to initialize NVML: Driver/library version mismatch" with exit 0
+      // when the kernel module is broken. That is NOT a GPU model.
+      const looksLikeError = /^(Failed|Error|NVIDIA-SMI has failed|Unable)/i.test(candidate);
+      gpuName = (candidate && !looksLikeError) ? candidate : 'NVIDIA GPU';
     } catch {
       gpuName = 'NVIDIA GPU';
     }
@@ -205,11 +235,17 @@ export function detectHardware(): HardwareProfile {
   };
   const filteredEncoders = gpuEncoders.filter(vendorEncoderFilter);
   const filteredDecoders = gpuDecoders.filter(vendorDecoderFilter);
+  // Merge GPU-vendor encoders + the software encoders this ffmpeg build supports.
+  // Recipes can then check `encoders.includes('libsvtav1')` before falling back
+  // and the dispatcher can refuse to assign a recipe whose required software
+  // encoder is missing on the worker's ffmpeg build.
+  const allEncoders = [...filteredEncoders, ...softwareEncoders];
 
-  const profile: HardwareProfile = { gpu, gpuName, encoders: filteredEncoders, decoders: filteredDecoders, hwaccels };
+  const profile: HardwareProfile = { gpu, gpuName, encoders: allEncoders, decoders: filteredDecoders, hwaccels };
 
   console.log(`  GPU: ${gpuName} (${gpu.toUpperCase()})`);
-  console.log(`  Encoders: ${filteredEncoders.join(', ') || 'CPU only'}`);
+  console.log(`  GPU encoders: ${filteredEncoders.join(', ') || 'none'}`);
+  console.log(`  Software encoders: ${softwareEncoders.join(', ') || 'none'}`);
 
   return profile;
 }

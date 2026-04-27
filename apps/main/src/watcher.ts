@@ -84,6 +84,22 @@ function initWatcher() {
     }, 3000));
   });
 
+  // Clear the pending debounce timer if the file is deleted/moved before its
+  // 3 s debounce fires. Without this, the timer still runs ffprobe against a
+  // path that no longer exists, logs a noisy error, and the Map entry leaks.
+  const cancelPending = (filePath: string) => {
+    const t = pendingFiles.get(filePath);
+    if (t) {
+      clearTimeout(t);
+      pendingFiles.delete(filePath);
+    }
+  };
+  sharedWatcher.on('unlink', cancelPending);
+  // Also clear on rename within a watched root — chokidar emits a unlink for the
+  // old path which we already handle, but be defensive in case of pathological
+  // file managers that emit 'change' on rename instead of unlink.
+  sharedWatcher.on('change', () => { /* keep timers — change fires during write */ });
+
   sharedWatcher.on('error', (err) => console.error('Watcher error:', err));
 }
 

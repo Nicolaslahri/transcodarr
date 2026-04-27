@@ -37,6 +37,11 @@ export async function downloadFile(
 
   await new Promise<void>((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
+    if (!url.startsWith('https')) {
+      // One-time warning so operators know transfers + auth tokens cross the LAN unencrypted.
+      // HTTPS support is on the roadmap; for now this is the deployment trade-off.
+      console.warn('[Transfer] ⚠️  Download is over HTTP — auth token visible to LAN sniffers');
+    }
     const req = client.get(url, {
       headers: { Authorization: `Bearer ${callbackToken}` },
     }, (res) => {
@@ -64,6 +69,15 @@ export async function downloadFile(
       // pipeline() properly propagates backpressure — no unbounded buffering on slow disks
       pipeline(res, progress$, dest)
         .then(() => {
+          // Integrity check: a clean TCP close mid-transfer produces a "successful" download
+          // with truncated bytes. ffmpeg would then transcode garbage. Verify byte count
+          // against Content-Length and reject if they don't match.
+          if (total > 0 && bytes !== total) {
+            // Best-effort cleanup of the partial file so it can't be used by mistake
+            try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+            reject(new Error(`Download truncated: received ${bytes} of ${total} bytes`));
+            return;
+          }
           onProgress({ bytes, total: bytes, progress: 100 });
           resolve();
         })
@@ -91,6 +105,9 @@ export async function uploadFile(
   const urlObj = new URL(url);
   const isHttps = urlObj.protocol === 'https:';
   const client = isHttps ? https : http;
+  if (!isHttps) {
+    console.warn('[Transfer] ⚠️  Upload is over HTTP — auth token visible to LAN sniffers');
+  }
 
   await new Promise<void>((resolve, reject) => {
     const reqOptions: http.RequestOptions = {

@@ -2,7 +2,7 @@ import os from 'os';
 import { nanoid } from 'nanoid';
 import { ensureFfmpeg, detectHardware } from './hardware.js';
 import { broadcastWorkerMdns, stopMdns } from './mdns.js';
-import { createWorkerServer, initWorkerServer, startGpuStatsPoller, latestGpuStats, cancelController } from './server.js';
+import { createWorkerServer, initWorkerServer, startGpuStatsPoller, stopGpuStatsPoller, latestGpuStats, cancelController } from './server.js';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
@@ -74,7 +74,7 @@ async function main() {
   broadcastWorkerMdns(WORKER_ID, WORKER_NAME, WORKER_PORT, hardware);
 
   // 5. Heartbeat every 5s — includes GPU stats so fleet page stays live even when idle
-  setInterval(async () => {
+  heartbeatTimer = setInterval(async () => {
     try {
       const body: Record<string, unknown> = {};
       if (latestGpuStats) body.gpuStats = latestGpuStats;
@@ -90,6 +90,11 @@ async function main() {
   console.log('\n🟢 Worker is ready and waiting for jobs.\n');
 }
 
+// Heartbeat handle so gracefulShutdown can stop firing requests at a Main that
+// may itself be restarting; otherwise the 3 s wait below can leak one more
+// fetch which then settles after process.exit and shows up as an error.
+let heartbeatTimer: NodeJS.Timeout | null = null;
+
 function getLocalIp(): string {
   const interfaces = os.networkInterfaces();
   for (const iface of Object.values(interfaces)) {
@@ -103,6 +108,10 @@ function getLocalIp(): string {
 async function gracefulShutdown(signal: string): Promise<void> {
   console.log(`\n[Worker] ${signal} received — shutting down gracefully`);
   stopMdns();
+  // Stop background timers before the abort wait so they don't fire one more time
+  // against a Main that may also be restarting.
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  stopGpuStatsPoller();
   // If a job is currently running, abort it and give ffmpeg 3 seconds to clean up
   if (cancelController) {
     console.log('[Worker] Aborting active job before exit…');

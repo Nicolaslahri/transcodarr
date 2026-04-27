@@ -46,7 +46,8 @@ function getFileDuration(inputPath: string): number {
 function parseProgressLine(line: string, duration: number): Partial<ProgressUpdate> | null {
   if (!line.includes('time=')) return null;
 
-  const timeMatch  = line.match(/time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
+  // \d+ for hours (not \d{2}) so >99h jobs still parse correctly
+  const timeMatch  = line.match(/time=(\d+):(\d{2}):(\d{2})\.(\d{2})/);
   const fpsMatch   = line.match(/fps=\s*([0-9.]+)/);
   // speed=1.96x → ffmpeg processes 1.96 seconds of video per real second
   const speedMatch = line.match(/speed=\s*([0-9.]+)x/);
@@ -71,6 +72,38 @@ function parseProgressLine(line: string, duration: number): Partial<ProgressUpda
   })();
 
   return { progress, fps, eta, phase: 'transcoding' };
+}
+
+// ─── ffmpeg arg sanitisation ──────────────────────────────────────────────────
+// Reject custom-recipe ffmpegArgs that try to read or write arbitrary files
+// via ffmpeg's URL-protocol / filter surface. spawn() blocks shell injection,
+// but ffmpeg itself can open `concat:`, `subfile:`, `pipe:`, `file:` etc.
+// Patterns are case-insensitive substring matches against any single arg.
+const DANGEROUS_FFMPEG_PATTERNS: string[] = [
+  'concat:',     // concat protocol can chain arbitrary files
+  'subfile:',    // raw byte-range read of any file
+  'pipe:',       // read from / write to fd
+  'file:',       // explicit file: protocol opens arbitrary paths
+  'tcp://', 'udp://', 'rtmp://', 'rtsp://', 'srt://', 'sftp://', 'ftp://', 'http://', 'https://',
+  'movie=',      // -vf movie=/path lavfi source — reads arbitrary files
+  'amovie=',     // audio variant of movie filter
+  'subfile=',    // subtitle filter file= argument
+  '-f lavfi',    // libavfilter virtual input opens arbitrary filter graphs
+];
+
+export function sanitizeFfmpegArgs(args: string[]): { ok: true } | { ok: false; reason: string } {
+  for (const arg of args) {
+    if (typeof arg !== 'string') return { ok: false, reason: 'non-string ffmpeg arg' };
+    const lower = arg.toLowerCase();
+    for (const pat of DANGEROUS_FFMPEG_PATTERNS) {
+      if (lower.includes(pat)) return { ok: false, reason: `dangerous pattern "${pat}" in arg "${arg}"` };
+    }
+    // Reject standalone -i flags inside recipe args — input is set by the worker
+    if (arg === '-i') return { ok: false, reason: 'recipe args may not contain -i (input is set by worker)' };
+    // Reject explicit output redirect — output path is set by worker
+    if (arg === '-y' || arg === '-Y') return { ok: false, reason: 'recipe args may not contain -y / -Y' };
+  }
+  return { ok: true };
 }
 
 export async function transcodeFile(
@@ -101,6 +134,25 @@ export async function transcodeFile(
   if (!fs.existsSync(inputPath)) throw new Error(`Input file not found: ${inputPath}`);
   const sizeBefore = fs.statSync(inputPath).size;
 
+  // Disk space pre-flight — refuse to start if free space < sizeBefore × 1.2
+  // (encode produces a copy alongside the source). Avoids hours of GPU time
+  // wasted only to fail at 99% with ENOSPC.
+  try {
+    const stat = (fs as any).statfsSync(dir);
+    const freeBytes = stat.bavail * stat.bsize;
+    const requiredBytes = Math.floor(sizeBefore * 1.2);
+    if (freeBytes < requiredBytes) {
+      throw new Error(
+        `Insufficient disk space at ${dir}: ${(freeBytes / 1e9).toFixed(1)} GB free, ` +
+        `need ${(requiredBytes / 1e9).toFixed(1)} GB (1.2× source size)`,
+      );
+    }
+  } catch (e: any) {
+    // statfsSync may throw on platforms/paths that don't support it — only re-throw
+    // our own preflight error, swallow the platform error so the encode still runs.
+    if (e?.message?.startsWith('Insufficient disk space')) throw e;
+  }
+
   // Clean up any stale temp file
   if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
 
@@ -108,6 +160,14 @@ export async function transcodeFile(
   // Pass recipeId and custom ffmpegArgs so CUDA incompatible recipes fall back to GPU-decode-only
   const hwDecArgs   = getHwDecodeArgs(hardware, payload.recipe.id, payload.recipe.ffmpegArgs);
   const recipeArgs  = buildFfmpegArgs(payload.recipe, hardware, payload.langPrefs);
+
+  // Validate any custom recipe args before they reach spawn() — these come from
+  // the user-editable custom_recipes settings row and could otherwise let an
+  // operator with web-UI access read arbitrary files via ffmpeg protocols.
+  if (payload.recipe.ffmpegArgs && payload.recipe.ffmpegArgs.length > 0) {
+    const check = sanitizeFfmpegArgs(payload.recipe.ffmpegArgs);
+    if (!check.ok) throw new Error(`Recipe rejected: ${check.reason}`);
+  }
 
   const ffmpegArgs = [
     '-hide_banner', '-loglevel', 'error', '-stats',
@@ -127,11 +187,14 @@ export async function transcodeFile(
     let errorLog = '';
     let cancelled = false;
 
+    let killTimer: NodeJS.Timeout | null = null;
     const onAbort = () => {
       cancelled = true;
       proc.kill('SIGTERM');
-      // Escalate to SIGKILL if SIGTERM is ignored
-      setTimeout(() => {
+      // Escalate to SIGKILL if SIGTERM is ignored. Keep the handle so we can
+      // clear it on normal exit — otherwise the timer fires after the process
+      // is gone and may target a recycled PID on Linux.
+      killTimer = setTimeout(() => {
         try { proc.kill('SIGKILL'); } catch { /* already gone */ }
       }, 5000);
     };
@@ -159,6 +222,7 @@ export async function transcodeFile(
     proc.stdout.on('data', handleData);
     proc.on('close', code => {
       if (signal) signal.removeEventListener('abort', onAbort);
+      if (killTimer) { clearTimeout(killTimer); killTimer = null; }
       if (cancelled) {
         // Clean up the partial tmp file immediately so it doesn't linger on disk
         try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* best effort */ }
@@ -178,10 +242,25 @@ export async function transcodeFile(
   onProgress({ progress: 99, phase: 'swapping' });
 
   const bakPath = inputPath + '.bak';
+  const extDiffers = inputPath !== finalPath;
+
   fs.renameSync(inputPath, bakPath);   // 1. rename original → .bak
   try {
     fs.renameSync(tmpPath, finalPath); // 2. rename tmp → final
-    fs.unlinkSync(bakPath);            // 3. delete .bak
+
+    // 3. Verify finalPath actually exists and is non-empty before destroying the backup
+    const finalStat = fs.statSync(finalPath);
+    if (finalStat.size === 0) throw new Error('Output file is empty after rename');
+
+    // 4. Delete .bak only after verifying the new file is in place. When the
+    //    extension changed (e.g. .avi → .mkv) the .bak still has the original
+    //    extension — verifying first avoids losing the only copy if the encode
+    //    silently produced a zero-byte file.
+    fs.unlinkSync(bakPath);
+
+    if (extDiffers) {
+      console.log(`[Worker] Container changed: ${path.extname(inputPath)} → ${path.extname(finalPath)} (original .bak removed after verification)`);
+    }
   } catch (swapErr) {
     // Rollback: restore original from .bak so we don't lose the source file
     try {
@@ -192,6 +271,9 @@ export async function transcodeFile(
     } catch (restoreErr) {
       console.error('[Worker] CRITICAL: swap failed AND restore failed — manual recovery needed:', restoreErr);
     }
+    // If the new file made it to disk but verification failed, delete it so we don't
+    // leave a half-baked output alongside the restored source.
+    try { if (extDiffers && fs.existsSync(finalPath)) fs.unlinkSync(finalPath); } catch { /* ignore */ }
     try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
     throw swapErr;
   }

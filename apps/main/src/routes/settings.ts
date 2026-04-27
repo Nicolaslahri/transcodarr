@@ -28,7 +28,9 @@ const CustomRecipeCreateSchema = z.object({
   ffmpegArgs:      FfmpegArgsSchema.refine(a => a.length > 0, {
     message: 'Custom recipes must have at least one ffmpeg argument.',
   }),
-  targetCodec:     z.string().min(1).max(20),
+  // Restricted to the known set so a typo can't poison `shouldSkipFile`'s
+  // substring matcher. Mirrors the constraint in shared/schemas.ts RecipeSchema.
+  targetCodec:     z.enum(['hevc', 'h265', 'h264', 'av1', 'copy', 'vp9']),
   targetContainer: z.enum(['mkv', 'mp4']).optional().default('mkv'),
   icon:            z.string().max(8).optional().default('🔧'),
   color:           z.string().max(20).optional().default('#6b7280'),
@@ -58,6 +60,12 @@ export async function settingsRoutes(app: FastifyInstance) {
       // Strict schema validation per item — also runs ffmpegArgs through the denylist
       // (concat:/subfile:/file:/movie=/-f lavfi/...). Items that fail validation are
       // dropped silently and counted as `rejected` so the user knows.
+      //
+      // We also REQUIRE non-empty ffmpegArgs for community-imported recipes:
+      // a community recipe with no args won't match any built-in switch case
+      // in `buildFfmpegArgs`, so the worker would run ffmpeg with no recipe
+      // args and silently produce a stream-copy. Rejecting at import keeps
+      // import semantics consistent with `CustomRecipeCreateSchema`.
       const valid: any[] = [];
       const rejected: { idx: number; reason: string }[] = [];
       for (let i = 0; i < data.length; i++) {
@@ -69,6 +77,10 @@ export async function settingsRoutes(app: FastifyInstance) {
         }
         if (BUILT_IN_RECIPE_IDS.has(parsed.data.id)) {
           rejected.push({ idx: i, reason: `id "${parsed.data.id}" collides with a built-in recipe` });
+          continue;
+        }
+        if (!parsed.data.ffmpegArgs || parsed.data.ffmpegArgs.length === 0) {
+          rejected.push({ idx: i, reason: `recipe "${parsed.data.id}" has no ffmpegArgs — community recipes must define their own ffmpeg arguments` });
           continue;
         }
         valid.push(parsed.data);

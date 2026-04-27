@@ -37,36 +37,72 @@ const DANGEROUS_FFMPEG_PAIRS: Array<[string, string]> = [
   ['-f', 'concat'],         // demuxer that opens lines from a playlist file
   ['-f', 'image2'],         // glob pattern can read arbitrary files
   ['-f', 'tee'],
-  ['-init_hw_device', ''],  // can target arbitrary device strings — empty 2nd matches any
 ];
 
+// Single-arg flags that are unconditionally dangerous regardless of whether
+// the next argv entry follows. `-init_hw_device` opens device strings the
+// recipe author should never get to choose; the worker injects its own.
+// Treating it as a pair-only check missed the trailing case (last arg) and
+// the no-value case.
+const DANGEROUS_FFMPEG_FLAGS = new Set([
+  '-init_hw_device',
+  '-attach',          // attaches arbitrary file as MKV attachment
+  '-dump_attachment', // extracts attachments to caller-chosen paths
+]);
+
 function ffmpegArgsAreSafe(args: string[]): boolean {
+  return ffmpegArgsCheck(args) === null;
+}
+
+/**
+ * Like ffmpegArgsAreSafe but returns the offending arg/pattern so the schema
+ * can surface a useful error message. `null` = safe.
+ */
+function ffmpegArgsCheck(args: string[]): string | null {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (typeof arg !== 'string') return false;
+    if (typeof arg !== 'string') return 'non-string ffmpeg arg';
     const lower = arg.toLowerCase();
-    if (DANGEROUS_FFMPEG_PATTERNS.some(p => lower.includes(p))) return false;
-    if (arg === '-i' || arg === '-y' || arg === '-Y') return false;
-    // Pairwise check: does (args[i], args[i+1]) match a dangerous 2-arg form?
+    for (const p of DANGEROUS_FFMPEG_PATTERNS) {
+      if (lower.includes(p)) return `dangerous pattern "${p}" in arg "${arg}"`;
+    }
+    if (arg === '-i' || arg === '-y' || arg === '-Y') return `recipe args may not contain "${arg}"`;
+    if (DANGEROUS_FFMPEG_FLAGS.has(lower)) return `dangerous flag "${arg}"`;
     if (i + 1 < args.length) {
       const next = (args[i + 1] ?? '').toLowerCase();
       for (const [a, b] of DANGEROUS_FFMPEG_PAIRS) {
-        if (lower === a && (b === '' || next === b)) return false;
+        if (lower === a && next === b) return `dangerous pair "${a} ${b}"`;
       }
     }
   }
-  return true;
+  return null;
 }
 
-const FfmpegArgsSchema = z.array(z.string().max(2000)).max(200).refine(ffmpegArgsAreSafe, {
-  message: 'Recipe args contain a disallowed pattern (URL protocol / lavfi / movie= / -i / -y / -f lavfi).',
+const FfmpegArgsSchema = z.array(z.string().max(2000)).max(200).superRefine((args, ctx) => {
+  const reason = ffmpegArgsCheck(args);
+  if (reason) {
+    // superRefine surfaces the actual offending token so the user can fix it
+    // — instead of "contains a disallowed pattern" with no context.
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Recipe args rejected: ${reason}`,
+    });
+  }
 });
+
+// Target codec must be one of a small known set. Previously `z.string().min(1)`
+// allowed any garbage string — `shouldSkipFile` then matches via substring,
+// so a recipe with `targetCodec: 'a'` would skip every file containing the
+// letter 'a' in its codec field (i.e. all of them). The aliases (`hevc`/`h265`)
+// and `copy` (for remux/audio-only recipes) are all the values BUILT_IN_RECIPES
+// uses today.
+const TARGET_CODEC_VALUES = ['hevc', 'h265', 'h264', 'av1', 'copy', 'vp9'] as const;
 
 const RecipeSchema = z.object({
   id:             z.string().min(1),
   name:           z.string().min(1),
   description:    z.string().optional().default(''),
-  targetCodec:    z.string().min(1),
+  targetCodec:    z.enum(TARGET_CODEC_VALUES),
   // Default to mkv when community-recipe JSON omits the field — historically
   // it was optional with an mkv default; making it required broke imports
   // from older community feeds.

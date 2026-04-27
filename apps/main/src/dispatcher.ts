@@ -206,7 +206,10 @@ async function dispatchOne(): Promise<boolean> {
     try { return settings.custom_recipes ? JSON.parse(settings.custom_recipes) : []; }
     catch { return []; }
   })()].find((r: any) => r.id === job.recipe);
-  if (!recipe) return false;
+  if (!recipe) {
+    console.warn(`⚠️  [Dispatcher] Job ${job.id} references recipe id "${job.recipe}" which no longer exists — skipping silently. Mark the job failed or restore the recipe.`);
+    return false;
+  }
 
   // Encoder capability check — pre-flight before sending the job to a worker
   // that doesn't have the required hardware (e.g. AV1 recipe to a Pi worker

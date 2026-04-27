@@ -435,6 +435,10 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
 
     await sendProgress(100, undefined, undefined, 'swapping', true);
 
+    // 30 s timeout — Main does the atomic file swap synchronously inside this
+    // request, which can take a few seconds on slow disks. Long enough to
+    // accommodate that, short enough that a wedged Main can't keep the worker
+    // stuck inside the success path forever.
     await fetch(completeUrl, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${payload.callbackToken}` },
@@ -446,16 +450,29 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
         sizeBefore:    result.sizeBefore,
         sizeAfter:     result.sizeAfter,
       }),
+      signal:  AbortSignal.timeout(30_000),
+    }).catch(err => {
+      console.error(`⚠️  [SMB] Failed to notify Main of completion: ${err.message}`);
     });
 
     const saved = Math.round((result.sizeBefore - result.sizeAfter) / 1e6);
     console.log(`✅ [SMB] Done! Saved ${saved} MB (${result.sizeBefore} → ${result.sizeAfter} bytes)`);
   } catch (err: any) {
     process.stdout.write('\n');
+    // CRITICAL: timeout + .catch on this fetch.
+    // Symptom this prevents: a hung fetch (Main slow / restarting / behind a
+    // stalled proxy) used to leave the worker stuck inside this catch block
+    // forever, never reaching the finally that clears `currentJob`. After
+    // that every new dispatch returned 409 "Worker already busy"; Main
+    // marked the worker offline after 3 retries; resume from paused stalled
+    // silently because no idle workers existed.
     await fetch(completeUrl, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${payload.callbackToken}` },
       body:    JSON.stringify({ workerId, callbackToken: payload.callbackToken, success: false, error: err.message }),
+      signal:  AbortSignal.timeout(10_000),
+    }).catch(notifyErr => {
+      console.error(`⚠️  [SMB] Failed to notify Main of cancellation: ${notifyErr.message}`);
     });
     console.error(`❌ [SMB] Transcoding failed: ${err.message}`);
   } finally {

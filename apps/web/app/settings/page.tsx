@@ -12,6 +12,7 @@ import {
 import type { Recipe } from '@transcodarr/shared';
 import type { WorkerInfo, SmbMapping, ConnectionMode } from '@transcodarr/shared';
 import { useAppState } from '@/hooks/useTranscodarrSocket';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { FileExplorerModal } from '@/components/FileExplorerModal';
 import { RecipePickerModal } from '@/components/RecipePickerModal';
 
@@ -59,19 +60,35 @@ export default function SettingsPage() {
         </p>
       </header>
 
-      {/* Tab bar — scrollable on mobile */}
-      <div className="flex gap-1 bg-surface p-1 rounded-xl border border-border overflow-x-auto scrollbar-none">
-        {tabs.map(({ id, icon: Icon, label }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium transition-all duration-150 whitespace-nowrap shrink-0
-              ${tab === id ? 'bg-background text-white shadow-sm' : 'text-textMuted hover:text-white'}`}
-          >
-            <Icon className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" />
-            {label}
-          </button>
-        ))}
+      {/* Tab bar — scrollable on mobile.
+          The right-edge gradient is a scroll cue so users on narrow viewports
+          realise more tabs (Notifications, Transfer) exist past the visible
+          ones. Without this, the tabs appeared truncated with no affordance. */}
+      <div className="relative">
+        <div
+          className="flex gap-1 bg-surface p-1 rounded-xl border border-border overflow-x-auto scrollbar-none"
+          role="tablist"
+          aria-label="Settings sections"
+        >
+          {tabs.map(({ id, icon: Icon, label }) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
+              className={`flex items-center gap-1.5 md:gap-2 px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium transition-all duration-150 whitespace-nowrap shrink-0
+                ${tab === id ? 'bg-background text-white shadow-sm' : 'text-textMuted hover:text-white'}`}
+            >
+              <Icon className="w-3.5 h-3.5 md:w-4 md:h-4 shrink-0" aria-hidden />
+              {label}
+            </button>
+          ))}
+        </div>
+        {/* Right-edge fade — visible only on mobile where the tab list scrolls. */}
+        <div
+          className="md:hidden pointer-events-none absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-background to-transparent rounded-r-xl"
+          aria-hidden
+        />
       </div>
 
       {/* Panels */}
@@ -116,18 +133,31 @@ function FsBrowser({
   result: FsResult | null; onNavigate: (p: string) => void;
   onSelect: (p: string) => void; title: string; hint: string;
 }) {
+  // useEscapeKey closes the dialog on Esc — keyboard users expect this and
+  // the audit flagged its absence as a WCAG 2.1.2 issue.
+  useEscapeKey(open, onClose);
   if (!open) return null;
   return (
-    <div className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div role="dialog" aria-modal="true" aria-label={title} className="modal-content bg-surface border border-border w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+    <div
+      className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+      aria-hidden
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={e => e.stopPropagation()}
+        className="modal-content bg-surface border border-border w-full max-w-lg rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+      >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-          <FolderOpen className="w-4 h-4 text-primary shrink-0" />
+          <FolderOpen className="w-4 h-4 text-primary shrink-0" aria-hidden />
           <div className="flex-1 min-w-0">
             <p className="text-white font-semibold text-sm">{title}</p>
             <p className="text-textMuted text-xs truncate">{result?.current || '/'}</p>
           </div>
-          <button onClick={onClose} aria-label="Close dialog" className="text-textMuted hover:text-white transition-colors">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} aria-label="Close dialog" className="text-textMuted hover:text-white transition-colors p-1 rounded">
+            <X className="w-5 h-5" aria-hidden />
           </button>
         </div>
         <div className="flex items-start gap-2 px-5 py-3 bg-primary/5 border-b border-primary/10">
@@ -226,6 +256,10 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [moveToExplorerOpen, setMoveToExplorerOpen] = useState(false);
   const [recipePickerOpen, setRecipePickerOpen] = useState(false);
+
+  // Esc closes the add/edit modal — keyboard users expect this and the audit
+  // flagged its absence on every modal in the app.
+  useEscapeKey(adding, () => { setAdding(false); setEditingId(null); });
   const [form, setForm]       = useState({ ...BLANK_FORM });
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [allRecipes, setAllRecipes] = useState<Recipe[]>([]);
@@ -537,8 +571,18 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
 
       {/* Add / Edit modal */}
       {adding && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200">
-          <div className="bg-surface border border-border rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200">
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
+          onClick={closeForm}
+          aria-hidden
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={editingId ? 'Edit watched folder' : 'Add watched folder'}
+            onClick={e => e.stopPropagation()}
+            className="bg-surface border border-border rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200"
+          >
             {/* Modal header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
               <h3 className="text-white font-bold">{editingId ? 'Edit Watched Folder' : 'Add Watched Folder'}</h3>
@@ -550,9 +594,10 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
             {/* Scrollable form body */}
             <div className="overflow-y-auto flex-1 p-6 space-y-4">
               <div>
-                <label className="text-xs text-textMuted font-medium mb-1.5 block">Folder Path</label>
+                <label htmlFor="watched-folder-path" className="text-xs text-textMuted font-medium mb-1.5 block">Folder Path</label>
                 <div className="flex gap-2">
                   <input
+                    id="watched-folder-path"
                     value={form.path}
                     onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
                     placeholder="/data/media/movies"
@@ -604,7 +649,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
                       onClick={() => { setSelectedRecipe(suggestion); setForm(f => ({ ...f, recipe: suggestion.id })); }}
                       className="mt-1.5 flex items-center gap-1.5 text-xs text-primary/70 hover:text-primary transition-colors"
                     >
-                      <span className="text-[10px]">{suggestion.icon}</span>
+                      <span className="text-xxs">{suggestion.icon}</span>
                       Suggested: {suggestion.name}
                       <span className="text-textMuted/60">— tap to apply</span>
                     </button>
@@ -913,10 +958,14 @@ function FilterRow({ title, description, enabled, onToggle, children }: {
           {enabled && children && <div>{children}</div>}
         </div>
         <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          aria-label={title}
           onClick={() => onToggle(!enabled)}
           className={`shrink-0 w-10 h-6 rounded-full transition-colors relative ${enabled ? 'bg-primary' : 'bg-border'}`}
         >
-          <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-200 ${enabled ? 'left-5' : 'left-1'}`} />
+          <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-200 ${enabled ? 'left-5' : 'left-1'}`} aria-hidden />
         </button>
       </div>
     </div>
@@ -1047,6 +1096,8 @@ function ImportRecipeModal({ open, onClose, onSuccess, apiUrl }: { open: boolean
   const [success, setSuccess] = useState('');
 
   useEffect(() => { if (!open) { setUrl(''); setError(''); setSuccess(''); } }, [open]);
+  // Esc closes the import dialog (audit fix #7).
+  useEscapeKey(open, onClose);
 
   const handleImport = async () => {
     if (!url.trim()) return;
@@ -1069,12 +1120,22 @@ function ImportRecipeModal({ open, onClose, onSuccess, apiUrl }: { open: boolean
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200">
-      <div className="bg-surface border border-border rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
+    <div
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
+      onClick={onClose}
+      aria-hidden
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Import community recipe"
+        onClick={e => e.stopPropagation()}
+        className="bg-surface border border-border rounded-2xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200"
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="text-white font-bold">Import Community Recipe</h2>
-          <button onClick={onClose} className="text-textMuted hover:text-white transition-colors">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} aria-label="Close dialog" className="text-textMuted hover:text-white transition-colors p-1 rounded">
+            <X className="w-5 h-5" aria-hidden />
           </button>
         </div>
         <div className="p-6 space-y-4">
@@ -1136,7 +1197,7 @@ function RecipeCard({ recipe, community, onDelete, stats, onFork }: {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-white font-bold text-sm">{recipe.name}</h3>
-            {community && <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-purple-900/30 text-purple-400 border border-purple-500/20">Community</span>}
+            {community && <span className="px-1.5 py-0.5 text-xxs font-bold rounded bg-purple-900/30 text-purple-400 border border-purple-500/20">Community</span>}
           </div>
           <p className="text-textMuted text-xs mt-0.5">{recipe.description}</p>
         </div>
@@ -1163,7 +1224,7 @@ function RecipeCard({ recipe, community, onDelete, stats, onFork }: {
             {showArgs ? 'Hide' : 'Show'} ffmpeg args ({recipe.ffmpegArgs!.length})
           </button>
           {showArgs && (
-            <div className="mt-2 p-3 bg-background rounded-lg font-mono text-[10px] text-textMuted/80 leading-relaxed break-all">
+            <div className="mt-2 p-3 bg-background rounded-lg font-mono text-xxs text-textMuted/80 leading-relaxed break-all">
               {recipe.ffmpegArgs!.join(' ')}
             </div>
           )}
@@ -1199,6 +1260,8 @@ function CustomRecipeModal({ open, onClose, onSuccess, apiUrl, initial }: {
   const [form, setForm] = useState({ name: '', description: '', icon: '⚙️', targetCodec: 'hevc', targetContainer: 'mkv', ffmpegArgs: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Esc closes the modal (audit fix #7).
+  useEscapeKey(open, onClose);
 
   useEffect(() => {
     if (!open) { setError(''); return; }
@@ -1546,7 +1609,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
               <div key={i} className="bg-background border border-border rounded-xl p-4 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
+                    <label className="text-xxs font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
                       Main Node root path
                     </label>
                     <div className="flex gap-1.5">
@@ -1566,7 +1629,7 @@ function WorkerTransferCard({ worker, apiUrl }: { worker: WorkerInfo; apiUrl: st
                     </div>
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
+                    <label className="text-xxs font-bold uppercase tracking-wider text-textMuted mb-1.5 block">
                       Worker sees it as
                     </label>
                     <div className="flex gap-1.5">
@@ -1766,10 +1829,14 @@ function GeneralPanel() {
           <div className="flex items-center justify-between bg-background border border-border rounded-xl px-4 py-3">
             <span className="text-sm text-textMuted">Automatically trust new workers on your network</span>
             <button
+              type="button"
+              role="switch"
+              aria-checked={settings.autoAcceptWorkers === 'true'}
+              aria-label="Auto-accept new workers"
               onClick={() => setSettings(s => ({ ...s, autoAcceptWorkers: s.autoAcceptWorkers === 'true' ? 'false' : 'true' }))}
               className={`shrink-0 w-10 h-6 rounded-full transition-colors relative ${settings.autoAcceptWorkers === 'true' ? 'bg-primary' : 'bg-border'}`}
             >
-              <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settings.autoAcceptWorkers === 'true' ? 'left-5' : 'left-1'}`} />
+              <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settings.autoAcceptWorkers === 'true' ? 'left-5' : 'left-1'}`} aria-hidden />
             </button>
           </div>
         </Field>
@@ -1904,11 +1971,16 @@ function GeneralPanel() {
       </div>
 
       <div className="space-y-3">
+        {/* The disclosure used to be a near-invisible textMuted link — bumped
+            to amber so the destructive section is actually findable. */}
         <button
+          type="button"
           onClick={() => setShowDangerZone(s => !s)}
-          className="flex items-center gap-2 text-sm text-textMuted hover:text-white transition-colors"
+          aria-expanded={showDangerZone}
+          className="flex items-center gap-2 text-sm font-semibold text-amber-400/80 hover:text-amber-300 transition-colors"
         >
-          <ChevronDown className={`w-4 h-4 transition-transform ${showDangerZone ? 'rotate-180' : ''}`} />
+          <AlertTriangle className="w-4 h-4" aria-hidden />
+          <ChevronDown className={`w-4 h-4 transition-transform ${showDangerZone ? 'rotate-180' : ''}`} aria-hidden />
           {showDangerZone ? 'Hide danger zone' : 'Show danger zone'}
         </button>
         {showDangerZone && (
@@ -2057,11 +2129,11 @@ function NotificationsPanel({ apiUrl }: { apiUrl: string }) {
                                        : e === 'job:failed'   ? 'bg-red-900/20 border-red-500/25 text-red-400'
                                        : e === 'job:queued'   ? 'bg-sky-900/20 border-sky-500/25 text-sky-400'
                                        : 'bg-surface border-border text-textMuted';
-                        return <span key={e} className={`px-1.5 py-0.5 text-[10px] rounded border ${tagStyle}`}>{e}</span>;
+                        return <span key={e} className={`px-1.5 py-0.5 text-xxs rounded border ${tagStyle}`}>{e}</span>;
                       })}
                     </div>
                     {(hook.last_fired ?? 0) > 0 && (
-                      <p className="text-[10px] text-textMuted/50 mt-1.5 flex items-center gap-1.5">
+                      <p className="text-xxs text-textMuted/50 mt-1.5 flex items-center gap-1.5">
                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${hook.last_delivery_ok === 1 ? 'bg-green-400' : 'bg-red-400'}`} />
                         {hook.last_delivery_ok === 1 ? 'Delivered' : 'Failed'} · {relativeTime(hook.last_fired!)}
                       </p>

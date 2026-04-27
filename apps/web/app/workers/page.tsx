@@ -2,6 +2,7 @@
 
 import { useAppState } from '@/hooks/useTranscodarrSocket';
 import { useToast } from '@/hooks/useToast';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import {
   CheckCircle2, Cpu, Server, ShieldAlert, X, Plus, Trash2,
   Zap, Download, Upload, Settings2, Wifi, HardDrive, AlertTriangle,
@@ -31,11 +32,18 @@ function PhaseProgressBar({
       <div className="mt-3">
         <div className="flex items-center justify-between mb-1">
           <span className="text-xs text-primary font-medium flex items-center gap-1">
-            <Zap className="w-3 h-3" /> Transcoding
+            <Zap className="w-3 h-3" aria-hidden /> Transcoding
           </span>
           <span className="text-xs text-textMuted">{progress}%</span>
         </div>
-        <div className="h-1.5 bg-background rounded-full overflow-hidden">
+        <div
+          className="h-1.5 bg-background rounded-full overflow-hidden"
+          role="progressbar"
+          aria-valuenow={progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`Transcoding progress`}
+        >
           <div className="h-full bg-primary transition-all duration-500 ease-out" style={{ width: `${progress}%` }} />
         </div>
       </div>
@@ -61,11 +69,11 @@ function PhaseProgressBar({
             </div>
             <div className="flex-1">
               <div className="flex items-center justify-between mb-0.5">
-                <span className={`text-[10px] font-bold uppercase tracking-wide
+                <span className={`text-xxs font-bold uppercase tracking-wide
                   ${isDone ? 'text-green-400' : isActive ? 'text-primary' : 'text-textMuted/40'}`}>
                   {p.label}
                 </span>
-                {isActive && <span className="text-[10px] text-textMuted">{progress}%</span>}
+                {isActive && <span className="text-xxs text-textMuted">{progress}%</span>}
               </div>
               <div className="h-1 bg-background rounded-full overflow-hidden">
                 <div
@@ -88,6 +96,8 @@ export default function WorkersPage() {
   const { workers, acceptWorker, rejectWorker, apiUrl } = useAppState();
   const { addToast } = useToast();
   const [addModalOpen, setAddModalOpen] = useState(false);
+  // Esc closes the add-worker modal (audit fix #7).
+  useEscapeKey(addModalOpen, () => setAddModalOpen(false));
 
   const pendingWorkers = workers.filter(w => w.status === 'pending');
   const activeWorkers  = workers.filter(w => w.status !== 'pending');
@@ -175,8 +185,18 @@ export default function WorkersPage() {
 
       {/* Add Worker Modal */}
       {addModalOpen && (
-        <div className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div role="dialog" aria-modal="true" aria-labelledby="add-worker-title" className="modal-content bg-surface border border-border w-full max-w-md rounded-2xl p-6 shadow-2xl relative">
+        <div
+          className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setAddModalOpen(false)}
+          aria-hidden
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-worker-title"
+            onClick={e => e.stopPropagation()}
+            className="modal-content bg-surface border border-border w-full max-w-md rounded-2xl p-6 shadow-2xl relative"
+          >
             <button onClick={() => setAddModalOpen(false)} aria-label="Close dialog" className="absolute top-4 right-4 text-textMuted hover:text-white">
               <X className="w-5 h-5" />
             </button>
@@ -235,6 +255,9 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
   const isPending  = worker.status === 'pending';
   const isActive   = worker.status === 'active';
   const isOffline  = worker.status === 'offline';
+  // Inline two-step confirm — replaces the native confirm() dialog which the
+  // audit flagged as inconsistent with the rest of the app and inaccessible.
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   return (
     <div className={`card-hover relative overflow-hidden bg-surface border rounded-2xl
@@ -242,7 +265,14 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
     >
       {/* Active job progress — top stripe */}
       {isActive && (
-        <div className="absolute top-0 left-0 w-full h-0.5 bg-border overflow-hidden">
+        <div
+          className="absolute top-0 left-0 w-full h-0.5 bg-border overflow-hidden"
+          role="progressbar"
+          aria-valuenow={worker.currentProgress ?? 0}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`${worker.name} active job progress`}
+        >
           <div className="h-full bg-primary transition-all duration-500" style={{ width: `${worker.currentProgress ?? 0}%` }} />
         </div>
       )}
@@ -328,21 +358,43 @@ function WorkerCard({ worker, apiUrl, onAccept, onReject }: {
         )}
 
         {/* Active worker footer */}
-        {!isPending && (
+        {!isPending && !confirmingRemove && (
           <div className="flex gap-2 mt-4 pt-4 border-t border-border items-center justify-between">
             <Link
               href="/settings?tab=transfer"
               className="flex items-center gap-1.5 text-xs text-textMuted hover:text-primary transition-colors"
             >
-              <Settings2 className="w-3.5 h-3.5" />
+              <Settings2 className="w-3.5 h-3.5" aria-hidden />
               Connection Settings
             </Link>
             <button
-              onClick={() => { if (confirm('Remove this worker from the fleet?')) onReject(worker.id); }}
-              aria-label="Remove worker"
-              className="text-textMuted hover:text-red-400 transition-colors p-1"
+              type="button"
+              onClick={() => setConfirmingRemove(true)}
+              aria-label={`Remove worker ${worker.name}`}
+              className="text-textMuted hover:text-red-400 transition-colors p-2 rounded-lg"
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="w-4 h-4" aria-hidden />
+            </button>
+          </div>
+        )}
+        {/* Inline confirm row — appears in place of the footer when remove
+            is pending. Two visible buttons replace the modal confirm dialog. */}
+        {!isPending && confirmingRemove && (
+          <div className="flex gap-2 mt-4 pt-4 border-t border-red-500/30 items-center" role="alert">
+            <span className="text-xs text-textMuted flex-1">Remove {worker.name} from the fleet?</span>
+            <button
+              type="button"
+              onClick={() => setConfirmingRemove(false)}
+              className="px-3 py-1.5 text-xs text-textMuted hover:text-white rounded-lg border border-border transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => { setConfirmingRemove(false); onReject(worker.id); }}
+              className="px-3 py-1.5 text-xs font-semibold text-white bg-red-500 hover:bg-red-400 rounded-lg transition-colors"
+            >
+              Remove
             </button>
           </div>
         )}
@@ -388,7 +440,7 @@ function EncoderBadge({ type }: { type: keyof typeof ENCODER_CONFIG }) {
   return (
     <span
       title={c.desc}
-      className={`px-2 py-0.5 ${c.bg} ${c.text} text-[11px] font-bold rounded-md border ${c.border} flex items-center gap-1`}
+      className={`px-2 py-0.5 ${c.bg} ${c.text} text-xxs font-bold rounded-md border ${c.border} flex items-center gap-1`}
     >
       <c.Icon />
       {c.label}
@@ -407,28 +459,42 @@ function GpuStatsBar({ stats }: { stats: GpuStats }) {
     <div className="mt-2 p-2.5 bg-background/60 rounded-lg border border-border/40 space-y-1.5">
       {/* GPU utilisation */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-textMuted w-12 shrink-0">GPU</span>
-        <div className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden">
+        <span className="text-xxs text-textMuted w-12 shrink-0">GPU</span>
+        <div
+          className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden"
+          role="progressbar"
+          aria-valuenow={stats.utilPct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`GPU utilisation ${stats.utilPct}%`}
+        >
           <div className={`h-full rounded-full transition-all duration-500 ${utilColor}`} style={{ width: `${stats.utilPct}%` }} />
         </div>
-        <span className="text-[10px] text-textMuted w-8 text-right">{stats.utilPct}%</span>
+        <span className="text-xxs text-textMuted w-8 text-right">{stats.utilPct}%</span>
       </div>
       {/* VRAM */}
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-textMuted w-12 shrink-0 flex items-center gap-1">
-          <MemoryStick className="w-2.5 h-2.5" /> VRAM
+        <span className="text-xxs text-textMuted w-12 shrink-0 flex items-center gap-1">
+          <MemoryStick className="w-2.5 h-2.5" aria-hidden /> VRAM
         </span>
-        <div className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden">
+        <div
+          className="flex-1 h-1 bg-border/40 rounded-full overflow-hidden"
+          role="progressbar"
+          aria-valuenow={vramPct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label={`VRAM ${vramPct}% used`}
+        >
           <div className="h-full rounded-full bg-sky-500 transition-all duration-500" style={{ width: `${vramPct}%` }} />
         </div>
-        <span className="text-[10px] text-textMuted w-8 text-right">
+        <span className="text-xxs text-textMuted w-8 text-right">
           {stats.vramUsedMB >= 1024 ? `${(stats.vramUsedMB / 1024).toFixed(1)}G` : `${stats.vramUsedMB}M`}
         </span>
       </div>
       {/* Temperature */}
       <div className="flex items-center justify-end gap-1">
-        <Thermometer className={`w-3 h-3 ${tempColor}`} />
-        <span className={`text-[10px] font-medium ${tempColor}`}>{stats.tempC}°C</span>
+        <Thermometer className={`w-3 h-3 ${tempColor}`} aria-hidden />
+        <span className={`text-xxs font-medium ${tempColor}`}>{stats.tempC}°C</span>
       </div>
     </div>
   );

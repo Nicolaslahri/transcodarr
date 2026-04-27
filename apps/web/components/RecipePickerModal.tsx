@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { X, ChevronRight, ExternalLink, Check, Download, Trash2, Loader2 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 interface Props {
   open: boolean;
@@ -16,12 +17,12 @@ interface Props {
 function ReductionBadge({ pct }: { pct?: number }) {
   if (pct === undefined || pct === null) return null;
   if (pct === 0) return (
-    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-background border border-border text-textMuted">
+    <span className="px-2 py-0.5 rounded text-xxs font-bold bg-background border border-border text-textMuted">
       No re-encode
     </span>
   );
   return (
-    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-900/30 border border-green-500/20 text-green-400">
+    <span className="px-2 py-0.5 rounded text-xxs font-bold bg-green-900/30 border border-green-500/20 text-green-400">
       ~{pct}% smaller
     </span>
   );
@@ -43,6 +44,9 @@ export function RecipePickerModal({ open, onClose, onSelect, selectedId, apiUrl 
   };
 
   useEffect(() => { if (open) { load(); setHovered(null); setImportError(''); setShowImport(false); } }, [open]);
+  // Keyboard users expect Esc to close any modal — without this they'd have
+  // to Tab through the entire recipe grid to reach the close button.
+  useEscapeKey(open, onClose);
 
   const handleImport = async () => {
     if (!importUrl.trim()) return;
@@ -77,11 +81,12 @@ export function RecipePickerModal({ open, onClose, onSelect, selectedId, apiUrl 
   const community = recipes.filter(r =>  r.sourceUrl);
 
   return (
-    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} aria-hidden>
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Choose a recipe"
+        onClick={e => e.stopPropagation()}
         className="bg-surface border border-border w-full max-w-4xl rounded-2xl shadow-2xl flex flex-col overflow-hidden"
         style={{ maxHeight: 'min(85vh, 720px)', minHeight: '400px' }}
       >
@@ -99,7 +104,7 @@ export function RecipePickerModal({ open, onClose, onSelect, selectedId, apiUrl 
           <div className="w-72 shrink-0 border-r border-border overflow-y-auto flex flex-col">
             {/* Built-in */}
             <div className="px-3 pt-4 pb-1">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-textMuted px-2 mb-2">Built-in</p>
+              <p className="text-xxs font-bold uppercase tracking-widest text-textMuted px-2 mb-2">Built-in</p>
               {builtIn.map(r => (
                 <RecipeListItem
                   key={r.id}
@@ -115,7 +120,7 @@ export function RecipePickerModal({ open, onClose, onSelect, selectedId, apiUrl 
             {/* Community */}
             {community.length > 0 && (
               <div className="px-3 pt-3 pb-1">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-textMuted px-2 mb-2">Community</p>
+                <p className="text-xxs font-bold uppercase tracking-widest text-textMuted px-2 mb-2">Community</p>
                 {community.map(r => (
                   <RecipeListItem
                     key={r.id}
@@ -186,7 +191,7 @@ export function RecipePickerModal({ open, onClose, onSelect, selectedId, apiUrl 
                     <div className="flex items-center gap-3 flex-wrap mb-1">
                       <h3 className="text-2xl font-black text-white">{detail.name}</h3>
                       {detail.sourceUrl && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-900/30 text-purple-400 border border-purple-500/20">
+                        <span className="px-2 py-0.5 rounded text-xxs font-bold bg-purple-900/30 text-purple-400 border border-purple-500/20">
                           Community
                         </span>
                       )}
@@ -275,7 +280,7 @@ function RecipeListItem({ recipe, selected, hovered, onHover, onClick, onRemove 
       <div className="flex-1 min-w-0">
         <p className={`text-sm font-medium truncate ${selected ? 'text-white' : 'text-white/80'}`}>{recipe.name}</p>
         {recipe.estimatedReduction !== undefined && recipe.estimatedReduction > 0 && (
-          <p className="text-[10px] text-textMuted">{recipe.estimatedReduction}% smaller</p>
+          <p className="text-xxs text-textMuted">{recipe.estimatedReduction}% smaller</p>
         )}
       </div>
       <div className="flex items-center gap-1 shrink-0">
@@ -298,7 +303,7 @@ function RecipeListItem({ recipe, selected, hovered, onHover, onClick, onRemove 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-background border border-border rounded-xl p-4">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-textMuted mb-1">{label}</p>
+      <p className="text-xxs font-bold uppercase tracking-widest text-textMuted mb-1">{label}</p>
       <p className="text-white font-bold text-sm">{value}</p>
     </div>
   );

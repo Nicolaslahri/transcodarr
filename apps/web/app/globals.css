@@ -13,6 +13,47 @@ body {
   font-feature-settings: "rlig" 1, "calt" 1;
 }
 
+/* ─── Global focus ring ──────────────────────────────────────────────────────
+   Many components use `focus:outline-none` to suppress the browser default.
+   Without a replacement, keyboard users have no visible focus indicator and
+   the UI fails WCAG 2.4.7. We add a clear cyan ring on every focus-visible
+   element (mouse clicks don't trigger :focus-visible, so this only shows for
+   keyboard / programmatic focus). */
+*:focus { outline: none; } /* suppress default — browsers vary */
+*:focus-visible {
+  outline: 2px solid #00d9ff;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* sr-only — screen-reader-only text. Used to label icon-only buttons and
+   announce status changes to AT users without affecting the visual layout. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* ─── Respect prefers-reduced-motion ─────────────────────────────────────────
+   Vestibular users get assaulted by infinite-loop glows, count-up tweens, and
+   stagger animations. Disable all CSS-driven motion when the user opts out.
+   GSAP is JS-driven and ignores this; the dashboards check
+   `window.matchMedia('(prefers-reduced-motion: reduce)')` separately. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ─── Scrollbar ──────────────────────────────────────────────────────────────*/
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -53,6 +53,10 @@ export function startGpuStatsPoller(): void {
 
 export function stopGpuStatsPoller(): void {
   if (gpuStatsTimer) { clearInterval(gpuStatsTimer); gpuStatsTimer = null; }
+  // Wipe the cached value so any in-flight progress callback that fires
+  // between `stopGpuStatsPoller()` and `process.exit()` doesn't broadcast
+  // stale stats with a `latestGpuStats` reference from before shutdown.
+  latestGpuStats = null;
 }
 
 export function initWorkerServer(hw: HardwareProfile, wid: string, mUrl: string) {
@@ -271,6 +275,11 @@ export async function createWorkerServer(port: number) {
 // ─── Background pipeline ──────────────────────────────────────────────────────
 
 async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireless'): Promise<void> {
+  // Outer try/finally guards against ANY synchronous throw before we reach
+  // the per-branch try/catch (e.g. mainUrl invalid → URL throws). Without
+  // this, currentJob/cancelController stay set and the worker is permanently
+  // stuck in "Worker already busy" until restart.
+  try {
   // Always use the worker's own mainUrl (user-configured) as the callback base.
   // Main may be running in Docker and can only see its container-internal IPs, so
   // payload.mainHost / the URLs embedded in the payload may contain 127.0.0.1 or a
@@ -442,6 +451,14 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
     });
     console.error(`❌ [SMB] Transcoding failed: ${err.message}`);
   } finally {
+    currentJob = null;
+    cancelController = null;
+  }
+  } finally {
+    // Outer safety net — guarantees currentJob/cancelController reset even
+    // when the body throws synchronously before reaching either branch.
+    // Per-branch finally blocks already do this on the happy paths, but a
+    // throw from `mainUrl.replace` / `new URL(...)` would otherwise skip them.
     currentJob = null;
     cancelController = null;
   }

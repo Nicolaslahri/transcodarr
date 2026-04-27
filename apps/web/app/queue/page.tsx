@@ -331,15 +331,14 @@ export default function QueuePage() {
       {/* Quick-add file modal */}
       {quickAddOpen && (
         <div
+          // No backdrop-click-close — this is a form. Close via Esc / X button.
           className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
-          onClick={() => setQuickAddOpen(false)}
           aria-hidden
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="quick-add-title"
-            onClick={e => e.stopPropagation()}
             className="bg-surface border border-border rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200"
           >
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
@@ -658,7 +657,19 @@ function JobRow({
   // without waiting for the WS event to arrive (fixes race condition).
   const [overrideStatus, setOverrideStatus] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState('');
-  useEffect(() => { setOverrideStatus(null); }, [job.status]);
+  // Two-step confirm for "stop transcoding and remove" — clicking the trash
+  // icon while a job is active used to silently destroy 40 minutes of GPU
+  // work with no recovery. First click flips this flag; the icon swaps to a
+  // visible "Stop?" button; second click within 4 seconds actually does it.
+  const [confirmingStop, setConfirmingStop] = useState(false);
+  useEffect(() => { setOverrideStatus(null); setConfirmingStop(false); }, [job.status]);
+  // Auto-cancel the confirm prompt after 4s so the row doesn't stay in a
+  // half-confirmed state forever.
+  useEffect(() => {
+    if (!confirmingStop) return;
+    const t = setTimeout(() => setConfirmingStop(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirmingStop]);
   const displayStatus = overrideStatus ?? job.status;
 
   // job.phase may still be 'transcoding' from the WS event if it wasn't cleared yet —
@@ -870,20 +881,34 @@ function JobRow({
               >
                 <PauseCircle className="w-4 h-4" aria-hidden />
               </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  // Pause first so the worker stops, then immediately remove.
-                  setOverrideStatus('paused');
-                  await onCancel().catch(() => {});
-                  await onRemove();
-                }}
-                title="Stop and remove — cancels transcoding and deletes the job"
-                aria-label={`Stop and remove ${job.fileName}`}
-                className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" aria-hidden />
-              </button>
+              {confirmingStop ? (
+                // Two-step confirm — second click destroys in-flight work.
+                // Auto-cancels after 4s so we don't leave a stuck UI state.
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setConfirmingStop(false);
+                    setOverrideStatus('paused');
+                    await onCancel().catch(() => {});
+                    await onRemove();
+                  }}
+                  aria-label={`Confirm stop and remove ${job.fileName}`}
+                  className="px-2 py-1 rounded-lg bg-red-500 hover:bg-red-400 text-white text-xs font-semibold transition-colors flex items-center gap-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" aria-hidden />
+                  Stop?
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingStop(true)}
+                  title="Stop and remove — cancels transcoding and deletes the job"
+                  aria-label={`Stop and remove ${job.fileName}`}
+                  className="p-2 hover:bg-background rounded-lg text-textMuted hover:text-red-400 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" aria-hidden />
+                </button>
+              )}
             </div>
           ) : isPaused ? (
             <div className="flex items-center gap-1">
@@ -944,7 +969,7 @@ function JobRow({
           ) : (
             timelineEvents.map(e => (
               <div key={e.id} className="flex items-center gap-2 text-xs">
-                <span className="text-textMuted/50 tabular-nums w-20 shrink-0 font-mono">
+                <span className="text-textMuted/80 tabular-nums w-20 shrink-0 font-mono">
                   {new Date(e.createdAt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </span>
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
@@ -952,9 +977,9 @@ function JobRow({
                   e.event === 'failed'   ? 'bg-red-400' :
                   e.event === 'paused'   ? 'bg-amber-400' :
                   'bg-primary/60'
-                }`} />
+                }`} aria-hidden />
                 <span className="text-textMuted">{EVENT_LABEL[e.event] ?? e.event}</span>
-                {e.workerName && <span className="text-textMuted/50">via {e.workerName}</span>}
+                {e.workerName && <span className="text-textMuted/80">via {e.workerName}</span>}
               </div>
             ))
           )}

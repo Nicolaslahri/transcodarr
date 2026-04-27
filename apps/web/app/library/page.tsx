@@ -132,7 +132,7 @@ function LibraryRow({ job }: { job: Job }) {
               +{Math.abs(savedPct)}% larger
             </span>
           )}
-          <span className="text-xxs text-textMuted/60">{recipeName(job.recipe)}</span>
+          <span className="text-xxs text-textMuted">{recipeName(job.recipe)}</span>
         </div>
       </div>
 

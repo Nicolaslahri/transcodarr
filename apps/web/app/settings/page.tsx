@@ -572,15 +572,16 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
       {/* Add / Edit modal */}
       {adding && (
         <div
+          // No onClick={closeForm} on the backdrop — this is a form with up to
+          // a dozen fields and clicking outside used to silently discard all
+          // unsaved input. Users close via Esc or the X button instead.
           className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
-          onClick={closeForm}
           aria-hidden
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-label={editingId ? 'Edit watched folder' : 'Add watched folder'}
-            onClick={e => e.stopPropagation()}
             className="bg-surface border border-border rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-200"
           >
             {/* Modal header */}
@@ -1300,14 +1301,24 @@ function CustomRecipeModal({ open, onClose, onSuccess, apiUrl, initial }: {
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200">
-      <div className="bg-surface border border-border rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
+    <div
+      // No backdrop-click-close on this form modal — accidental clicks would
+      // discard ffmpeg args and recipe metadata. Close via Esc or X button.
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
+      aria-hidden
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="custom-recipe-title"
+        className="bg-surface border border-border rounded-2xl w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200"
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <h2 className="text-white font-bold flex items-center gap-2">
-            <Code2 className="w-4 h-4 text-primary" />
+          <h2 id="custom-recipe-title" className="text-white font-bold flex items-center gap-2">
+            <Code2 className="w-4 h-4 text-primary" aria-hidden />
             {initial ? `Fork: ${initial.name}` : 'Create Custom Recipe'}
           </h2>
-          <button onClick={onClose} className="text-textMuted hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label="Close dialog" className="text-textMuted hover:text-white transition-colors p-1 rounded"><X className="w-5 h-5" aria-hidden /></button>
         </div>
         <div className="p-6 space-y-4">
           <p className="text-xs text-textMuted">

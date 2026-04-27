@@ -33,6 +33,78 @@ export function broadcast<T>(event: WsEventType, data: T): void {
 
 // ─── Worker Health Poller ─────────────────────────────────────────────────────
 
+/**
+ * One-shot reconciliation pass run at Main startup.
+ *
+ * If Main was killed mid-completion (e.g. between a successful wireless file
+ * swap and the DB transaction commit, or while writing fingerprints), there
+ * may be jobs stuck in non-terminal states like `sending` / `swapping` /
+ * `receiving` / `dispatched` whose worker isn't actually doing anything any
+ * more — and on the wireless path, the new file may already be on disk.
+ *
+ * Heuristic:
+ *   - If the job is in a "transferring" status and the file_path on disk
+ *     exists with mtime AFTER dispatched_at, treat it as complete: the swap
+ *     happened, only the DB write was missed. Mark complete and free the
+ *     worker.
+ *   - Otherwise, requeue it (matches the existing worker-restart semantics).
+ *
+ * Called once from index.ts after initDb() and BEFORE startWorkerHealthPoller.
+ */
+export function reconcileOrphanedJobs(): void {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const rows = db.prepare(
+    "SELECT id, file_path, worker_id, dispatched_at, size_before FROM jobs " +
+    "WHERE status IN ('dispatched','transcoding','receiving','sending','swapping')",
+  ).all() as Array<{ id: string; file_path: string | null; worker_id: string | null; dispatched_at: number | null; size_before: number | null }>;
+
+  if (rows.length === 0) return;
+
+  let promoted = 0;
+  let requeued = 0;
+  for (const job of rows) {
+    let recovered = false;
+    if (job.file_path && fs.existsSync(job.file_path)) {
+      try {
+        const st = fs.statSync(job.file_path);
+        const mtimeSec = Math.floor(st.mtimeMs / 1000);
+        // File on disk is newer than the dispatch — the swap finished, just the DB write was missed
+        if (job.dispatched_at && mtimeSec >= job.dispatched_at && st.size > 0) {
+          db.exec('BEGIN');
+          try {
+            db.prepare(
+              'UPDATE jobs SET status = ?, phase = NULL, progress = 100, size_after = ?, completed_at = ?, updated_at = ? WHERE id = ?',
+            ).run('complete', st.size, now, now, job.id);
+            if (job.worker_id) {
+              db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
+            }
+            db.exec('COMMIT');
+            console.log(`♻️  [Reconcile] Promoted "${path.basename(job.file_path)}" to complete (swap had succeeded; DB write was missed)`);
+            promoted++;
+            recovered = true;
+          } catch (e) {
+            db.exec('ROLLBACK');
+            console.warn(`⚠️  [Reconcile] Failed to promote ${job.id}:`, (e as Error).message);
+          }
+        }
+      } catch { /* stat failed — fall through to requeue */ }
+    }
+    if (!recovered) {
+      db.prepare(
+        "UPDATE jobs SET status = 'queued', worker_id = NULL, phase = NULL, progress = 0, fps = NULL, eta = NULL, error = 'Main restarted', updated_at = ? WHERE id = ?",
+      ).run(now, job.id);
+      if (job.worker_id) {
+        db.prepare("UPDATE workers SET status = 'idle' WHERE id = ?").run(job.worker_id);
+      }
+      requeued++;
+    }
+  }
+  if (promoted > 0 || requeued > 0) {
+    console.log(`♻️  [Reconcile] startup pass: ${promoted} promoted to complete, ${requeued} re-queued`);
+  }
+}
+
 export function startWorkerHealthPoller() {
   const INTERVAL_MS = 20_000; // ping every 20 seconds
   const OFFLINE_THRESHOLD = 3; // consecutive failures before marking offline

@@ -79,20 +79,33 @@ function parseProgressLine(line: string, duration: number): Partial<ProgressUpda
 // via ffmpeg's URL-protocol / filter surface. spawn() blocks shell injection,
 // but ffmpeg itself can open `concat:`, `subfile:`, `pipe:`, `file:` etc.
 // Patterns are case-insensitive substring matches against any single arg.
+//
+// Mirrors packages/shared/src/schemas.ts DANGEROUS_FFMPEG_PATTERNS.
+// Defence in depth: schema validates at API boundary, this catches at exec.
 const DANGEROUS_FFMPEG_PATTERNS: string[] = [
-  'concat:',     // concat protocol can chain arbitrary files
-  'subfile:',    // raw byte-range read of any file
-  'pipe:',       // read from / write to fd
-  'file:',       // explicit file: protocol opens arbitrary paths
-  'tcp://', 'udp://', 'rtmp://', 'rtsp://', 'srt://', 'sftp://', 'ftp://', 'http://', 'https://',
-  'movie=',      // -vf movie=/path lavfi source — reads arbitrary files
-  'amovie=',     // audio variant of movie filter
-  'subfile=',    // subtitle filter file= argument
-  '-f lavfi',    // libavfilter virtual input opens arbitrary filter graphs
+  // URL-protocol family
+  'concat:', 'subfile:', 'pipe:', 'file:', 'fd:', 'tee:',
+  'cache:', 'crypto:', 'async:', 'data:', 'md5:', 'unix:',
+  'tcp://', 'udp://', 'rtmp://', 'rtsp://', 'srt://', 'sftp://',
+  'ftp://', 'http://', 'https://', 'tls://', 'gopher://', 'gophers://',
+  'mmsh://', 'mmst://', 'bluray:', 'prompeg:',
+  // Filter family — `movie=` / `amovie=` open arbitrary files via lavfi
+  'movie=', 'amovie=',
+  'subfile=',
+];
+
+// Two-arg sequences. The substring scan above can't catch `['-f', 'lavfi']`
+// because the literal `-f lavfi` never appears in a single argv entry.
+const DANGEROUS_FFMPEG_PAIRS: Array<[string, string]> = [
+  ['-f', 'lavfi'],
+  ['-f', 'concat'],
+  ['-f', 'image2'],
+  ['-f', 'tee'],
 ];
 
 export function sanitizeFfmpegArgs(args: string[]): { ok: true } | { ok: false; reason: string } {
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
     if (typeof arg !== 'string') return { ok: false, reason: 'non-string ffmpeg arg' };
     const lower = arg.toLowerCase();
     for (const pat of DANGEROUS_FFMPEG_PATTERNS) {
@@ -102,6 +115,13 @@ export function sanitizeFfmpegArgs(args: string[]): { ok: true } | { ok: false; 
     if (arg === '-i') return { ok: false, reason: 'recipe args may not contain -i (input is set by worker)' };
     // Reject explicit output redirect — output path is set by worker
     if (arg === '-y' || arg === '-Y') return { ok: false, reason: 'recipe args may not contain -y / -Y' };
+    // Pairwise check: catches argv-split forms like `['-f', 'lavfi']`
+    if (i + 1 < args.length) {
+      const next = (args[i + 1] ?? '').toLowerCase();
+      for (const [a, b] of DANGEROUS_FFMPEG_PAIRS) {
+        if (lower === a && next === b) return { ok: false, reason: `dangerous pair "${a} ${b}"` };
+      }
+    }
   }
   return { ok: true };
 }
@@ -218,11 +238,19 @@ export async function transcodeFile(
       }
     };
 
+    // Centralised cleanup so both `close` and `error` paths reliably clear
+    // the abort-event listener AND the SIGKILL timer. Previously `error` only
+    // called `reject`, which leaked the listener and let the 5 s SIGKILL
+    // timer fire against a recycled PID on Linux.
+    const cleanup = () => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      if (killTimer) { clearTimeout(killTimer); killTimer = null; }
+    };
+
     proc.stderr.on('data', handleData);
     proc.stdout.on('data', handleData);
     proc.on('close', code => {
-      if (signal) signal.removeEventListener('abort', onAbort);
-      if (killTimer) { clearTimeout(killTimer); killTimer = null; }
+      cleanup();
       if (cancelled) {
         // Clean up the partial tmp file immediately so it doesn't linger on disk
         try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* best effort */ }
@@ -235,7 +263,12 @@ export async function transcodeFile(
         reject(new Error(`ffmpeg exited ${code}: ${lastLines}`));
       }
     });
-    proc.on('error', reject);
+    proc.on('error', err => {
+      cleanup();
+      // Also drop the partial tmp file if it managed to be created
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      reject(err);
+    });
   });
 
   // ─── Atomic swap ──────────────────────────────────────────────────────────

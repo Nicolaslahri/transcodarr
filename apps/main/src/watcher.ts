@@ -117,11 +117,33 @@ export function addWatchedPath(watchPath: string, recipe: string, triggerScan = 
   if (sharedWatcher) {
     sharedWatcher.add(watchPath);
     console.log(`  👁️ Watcher hot-reloaded: added ${watchPath}`);
-    
+
     if (triggerScan) {
       console.log(`  🔍 Auto-triggering deep scan for: ${watchPath}`);
       manualScanDirectory(watchPath, recipe);
     }
+  }
+}
+
+// Called from settings API DELETE/disable — symmetric counterpart to addWatchedPath.
+// Without this, removing a watched path from the UI left the in-memory `activePaths`
+// array intact, so files added under that path continued to enqueue jobs.
+export function removeWatchedPath(watchPath: string): void {
+  const idx = activePaths.indexOf(watchPath);
+  if (idx !== -1) activePaths.splice(idx, 1);
+  pathToRecipe.delete(watchPath);
+
+  // Drop any pending debounce timers under this path so they don't fire after removal.
+  for (const [filePath, timer] of pendingFiles) {
+    if (filePath.startsWith(watchPath)) {
+      clearTimeout(timer);
+      pendingFiles.delete(filePath);
+    }
+  }
+
+  if (sharedWatcher) {
+    try { sharedWatcher.unwatch(watchPath); } catch { /* path was never watched — ignore */ }
+    console.log(`  👁️ Watcher hot-reloaded: removed ${watchPath}`);
   }
 }
 

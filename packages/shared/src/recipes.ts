@@ -110,7 +110,7 @@ export const BUILT_IN_RECIPES: Recipe[] = [
   {
     id: 'audio-normalizer',
     name: 'Audio Normalizer',
-    description: 'Fix wildly inconsistent volume levels. Applies EBU R128 loudness normalization and re-encodes audio to AAC 192k. Video stream is copied with no quality loss.',
+    description: 'Fix wildly inconsistent volume levels. Applies single-pass loudness normalization to roughly hit the EBU R128 target (-23 LUFS, ±2 LU accuracy) and re-encodes audio to AAC 192k. Video, subtitles, and attachments are copied with no quality loss.',
     targetCodec: 'copy',
     targetContainer: 'mkv',
     icon: '🔊',
@@ -139,23 +139,36 @@ export const BUILT_IN_RECIPES: Recipe[] = [
  * worker) is responsible for surfacing that as a clean failure rather than
  * letting ffmpeg exit with "Unknown encoder" mid-job.
  *
- * NOTE: `hw.encoders` should now contain BOTH GPU encoders (hevc_nvenc, ...)
- *       AND software encoders (libx265, libsvtav1, ...) — see
- *       `apps/worker/src/hardware.ts:detectHardware()`. Older worker builds
- *       only populated GPU encoders; for backward compat the software branch
- *       still falls through to the legacy lib name when the array is empty.
+ * `hw.encoders` should contain BOTH GPU encoders (hevc_nvenc, ...) AND
+ * software encoders (libx265, libsvtav1, ...) — see
+ * `apps/worker/src/hardware.ts:detectHardware()`. The previous "assume the
+ * lib is there if no libs were enumerated" fallback was dropped because it
+ * defeats the dispatcher's capability check on workers that genuinely lack
+ * libx264/libx265 (Intel-only QSV builds, minimal containers).
+ *
+ * For older workers whose `hw.encoders` array is COMPLETELY missing/empty
+ * (true legacy: no enumeration data at all), we still fall back to the lib
+ * name on a best-effort basis. The new check is "totally empty" rather than
+ * "no libs", so a worker that reports just `['h264_qsv']` is correctly
+ * recognised as having no software fallback.
  */
 export function pickVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | 'av1'): string | null {
-  const has = (name: string) => hw.encoders.includes(name);
+  // Defensive: hardware payloads from the manual-add path or pre-1.0.36
+  // workers may have hardware = {} (no encoders array). Treat as empty.
+  const encoders = Array.isArray((hw as any)?.encoders) ? hw.encoders : [];
+  const has = (name: string) => encoders.includes(name);
+  // Truly-empty profile (legacy worker pre-encoder-probe). We don't know what
+  // it has, so we have to guess. Falling back to the lib here is the original
+  // pre-audit behaviour — keep it ONLY for empty arrays, never for arrays
+  // that just happen to lack lib entries.
+  const profileMissing = encoders.length === 0;
 
   if (codec === 'h265') {
     if (hw.gpu === 'nvidia' && has('hevc_nvenc')) return 'hevc_nvenc';
     if (hw.gpu === 'amd'    && has('hevc_amf'))   return 'hevc_amf';
     if (hw.gpu === 'intel'  && has('hevc_qsv'))   return 'hevc_qsv';
     if (has('libx265')) return 'libx265';
-    // Backward compat: assume libx265 is available if the encoders list lacks
-    // any libx* entries (older worker that didn't probe software encoders).
-    if (!hw.encoders.some(e => e.startsWith('lib'))) return 'libx265';
+    if (profileMissing) return 'libx265';
     return null;
   }
   if (codec === 'h264') {
@@ -163,7 +176,7 @@ export function pickVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | '
     if (hw.gpu === 'amd'    && has('h264_amf'))   return 'h264_amf';
     if (hw.gpu === 'intel'  && has('h264_qsv'))   return 'h264_qsv';
     if (has('libx264')) return 'libx264';
-    if (!hw.encoders.some(e => e.startsWith('lib'))) return 'libx264';
+    if (profileMissing) return 'libx264';
     return null;
   }
   if (codec === 'av1') {
@@ -172,8 +185,9 @@ export function pickVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | '
     if (hw.gpu === 'intel'  && has('av1_qsv'))   return 'av1_qsv';
     if (has('libsvtav1')) return 'libsvtav1';
     if (has('libaom-av1')) return 'libaom-av1';
-    // Refuse to silently fall back to libsvtav1 on Pi/CPU-only workers — it OOMs
-    // or runs at <1 fps. Caller will mark the job failed with a clear message.
+    // Refuse to silently fall back to libsvtav1 on Pi/CPU-only workers — it
+    // OOMs or runs at <1 fps. AV1 has no profile-missing fallback because the
+    // expected outcome on a worker without AV1 hw is to refuse the job.
     return null;
   }
   return null;
@@ -185,10 +199,11 @@ export function pickVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | '
 function getVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | 'av1'): string {
   const enc = pickVideoEncoder(hw, codec);
   if (!enc) {
+    const encoders = Array.isArray((hw as any)?.encoders) ? hw.encoders : [];
     throw new Error(
       `No usable ${codec.toUpperCase()} encoder on this worker. ` +
-      `GPU: ${hw.gpuName} (${hw.gpu}). ` +
-      `Available encoders: ${hw.encoders.join(', ') || 'none'}. ` +
+      `GPU: ${hw.gpuName ?? 'unknown'} (${hw.gpu ?? 'unknown'}). ` +
+      `Available encoders: ${encoders.join(', ') || 'none'}. ` +
       (codec === 'av1'
         ? 'AV1 needs an NVIDIA RTX 40-series / AMD RX 7000 / Intel Arc GPU, or libsvtav1 in ffmpeg.'
         : `Install an ffmpeg build that includes lib${codec === 'h265' ? 'x265' : 'x264'}.`),
@@ -201,9 +216,24 @@ function getVideoEncoder(hw: HardwareProfile, codec: 'h265' | 'h264' | 'av1'): s
  * Public predicate so the dispatcher can skip workers that can't run a given
  * recipe before dispatching. Returns `{ ok: false, reason }` when the worker
  * can't satisfy the recipe's encoder needs.
+ *
+ * Defensive against malformed hardware payloads — manually-added workers and
+ * pre-1.0.36 workers may store `hardware = {}` with no `encoders` array, which
+ * previously crashed the dispatcher and silently stalled the queue.
  */
-export function isRecipeSupportedByWorker(recipe: Recipe, hw: HardwareProfile): { ok: true } | { ok: false; reason: string } {
-  // Custom recipes with raw ffmpegArgs — we don't inspect args here, assume OK.
+export function isRecipeSupportedByWorker(
+  recipe: Recipe,
+  hw: HardwareProfile | undefined | null,
+): { ok: true } | { ok: false; reason: string } {
+  // Missing hardware payload entirely — treat as compatible to avoid stalling
+  // dispatch. The worker will fail the job with a clear ffmpeg error if the
+  // encoder isn't actually available.
+  if (!hw) return { ok: true };
+
+  // Custom recipes with non-empty ffmpegArgs — we trust the args (already
+  // sanitised by FfmpegArgsSchema). Codec capability is the recipe author's
+  // responsibility. A custom recipe with EMPTY ffmpegArgs is invalid and
+  // would have been rejected at creation, but defend here anyway.
   if (recipe.ffmpegArgs && recipe.ffmpegArgs.length > 0) return { ok: true };
 
   // Map recipe.id → the codec it requires (null = copy / audio-only)
@@ -222,9 +252,13 @@ export function isRecipeSupportedByWorker(recipe: Recipe, hw: HardwareProfile): 
     'hdr-to-sdr':        'h265',
   };
   const need = codecMap[recipe.id];
-  if (!need) return { ok: true };
+  // Unknown recipe id (e.g. unrecognised custom ID with no ffmpegArgs):
+  // fall through to "ok" — the worker will fail the job cleanly via
+  // buildFfmpegArgs() if it can't handle the recipe.
+  if (need === undefined) return { ok: true };
+  if (need === null) return { ok: true };
   const enc = pickVideoEncoder(hw, need);
-  if (!enc) return { ok: false, reason: `${need.toUpperCase()} encoder not available on worker ${hw.gpuName}` };
+  if (!enc) return { ok: false, reason: `${need.toUpperCase()} encoder not available on worker ${hw.gpuName ?? 'unknown'}` };
   return { ok: true };
 }
 
@@ -324,7 +358,8 @@ function encodeAV1(enc: string, tier: AV1Tier): string[] {
  *    language (or untagged "und" tracks — common in fansub anime releases)
  *    still end up with at least one audio stream.
  */
-function buildLangMaps(langs: LangPrefs | undefined): string[] {
+function buildLangMaps(langs: LangPrefs | undefined, opts?: { excludeSubs?: boolean }): string[] {
+  const excludeSubs = opts?.excludeSubs === true;
   if (!langs?.audioLang && !langs?.subtitleLang) return [];
   const m: string[] = ['-map', '0:v'];
   if (langs.audioLang) {
@@ -336,6 +371,19 @@ function buildLangMaps(langs: LangPrefs | undefined): string[] {
     m.push('-map', '0:a:0?');
   } else {
     m.push('-map', '0:a');
+  }
+  // MP4 recipes pass excludeSubs:true because they emit `-sn` later anyway.
+  // Adding a subtitle -map here would be silently invalidated by `-sn`, leaving
+  // the user wondering why their `subtitleLang` setting was ignored. Skip the
+  // map so the args are honest.
+  if (excludeSubs) {
+    if (langs.subtitleLang) {
+      console.warn(
+        `[recipes] subtitleLang="${langs.subtitleLang}" was set, but this recipe targets MP4 and drops subtitles via -sn. ` +
+        `Use an MKV recipe (e.g. space-saver, plex-ready) to keep subtitles.`,
+      );
+    }
+    return m;
   }
   if (langs.subtitleLang) {
     const lang = langs.subtitleLang.toLowerCase();
@@ -350,7 +398,19 @@ function buildLangMaps(langs: LangPrefs | undefined): string[] {
 
 // CPU-only video filter patterns that are incompatible with zero-copy CUDA surface output.
 // Community recipes containing these patterns must not use -hwaccel_output_format cuda.
-const CUDA_INCOMPATIBLE_FILTER_PATTERNS = ['zscale=', 'zscale,', 'yadif', 'drawtext=', 'scale=', 'scale,'];
+//
+// Includes `format=` because CUDA frames in NV12/CUDA surfaces can't pass through
+// the libavfilter `format` filter — running with zero-copy + a `-vf format=yuv420p`
+// either silently elides the conversion (so 10-bit inputs reach h264_nvenc as
+// 10-bit and crash with "Unsupported pixel format") or hard-fails the filter
+// graph build. Forcing this onto the CPU side guarantees the conversion happens.
+const CUDA_INCOMPATIBLE_FILTER_PATTERNS = [
+  'zscale=', 'zscale,',
+  'yadif',
+  'drawtext=',
+  'scale=', 'scale,',
+  'format=', 'format,',
+];
 
 export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: LangPrefs): string[] {
   // Community/custom recipes supply their own args — return them directly.
@@ -399,16 +459,17 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
 
     // ── Legacy Compatible — H.264 for old devices ─────────────────────────
     case 'universal-player': {
-      args.push(...buildLangMaps(langs));
+      // excludeSubs:true — MP4 + image subs (PGS/VOBSUB) hard-fails. Subs are
+      // dropped via -sn below; passing the flag here keeps buildLangMaps from
+      // emitting a wasted -map 0:s line and emits a one-time warning if the
+      // user had subtitleLang configured (so the silent invalidation is visible).
+      args.push(...buildLangMaps(langs, { excludeSubs: true }));
       const enc = getVideoEncoder(hw, 'h264');
       args.push('-c:v', enc, ...encodeH264(enc, 'balanced'));
       // -pix_fmt yuv420p forces 8-bit output — without it, 10-bit HEVC sources
       // produce H.264 High10 which most "legacy" devices and browsers cannot decode,
       // and h264_nvenc errors outright when given 10-bit input under -profile:v high.
       args.push('-pix_fmt', 'yuv420p');
-      // -sn drops subtitles. MP4 only supports mov_text (text); transcoding image
-      // subs (PGS / VOBSUB) to mov_text fails the entire job. Users wanting subs
-      // should pick an MKV recipe instead.
       args.push('-c:a', 'aac', '-b:a', '192k', '-sn');
       // +faststart relocates the moov atom to the start so streaming/seeking works
       // on the older smart TVs and embedded players this recipe targets.
@@ -418,7 +479,7 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
 
     // ── Web / Browser — H.264 capped at 1080p, faststart ─────────────────
     case 'web-optimized': {
-      args.push(...buildLangMaps(langs));
+      args.push(...buildLangMaps(langs, { excludeSubs: true })); // see universal-player
       // scale= is a CPU-only filter — zero-copy CUDA mode is suppressed via CUDA_INCOMPATIBLE_RECIPES
       // format=yuv420p chained into the filter graph guarantees 8-bit output
       // (most browser MSE pipelines reject H.264 High10).
@@ -432,17 +493,12 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
 
     // ── Remux to MKV — stream copy, preserve EVERY stream ────────────────
     case 'remux-to-mkv': {
-      // -map 0 selects every stream of every type from input 0 — when no lang
-      // prefs are set this preserves attachments (fonts), data streams, every
-      // audio track, every subtitle. Without -map 0, ffmpeg's default selector
-      // picks one of each type and the description's "preserve every stream"
-      // promise quietly becomes a lie.
-      const langMaps = buildLangMaps(langs);
-      if (langMaps.length === 0) {
-        args.push('-map', '0', '-map', '-0:d?'); // exclude data streams that MKV can't mux
-      } else {
-        args.push(...langMaps, '-map', '0:t?');  // attachments
-      }
+      // ALWAYS preserve every stream — `remux-to-mkv` is "consolidate
+      // containers, no quality loss, keep everything." Honouring langPrefs
+      // would silently drop foreign-language audio tracks and contradict the
+      // description, so we deliberately ignore them here. Users who want
+      // language filtering should pick a transcoding recipe instead.
+      args.push('-map', '0', '-map', '-0:d?'); // -0:d? excludes data streams that MKV can't mux
       args.push('-c', 'copy');
       break;
     }
@@ -529,13 +585,17 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
       //   2. format=gbrpf32le — float linear-light pipeline for tonemap to
       //      avoid quantisation banding.
       //   3. zscale p=bt709 — convert primaries to Rec.709.
-      //   4. tonemap=hable:desat=0 — Hable curve, no extra desaturation.
+      //   4. tonemap=hable — Hable curve, default desat (uses ffmpeg's built-in
+      //      desat=2.0). Skipping the desat parameter is intentional: explicit
+      //      desat=0 produces oversaturated reds on real HDR content (skin,
+      //      fire, sunsets) and was the single biggest quality complaint about
+      //      the previous implementation.
       //   5. zscale t=bt709:m=bt709:r=tv — back to gamma BT.709 with TV range.
       //   6. format=yuv420p — final 8-bit chroma format.
       // zscale is CPU-only — zero-copy CUDA mode is suppressed via CUDA_INCOMPATIBLE_RECIPES.
       args.push(
         '-vf',
-        'zscale=t=linear:npl=100:tin=smpte2084:pin=bt2020:min=bt2020nc,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p',
+        'zscale=t=linear:npl=100:tin=smpte2084:pin=bt2020:min=bt2020nc,format=gbrpf32le,zscale=p=bt709,tonemap=hable,zscale=t=bt709:m=bt709:r=tv,format=yuv420p',
       );
       const enc = getVideoEncoder(hw, 'h265');
       args.push('-c:v', enc, ...encodeH265(enc, 'balanced'));

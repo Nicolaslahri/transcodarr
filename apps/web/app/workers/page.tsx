@@ -186,15 +186,14 @@ export default function WorkersPage() {
       {/* Add Worker Modal */}
       {addModalOpen && (
         <div
+          // No backdrop-click-close — IP / port form. Close via Esc / X.
           className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => setAddModalOpen(false)}
           aria-hidden
         >
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="add-worker-title"
-            onClick={e => e.stopPropagation()}
             className="modal-content bg-surface border border-border w-full max-w-md rounded-2xl p-6 shadow-2xl relative"
           >
             <button onClick={() => setAddModalOpen(false)} aria-label="Close dialog" className="absolute top-4 right-4 text-textMuted hover:text-white">

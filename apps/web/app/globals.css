@@ -18,12 +18,26 @@ body {
    Without a replacement, keyboard users have no visible focus indicator and
    the UI fails WCAG 2.4.7. We add a clear cyan ring on every focus-visible
    element (mouse clicks don't trigger :focus-visible, so this only shows for
-   keyboard / programmatic focus). */
+   keyboard / programmatic focus).
+
+   Scoped to skip form inputs (input, select, textarea) because those already
+   apply their own focus styles via `focus:border-primary/50` Tailwind classes.
+   Without this exclusion, focused inputs got DOUBLE rings — primary border
+   plus the global cyan outline, off-centre on appearance-none selects. */
 *:focus { outline: none; } /* suppress default — browsers vary */
 *:focus-visible {
   outline: 2px solid #00d9ff;
   outline-offset: 2px;
   border-radius: 4px;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  /* Use a stronger ring class on the element instead — see input components.
+     Suppressing here lets the element's own focus styles win without a
+     compounded outline. */
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0,217,255,0.4);
 }
 
 /* sr-only — screen-reader-only text. Used to label icon-only buttons and

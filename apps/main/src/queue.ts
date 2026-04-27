@@ -65,14 +65,18 @@ export function recordJobEvent(jobId: string, event: string, workerName?: string
 
 // ─── Queue CRUD ───────────────────────────────────────────────────────────────
 
-/** Record a file as processed so it won't be re-queued even after "Clear All". */
+/** Record a file as processed so it won't be re-queued even after "Clear All".
+ *
+ * Errors are NOT swallowed — this function is called from inside DB transactions
+ * (see workers.ts complete handlers) and a silent failure here would leave the
+ * fingerprint half-written while the rest of the transaction commits, causing
+ * future scans to re-queue the file. Let the surrounding BEGIN/COMMIT roll back
+ * atomically on any insert failure. */
 export function recordProcessedFile(filePath: string, fileSize: number, recipeId: string, contentKey?: string): void {
-  try {
-    getDb().prepare(`
-      INSERT OR REPLACE INTO processed_files (file_path, recipe, file_size, content_key, processed_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(filePath, recipeId, fileSize, contentKey ?? null, Math.floor(Date.now() / 1000));
-  } catch { /* non-critical */ }
+  getDb().prepare(`
+    INSERT OR REPLACE INTO processed_files (file_path, recipe, file_size, content_key, processed_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(filePath, recipeId, fileSize, contentKey ?? null, Math.floor(Date.now() / 1000));
 }
 
 export function enqueueFile(filePath: string, recipeId: string, force = false, pinnedWorkerId?: string): Job | null {

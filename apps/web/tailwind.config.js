@@ -17,20 +17,18 @@ module.exports = {
         // contrast threshold and was particularly bad at 50–60% opacity.
         textMuted: '#b4b4c0',
         border: '#2a2a35',
-        // Semantic palette so status colours stay disciplined across pages.
-        // Page-specific code may still use literal hex for brand accents, but
-        // status tokens (queued / active / paused / failed / success) should
-        // use these so the meaning stays consistent.
-        statusInfo:    '#00d9ff',
-        statusWarn:    '#fbbf24',
-        statusError:   '#f87171',
-        statusSuccess: '#4ade80',
-        statusMuted:   '#71717a',
+        // NOTE: a "statusInfo/Warn/Error/Success/Muted" semantic palette was
+        // briefly added here but had zero usages anywhere in the codebase —
+        // it was dead weight advertising a system that doesn't exist. When
+        // we do the real status-colour refactor, define them again at that
+        // point alongside the migration.
       },
       fontSize: {
         // Smaller-than-xs token so chrome (timestamps, helper text) doesn't
         // need arbitrary text-[10px] overrides scattered across components.
-        xxs: ['11px', { lineHeight: '14px' }],
+        // 12px / 16px line — the original 11px / 14px clipped 10–12px icons
+        // in flex rows and was below the legibility floor for body text.
+        xxs: ['12px', { lineHeight: '16px' }],
       },
       fontFamily: {
         sans: ['var(--font-inter)'],

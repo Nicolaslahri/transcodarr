@@ -165,10 +165,11 @@ export default function SetupWizard() {
 
           {/* Port */}
           <div>
-            <label className="block text-sm font-semibold text-white mb-2">
+            <label htmlFor="setup-port" className="block text-sm font-semibold text-white mb-2">
               Port <span className="text-textMuted font-normal">(this node will listen here)</span>
             </label>
             <input
+              id="setup-port"
               type="number"
               min={1}
               max={65535}
@@ -176,12 +177,14 @@ export default function SetupWizard() {
               onChange={e => { setPort(e.target.value); setPortError(''); }}
               placeholder={String(defaultPort)}
               disabled={saving}
+              aria-describedby="setup-port-help"
+              aria-invalid={!!portError}
               className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white text-base
                 placeholder:text-textMuted/50 focus:outline-none focus:border-primary/60 transition-colors
                 disabled:opacity-50"
             />
-            {portError && <p className="mt-1.5 text-xs text-red-400">{portError}</p>}
-            <p className="mt-1.5 text-xs text-textMuted">
+            {portError && <p className="mt-1.5 text-xs text-red-400" role="alert">{portError}</p>}
+            <p id="setup-port-help" className="mt-1.5 text-xs text-textMuted">
               Default: {defaultPort}. Change only if that port is already in use on this machine.
             </p>
           </div>
@@ -190,7 +193,7 @@ export default function SetupWizard() {
           {selectedRole === 'worker' && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-semibold text-white">
+                <label htmlFor="setup-main-url" className="text-sm font-semibold text-white">
                   Main Node URL
                 </label>
                 <button
@@ -236,16 +239,18 @@ export default function SetupWizard() {
               )}
 
               <input
+                id="setup-main-url"
                 type="url"
                 value={mainUrl}
                 onChange={e => setMainUrl(e.target.value)}
                 placeholder="http://192.168.0.63:3001"
                 disabled={saving}
+                aria-describedby="setup-main-url-help"
                 className="w-full bg-background border border-border rounded-xl px-4 py-3 text-white text-base
                   placeholder:text-textMuted/50 focus:outline-none focus:border-yellow-500/60 transition-colors
                   disabled:opacity-50 font-mono"
               />
-              <p className="mt-1.5 text-xs text-textMuted">
+              <p id="setup-main-url-help" className="mt-1.5 text-xs text-textMuted">
                 You can change this later in Worker Settings if needed.
               </p>
             </div>

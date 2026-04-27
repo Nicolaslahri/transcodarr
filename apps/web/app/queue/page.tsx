@@ -2,6 +2,7 @@
 
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown, FilePlus2, X, Plus, BookOpen } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -662,13 +663,30 @@ function JobRow({
   // work with no recovery. First click flips this flag; the icon swaps to a
   // visible "Stop?" button; second click within 4 seconds actually does it.
   const [confirmingStop, setConfirmingStop] = useState(false);
+  // Ref to the pill button so we can autofocus it when the swap happens
+  // (keyboard users pressing Enter on Trash would otherwise lose focus to
+  // <body> since React doesn't transfer focus across a component swap).
+  const stopPillRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { setOverrideStatus(null); setConfirmingStop(false); }, [job.status]);
-  // Auto-cancel the confirm prompt after 4s so the row doesn't stay in a
-  // half-confirmed state forever.
+  // Auto-cancel after 4 s so the row doesn't sit in a half-confirmed state
+  // forever; ALSO dismiss on any pointer-down outside the row, since the
+  // user clicking elsewhere is a strong signal they've moved on.
   useEffect(() => {
     if (!confirmingStop) return;
+    // Move focus to the pill so a keyboard user who triggered the first
+    // click via Enter doesn't end up back at <body>.
+    stopPillRef.current?.focus();
     const t = setTimeout(() => setConfirmingStop(false), 4000);
-    return () => clearTimeout(t);
+    const onPointerDown = (e: PointerEvent) => {
+      // Don't dismiss when clicking the pill itself (it has its own handler).
+      if (stopPillRef.current && stopPillRef.current.contains(e.target as Node)) return;
+      setConfirmingStop(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('pointerdown', onPointerDown, true);
+    };
   }, [confirmingStop]);
   const displayStatus = overrideStatus ?? job.status;
 
@@ -689,14 +707,15 @@ function JobRow({
   });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
 
+  const reducedMotion = useReducedMotion();
   useEffect(() => {
-    if (!isProcessing || !waveRef.current) return;
+    if (!isProcessing || !waveRef.current || reducedMotion) return;
     const bars = waveRef.current.children;
     const ctx  = gsap.context(() => {
       gsap.to(bars, { scaleY: 1, duration: 0.4, stagger: { each: 0.1, repeat: -1, yoyo: true }, ease: 'sine.inOut' });
     }, waveRef);
     return () => ctx.revert();
-  }, [isProcessing]);
+  }, [isProcessing, reducedMotion]);
 
   const [, forceUpdate] = useState(0);
   useEffect(() => {
@@ -883,8 +902,10 @@ function JobRow({
               </button>
               {confirmingStop ? (
                 // Two-step confirm — second click destroys in-flight work.
-                // Auto-cancels after 4s so we don't leave a stuck UI state.
+                // Auto-cancels after 4 s, dismisses on outside click, and
+                // autofocuses on flip so keyboard users don't lose focus.
                 <button
+                  ref={stopPillRef}
                   type="button"
                   onClick={async () => {
                     setConfirmingStop(false);

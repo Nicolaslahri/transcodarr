@@ -44,6 +44,71 @@ function getSpeedLimitBytesPerSec(): number {
 
 
 /**
+ * Apply the watched-folder `move_to` rule, if configured.
+ *
+ * Looks up the watched_paths row whose `path` is a prefix of `originalPath`
+ * (the file's location BEFORE this rename), and if it has a `move_to`
+ * directory configured, moves `currentPath` there. Updates the DB row's
+ * file_path/file_name and fingerprints the new location atomically.
+ *
+ * Used by both SMB-complete and wireless-upload-complete handlers — the
+ * second pass audit caught that wireless mode silently ignored move_to.
+ *
+ * Returns the final on-disk path (either `currentPath` if no move was
+ * configured / it failed safely, or the new `dest`).
+ */
+function applyMoveTo(
+  jobId: string,
+  originalPath: string,
+  currentPath: string,
+  recipe: string | undefined,
+  contentKey: string | undefined,
+  sizeBefore: number,
+): string {
+  const db = getDb();
+  if (!fs.existsSync(currentPath)) return currentPath;
+  const moveTo = (db.prepare(
+    "SELECT move_to FROM watched_paths WHERE ? LIKE path || '%' AND move_to IS NOT NULL ORDER BY LENGTH(path) DESC LIMIT 1",
+  ).get(originalPath) as any)?.move_to as string | undefined;
+  if (!moveTo) return currentPath;
+
+  try {
+    fs.mkdirSync(moveTo, { recursive: true });
+    const dest = path.resolve(path.join(moveTo, path.basename(currentPath)));
+    // Path-traversal check — basename strips slashes but `..` is still
+    // possible; resolved dest must live inside moveTo.
+    if (!dest.startsWith(path.resolve(moveTo) + path.sep) && dest !== path.resolve(moveTo)) {
+      console.warn(`⚠️  move_to path traversal blocked — dest "${dest}" is outside "${moveTo}"`);
+      return currentPath;
+    }
+    fs.renameSync(currentPath, dest);
+    db.exec('BEGIN');
+    try {
+      db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
+        .run(dest, path.basename(dest), jobId);
+      if (recipe) {
+        recordProcessedFile(dest, sizeBefore, recipe, contentKey);
+      }
+      db.exec('COMMIT');
+      return dest;
+    } catch (txErr) {
+      db.exec('ROLLBACK');
+      // Roll back the rename so DB.file_path still points at a real file.
+      try {
+        fs.renameSync(dest, currentPath);
+      } catch (rollbackErr) {
+        console.error(`⚠️  CRITICAL: move_to DB update failed AND rename rollback failed. ` +
+          `File is at "${dest}" but DB still says "${currentPath}". Manual recovery needed.`, rollbackErr);
+      }
+      throw txErr;
+    }
+  } catch (moveErr: any) {
+    console.warn(`⚠️  move_to failed: ${moveErr.message}`);
+    return currentPath;
+  }
+}
+
+/**
  * Perform a version + capability sanity check between Main and a newly
  * connecting worker. Broadcasts warning toasts for the UI if anything
  * looks wrong, but never blocks the connection.
@@ -400,52 +465,19 @@ export async function workersRoutes(app: FastifyInstance) {
           throw txErr;
         }
 
-        // Post-processing: move file if the source watched path has move_to configured.
-        // The fs rename happens FIRST; then DB UPDATE + fingerprint write run inside
-        // a small transaction so on-disk state and DB stay consistent. If the rename
-        // succeeds but the DB update fails, we attempt to rename back; if both fail
-        // we log loudly so the operator can recover manually.
-        if (targetDbPath && fs.existsSync(targetDbPath)) {
-          const moveTo = (db.prepare(
-            "SELECT move_to FROM watched_paths WHERE ? LIKE path || '%' AND move_to IS NOT NULL ORDER BY LENGTH(path) DESC LIMIT 1"
-          ).get(jobFull?.file_path ?? targetDbPath) as any)?.move_to as string | undefined;
-          if (moveTo) {
-            try {
-              fs.mkdirSync(moveTo, { recursive: true });
-              // Validate destination is inside move_to to prevent path traversal
-              const dest = path.resolve(path.join(moveTo, path.basename(targetDbPath)));
-              if (!dest.startsWith(path.resolve(moveTo) + path.sep) && dest !== path.resolve(moveTo)) {
-                console.warn(`⚠️  move_to path traversal blocked — dest "${dest}" is outside "${moveTo}"`);
-              } else {
-                const sourceForRollback = targetDbPath;
-                fs.renameSync(sourceForRollback, dest);
-                // Atomically: update file_path AND fingerprint for `dest`. If either
-                // fails we roll back the rename so the DB and FS stay consistent.
-                db.exec('BEGIN');
-                try {
-                  db.prepare('UPDATE jobs SET file_path = ?, file_name = ? WHERE id = ?')
-                    .run(dest, path.basename(dest), req.params.jobId);
-                  if (jobFull) {
-                    recordProcessedFile(dest, sizeBefore ?? 0, jobFull.recipe, jobFull.content_key ?? undefined);
-                  }
-                  db.exec('COMMIT');
-                } catch (txErr) {
-                  db.exec('ROLLBACK');
-                  // Try to put the file back where it was so the DB row's file_path
-                  // still resolves on disk. If rollback also fails, log loudly.
-                  try {
-                    fs.renameSync(dest, sourceForRollback);
-                  } catch (rollbackErr) {
-                    console.error(`⚠️  CRITICAL: move_to DB update failed AND rename rollback failed. ` +
-                      `File is at "${dest}" but DB still says "${sourceForRollback}". Manual recovery needed.`, rollbackErr);
-                  }
-                  throw txErr;
-                }
-              }
-            } catch (moveErr: any) {
-              console.warn(`⚠️  move_to failed: ${moveErr.message}`);
-            }
-          }
+        // Post-processing: move file if the source watched path has move_to
+        // configured. Helper centralises the FS+DB transaction logic so the
+        // wireless completion path can use the same code (it used to silently
+        // skip move_to, leaving wireless-mode files where they were).
+        if (targetDbPath) {
+          applyMoveTo(
+            req.params.jobId,
+            jobFull?.file_path ?? targetDbPath,
+            targetDbPath,
+            jobFull?.recipe,
+            jobFull?.content_key ?? undefined,
+            sizeBefore ?? 0,
+          );
         }
         const completeName = jobFull?.file_path ? path.basename(jobFull.file_path) : undefined;
         broadcast('job:complete', { jobId: req.params.jobId, sizeBefore, sizeAfter, fileName: completeName });
@@ -628,6 +660,19 @@ export async function workersRoutes(app: FastifyInstance) {
         } catch (txErr) {
           db.exec('ROLLBACK');
           throw txErr;
+        }
+
+        // Apply move_to (if configured) — wireless mode used to silently skip
+        // this, leaving wireless-mode files where they were.
+        if (jobMeta) {
+          applyMoveTo(
+            req.params.jobId,
+            jobMeta.file_path,
+            finalPath,
+            jobMeta.recipe,
+            jobMeta.content_key ?? undefined,
+            sizeBefore,
+          );
         }
 
         recordJobEvent(req.params.jobId, 'complete', job.worker_id ? (getDb().prepare('SELECT name FROM workers WHERE id=?').get(job.worker_id) as any)?.name : undefined, { sizeBefore, sizeAfter });

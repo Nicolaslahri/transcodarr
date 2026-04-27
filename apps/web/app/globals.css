@@ -33,11 +33,15 @@ body {
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  /* Use a stronger ring class on the element instead — see input components.
-     Suppressing here lets the element's own focus styles win without a
-     compounded outline. */
+  /* Form inputs already apply their own focus styles via Tailwind classes
+     (focus:border-primary/50 etc.). The 2px solid #00d9ff outline used on
+     non-input elements would compound those styles into a double ring,
+     off-centre on appearance-none selects. Use a higher-alpha box-shadow
+     ring instead so the indicator is clearly visible against a dark
+     background and won't compound with the element's own border. */
   outline: none;
-  box-shadow: 0 0 0 2px rgba(0,217,255,0.4);
+  box-shadow: 0 0 0 2px rgba(0,217,255,0.85);
+  border-color: #00d9ff !important;
 }
 
 /* sr-only — screen-reader-only text. Used to label icon-only buttons and
@@ -57,8 +61,9 @@ textarea:focus-visible {
 /* ─── Respect prefers-reduced-motion ─────────────────────────────────────────
    Vestibular users get assaulted by infinite-loop glows, count-up tweens, and
    stagger animations. Disable all CSS-driven motion when the user opts out.
-   GSAP is JS-driven and ignores this; the dashboards check
-   `window.matchMedia('(prefers-reduced-motion: reduce)')` separately. */
+   GSAP runs its own RAF and ignores CSS — components driving GSAP animations
+   gate them behind the `useReducedMotion` hook (apps/web/hooks/useReducedMotion.ts)
+   so they snap to end values or skip the tween entirely. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

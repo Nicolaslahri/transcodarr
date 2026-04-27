@@ -252,10 +252,13 @@ export function isRecipeSupportedByWorker(
     'hdr-to-sdr':        'h265',
   };
   const need = codecMap[recipe.id];
-  // Unknown recipe id (e.g. unrecognised custom ID with no ffmpegArgs):
-  // fall through to "ok" — the worker will fail the job cleanly via
-  // buildFfmpegArgs() if it can't handle the recipe.
-  if (need === undefined) return { ok: true };
+  // Unknown recipe id with no ffmpegArgs is a broken recipe — the worker
+  // would run ffmpeg with NO recipe args and silently produce a stream-copy
+  // instead of the encode the user intended. Refuse at dispatch so the job
+  // fails fast with a clear message.
+  if (need === undefined) {
+    return { ok: false, reason: `Unknown recipe id "${recipe.id}" — recipe is missing ffmpegArgs and isn't a built-in. Re-import or recreate it.` };
+  }
   if (need === null) return { ok: true };
   const enc = pickVideoEncoder(hw, need);
   if (!enc) return { ok: false, reason: `${need.toUpperCase()} encoder not available on worker ${hw.gpuName ?? 'unknown'}` };
@@ -358,6 +361,12 @@ function encodeAV1(enc: string, tier: AV1Tier): string[] {
  *    language (or untagged "und" tracks — common in fansub anime releases)
  *    still end up with at least one audio stream.
  */
+// Memoise the "subtitleLang ignored on MP4 recipe" warning so it fires once
+// per (subtitleLang) per worker process instead of N×-per-dispatch. With a
+// queue of 200 jobs all using `subtitleLang='eng'` + an MP4 recipe, the old
+// behaviour produced 200 identical warnings per pass.
+const warnedSubtitleLangMp4 = new Set<string>();
+
 function buildLangMaps(langs: LangPrefs | undefined, opts?: { excludeSubs?: boolean }): string[] {
   const excludeSubs = opts?.excludeSubs === true;
   if (!langs?.audioLang && !langs?.subtitleLang) return [];
@@ -378,10 +387,14 @@ function buildLangMaps(langs: LangPrefs | undefined, opts?: { excludeSubs?: bool
   // map so the args are honest.
   if (excludeSubs) {
     if (langs.subtitleLang) {
-      console.warn(
-        `[recipes] subtitleLang="${langs.subtitleLang}" was set, but this recipe targets MP4 and drops subtitles via -sn. ` +
-        `Use an MKV recipe (e.g. space-saver, plex-ready) to keep subtitles.`,
-      );
+      const key = langs.subtitleLang.toLowerCase();
+      if (!warnedSubtitleLangMp4.has(key)) {
+        warnedSubtitleLangMp4.add(key);
+        console.warn(
+          `[recipes] subtitleLang="${langs.subtitleLang}" is set but the active MP4 recipe drops subtitles via -sn. ` +
+          `Use an MKV recipe (e.g. space-saver, plex-ready) to keep subtitles. (warning shown once per subtitleLang)`,
+        );
+      }
     }
     return m;
   }
@@ -396,21 +409,45 @@ function buildLangMaps(langs: LangPrefs | undefined, opts?: { excludeSubs?: bool
 
 // ─── FFmpeg Args Builder ──────────────────────────────────────────────────────
 
-// CPU-only video filter patterns that are incompatible with zero-copy CUDA surface output.
-// Community recipes containing these patterns must not use -hwaccel_output_format cuda.
+// CPU-only video filter NAMES that are incompatible with zero-copy CUDA surface output.
+// Community recipes using these filters must not use -hwaccel_output_format cuda.
 //
-// Includes `format=` because CUDA frames in NV12/CUDA surfaces can't pass through
-// the libavfilter `format` filter — running with zero-copy + a `-vf format=yuv420p`
-// either silently elides the conversion (so 10-bit inputs reach h264_nvenc as
-// 10-bit and crash with "Unsupported pixel format") or hard-fails the filter
-// graph build. Forcing this onto the CPU side guarantees the conversion happens.
-const CUDA_INCOMPATIBLE_FILTER_PATTERNS = [
-  'zscale=', 'zscale,',
+// These names match against actual filter graph entries inside `-vf` / `-filter:v` /
+// `-filter_complex` argument values. Previous implementation did substring matching
+// against EVERY argv entry, which produced false positives on unrelated args
+// (e.g. an arg containing "scale" anywhere) and false-positive matches on audio
+// filters like `aformat,` masquerading as `format,`.
+const CUDA_INCOMPATIBLE_FILTER_NAMES = [
+  'zscale',
   'yadif',
-  'drawtext=',
-  'scale=', 'scale,',
-  'format=', 'format,',
+  'drawtext',
+  'scale',
+  'format',     // CUDA surfaces can't pass through CPU `format` filter
 ];
+
+const VIDEO_FILTER_FLAGS = new Set(['-vf', '-filter:v', '-filter_complex']);
+
+/**
+ * Decide if a recipe's ffmpegArgs include a CPU-only video filter that means
+ * we can't use zero-copy CUDA surface output. Walks argv pairwise and only
+ * inspects the value following a video-filter flag — anchored at filter-name
+ * boundaries (`,name=`, `,name,`, `,name)`, `name=` at start) so audio
+ * filters like `aformat=` don't trigger false positives.
+ */
+function customRecipeNeedsCpuPath(args: string[]): boolean {
+  for (let i = 0; i < args.length - 1; i++) {
+    if (!VIDEO_FILTER_FLAGS.has(args[i])) continue;
+    const graph = args[i + 1];
+    if (typeof graph !== 'string') continue;
+    // Boundary-anchored regex per filter: matches `name` only when preceded
+    // by start-of-string or `,` AND followed by `=`/`,`/`)`/`(`/end.
+    for (const name of CUDA_INCOMPATIBLE_FILTER_NAMES) {
+      const re = new RegExp(`(^|[,;\\[])${name}(?=[=,;\\]\\(]|$)`);
+      if (re.test(graph)) return true;
+    }
+  }
+  return false;
+}
 
 export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: LangPrefs): string[] {
   // Community/custom recipes supply their own args — return them directly.
@@ -578,10 +615,13 @@ export function buildFfmpegArgs(recipe: Recipe, hw: HardwareProfile, langs?: Lan
       // input transfer/primaries/matrix tags so zscale assumed BT.709 input on
       // a BT.2020/PQ source, producing washed-out output (the very thing this
       // recipe claims to fix). Steps:
-      //   1. zscale t=linear:npl=100 — convert PQ to linear light, set peak
-      //      luminance for the tonemap. Explicit tin/pin/min carry the HDR10
-      //      tagging through; without them, missing/incorrect side-data on
-      //      some sources defaults to BT.709.
+      //   1. zscale t=linear:npl=100 — convert PQ to linear light. `npl` is the
+      //      target SDR display peak luminance in cd/m² (100 = standard SDR
+      //      reference white); zimg uses this to scale the linear output, NOT
+      //      the source HDR peak. Pushing npl higher would darken the result.
+      //      Explicit tin/pin/min carry the HDR10 tagging through; without
+      //      them, missing/incorrect side-data on some sources defaults to
+      //      BT.709 and the tonemap silently does nothing.
       //   2. format=gbrpf32le — float linear-light pipeline for tonemap to
       //      avoid quantisation banding.
       //   3. zscale p=bt709 — convert primaries to Rec.709.
@@ -638,7 +678,7 @@ const CUDA_INCOMPATIBLE_RECIPES = new Set([
 export function getHwDecodeArgs(hw: HardwareProfile, recipeId?: string, customArgs?: string[]): string[] {
   if (hw.gpu === 'nvidia' && hw.hwaccels.includes('cuda')) {
     const isCudaIncompat = (recipeId && CUDA_INCOMPATIBLE_RECIPES.has(recipeId))
-      || (customArgs && customArgs.some(a => CUDA_INCOMPATIBLE_FILTER_PATTERNS.some(p => a.includes(p))));
+      || (customArgs && customArgs.length > 0 && customRecipeNeedsCpuPath(customArgs));
 
     if (isCudaIncompat) {
       return ['-hwaccel', 'cuda']; // GPU decode, CPU filter

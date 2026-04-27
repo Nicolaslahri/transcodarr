@@ -1,6 +1,7 @@
 'use client';
 
 import { useAppState } from '@/hooks/useTranscodarrSocket';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 
@@ -41,6 +42,7 @@ const PHASE_LABEL: Record<string, string> = {
 export default function WorkerStatusPage() {
   const { meta, connected } = useAppState();
   const [status, setStatus] = useState<WorkerStatus | null>(null);
+  const reducedMotion = useReducedMotion();
 
   // Refs
   const containerRef = useRef<HTMLDivElement>(null);
@@ -71,37 +73,41 @@ export default function WorkerStatusPage() {
   // ── Entry animation ───────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || reducedMotion) return;
     const ctx = gsap.context(() => {
       gsap.from('.ws-block', { y: 30, opacity: 0, duration: 0.7, stagger: 0.1, ease: 'power3.out', clearProps: 'all' });
     }, containerRef);
     return () => ctx.revert();
-  }, []);
+  }, [reducedMotion]);
 
-  // ── Idle breathing glow ───────────────────────────────────────────────────
+  // ── Idle breathing glow — disabled under prefers-reduced-motion ──────────
 
   useEffect(() => {
-    if (!glowRef.current) return;
+    if (!glowRef.current || reducedMotion) return;
     const tween = gsap.to(glowRef.current, {
       opacity: 0.18, scale: 1.25, duration: 2.8,
       repeat: -1, yoyo: true, ease: 'sine.inOut',
     });
     return () => { tween.kill(); };
-  }, []);
+  }, [reducedMotion]);
 
-  // ── Ring progress animation ───────────────────────────────────────────────
+  // ── Ring progress animation — under reduced-motion, snap to value ────────
 
   useEffect(() => {
     if (!ringRef.current) return;
     const progress = status?.currentJob?.progress ?? 0;
     const target = CIRCUMFERENCE * (1 - progress / 100);
-    gsap.to(ringRef.current, {
-      strokeDashoffset: target,
-      duration: 1.2,
-      ease: 'power2.out',
-    });
+    if (reducedMotion) {
+      ringRef.current.style.strokeDashoffset = String(target);
+    } else {
+      gsap.to(ringRef.current, {
+        strokeDashoffset: target,
+        duration: 1.2,
+        ease: 'power2.out',
+      });
+    }
     progressRef.current = progress;
-  }, [status?.currentJob?.progress]);
+  }, [status?.currentJob?.progress, reducedMotion]);
 
   const hw  = status?.hardware ?? meta.hardware;
   const job = status?.currentJob;

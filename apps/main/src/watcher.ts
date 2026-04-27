@@ -34,6 +34,10 @@ const pendingFiles = new Map<string, ReturnType<typeof setTimeout>>();
 let sharedWatcher: chokidar.FSWatcher | null = null;
 const activePaths: string[] = [];
 const pathToRecipe = new Map<string, string>();
+// Refcount per path so two `watched_paths` rows with the same `path` (but
+// different recipes / IDs / settings) don't trip over each other — removing
+// one row used to call `chokidar.unwatch(path)` and break the other.
+const pathRefCount = new Map<string, number>();
 
 export function startWatcher(): void {
   const db = getDb();
@@ -103,12 +107,16 @@ function initWatcher() {
   sharedWatcher.on('error', (err) => console.error('Watcher error:', err));
 }
 
-// Called from settings API when a new path is added — hot-reload watcher
+// Called from settings API when a new path is added — hot-reload watcher.
+// Refcounts the path so multiple watched_paths rows pointing at the same
+// directory share one chokidar subscription, and removing one row doesn't
+// stop the watcher for the others.
 export function addWatchedPath(watchPath: string, recipe: string, triggerScan = true): void {
   if (!activePaths.includes(watchPath)) {
     activePaths.push(watchPath);
   }
   pathToRecipe.set(watchPath, recipe);
+  pathRefCount.set(watchPath, (pathRefCount.get(watchPath) ?? 0) + 1);
 
   if (!sharedWatcher) {
     initWatcher();
@@ -116,7 +124,7 @@ export function addWatchedPath(watchPath: string, recipe: string, triggerScan = 
 
   if (sharedWatcher) {
     sharedWatcher.add(watchPath);
-    console.log(`  👁️ Watcher hot-reloaded: added ${watchPath}`);
+    console.log(`  👁️ Watcher hot-reloaded: added ${watchPath} (refs=${pathRefCount.get(watchPath)})`);
 
     if (triggerScan) {
       console.log(`  🔍 Auto-triggering deep scan for: ${watchPath}`);
@@ -126,9 +134,18 @@ export function addWatchedPath(watchPath: string, recipe: string, triggerScan = 
 }
 
 // Called from settings API DELETE/disable — symmetric counterpart to addWatchedPath.
-// Without this, removing a watched path from the UI left the in-memory `activePaths`
-// array intact, so files added under that path continued to enqueue jobs.
+// Decrements the refcount; only stops chokidar from watching when the count
+// reaches zero. NOTE: callers must call this once per `addWatchedPath` they
+// previously made. Calling DELETE on a row that wasn't enabled is a no-op.
 export function removeWatchedPath(watchPath: string): void {
+  const remaining = (pathRefCount.get(watchPath) ?? 0) - 1;
+  if (remaining > 0) {
+    pathRefCount.set(watchPath, remaining);
+    console.log(`  👁️ Watcher: dropping one ref to ${watchPath} (still ${remaining} active)`);
+    return;
+  }
+  // Last ref gone — actually unwatch.
+  pathRefCount.delete(watchPath);
   const idx = activePaths.indexOf(watchPath);
   if (idx !== -1) activePaths.splice(idx, 1);
   pathToRecipe.delete(watchPath);

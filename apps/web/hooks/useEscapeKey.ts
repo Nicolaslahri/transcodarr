@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
  * Closes a modal / drawer / popover when the user presses Escape.
@@ -12,19 +12,22 @@ import { useEffect } from 'react';
  * RecipePicker opens on top of the Watched-Folder editor), a single Esc
  * press should close ONLY the topmost one — not all of them at once.
  *
- * This is implemented via a small in-memory stack of open handlers. Each
- * call to useEscapeKey while `active=true` registers itself at the top of
- * the stack on mount and pops itself on unmount/deactivate. The keydown
- * listener (also installed once, lazily) only invokes the TOP entry.
- *
- * Modal authors should also:
- *   - Set role="dialog" aria-modal="true" on the panel
- *   - Provide a visible close button (Esc isn't discoverable for new users)
- *   - Consider returning focus to the trigger when closed
+ * Implementation notes:
+ *   - The stack is a list of refs (not closures). Callers typically pass
+ *     fresh arrow functions each render (`() => setOpen(false)`), so
+ *     pushing the closure directly would make every render add a new entry
+ *     and the cleanup remove a stale one. By pushing a ref-wrapper instead,
+ *     the stack entry is stable across renders; we just rebind the ref's
+ *     `.current` to the latest callback each render.
+ *   - The global keydown listener is installed lazily on first mount and
+ *     never removed (modals come and go often enough that re-installing
+ *     each time is wasteful, and a single dormant listener is harmless).
+ *   - Esc is `stopPropagation`'d only when there's a top-of-stack entry to
+ *     fire — empty stack lets Esc bubble naturally.
  */
 
-type Handler = () => void;
-const escapeStack: Handler[] = [];
+type HandlerRef = { current: () => void };
+const escapeStack: HandlerRef[] = [];
 let listenerInstalled = false;
 
 function ensureListener(): void {
@@ -34,24 +37,29 @@ function ensureListener(): void {
     if (e.key !== 'Escape') return;
     const top = escapeStack[escapeStack.length - 1];
     if (top) {
-      // Stop propagation so other (non-stack) Esc listeners don't also fire,
-      // and prevent default so browser-level Esc actions (form-clear, etc.)
-      // don't compound on top of our close handler.
       e.stopPropagation();
       e.preventDefault();
-      top();
+      top.current();
     }
   });
 }
 
 export function useEscapeKey(active: boolean, onEscape: () => void): void {
+  // Hold the latest callback in a ref so the stack entry stays stable even
+  // when callers pass a fresh arrow function on every render. Without this,
+  // each render would push a new closure and the cleanup function captured
+  // an older one — under React StrictMode (mount→unmount→mount) and rapid
+  // parent re-renders, Esc could fire a stale closure.
+  const handlerRef = useRef(onEscape);
+  handlerRef.current = onEscape;
+
   useEffect(() => {
     if (!active) return;
     ensureListener();
-    escapeStack.push(onEscape);
+    escapeStack.push(handlerRef);
     return () => {
-      const idx = escapeStack.lastIndexOf(onEscape);
+      const idx = escapeStack.lastIndexOf(handlerRef);
       if (idx !== -1) escapeStack.splice(idx, 1);
     };
-  }, [active, onEscape]);
+  }, [active]);
 }

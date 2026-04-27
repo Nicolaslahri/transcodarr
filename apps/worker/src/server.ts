@@ -288,12 +288,16 @@ async function transcodeInBackground(payload: JobPayload, mode: 'smb' | 'wireles
   const callbackBase = mainUrl.replace(/\/$/, '');
 
   // Also fix the download/upload URLs that Main embedded in the payload: replace
-  // their host with the correct host from mainUrl so they route properly.
+  // their host AND scheme with mainUrl's so the worker uses the canonical
+  // protocol the user configured. Without the scheme override, a Main that
+  // embedded http:// URLs would force the worker to plain HTTP even when
+  // mainUrl is https:// — defeating any TLS termination in front of Main.
   const fixPayloadUrl = (url?: string): string => {
     if (!url) return callbackBase;
     try {
       const base = new URL(callbackBase);
       const u    = new URL(url);
+      u.protocol = base.protocol;
       u.hostname = base.hostname;
       u.port     = base.port;
       return u.toString();

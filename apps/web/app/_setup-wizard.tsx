@@ -197,46 +197,55 @@ export default function SetupWizard() {
                   Main Node URL
                 </label>
                 <button
+                  type="button"
                   onClick={handleScan}
                   disabled={saving || scanState === 'scanning'}
+                  aria-busy={scanState === 'scanning'}
+                  aria-controls="setup-scan-results"
                   className="flex items-center gap-1.5 text-xs text-textMuted hover:text-white transition-colors disabled:opacity-40"
                 >
                   {scanState === 'scanning'
-                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Scanning (4 s)…</>
-                    : <><Wifi className="w-3.5 h-3.5" /> Scan network</>
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden /> Scanning (4 s)…</>
+                    : <><Wifi className="w-3.5 h-3.5" aria-hidden /> Scan network</>
                   }
                 </button>
               </div>
 
-              {/* Scan results */}
-              {scanState === 'done' && discovered.length > 0 && (
-                <div className="mb-2 space-y-1">
-                  {discovered.map(n => (
-                    <button
-                      key={`${n.host}:${n.port}`}
-                      onClick={() => setMainUrl(`http://${n.host}:${n.port}`)}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors
-                        ${mainUrl === `http://${n.host}:${n.port}`
-                          ? 'border-yellow-500/60 bg-yellow-500/10 text-white'
-                          : 'border-border bg-background text-textMuted hover:text-white hover:border-textMuted/50'
-                        }`}
-                    >
-                      <span className="font-mono">{n.host}:{n.port}</span>
-                      {mainUrl === `http://${n.host}:${n.port}` && <CheckCircle2 className="w-4 h-4 text-yellow-500" />}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {/* Scan results — wrapped in role=status aria-live so screen
+                  readers announce when the scan completes and how many
+                  nodes were found. */}
+              <div id="setup-scan-results" role="status" aria-live="polite">
+                {scanState === 'done' && discovered.length > 0 && (
+                  <div className="mb-2 space-y-1">
+                    <span className="sr-only">{`Scan complete. Found ${discovered.length} ${discovered.length === 1 ? 'node' : 'nodes'}.`}</span>
+                    {discovered.map(n => (
+                      <button
+                        type="button"
+                        key={`${n.host}:${n.port}`}
+                        onClick={() => setMainUrl(`http://${n.host}:${n.port}`)}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors
+                          ${mainUrl === `http://${n.host}:${n.port}`
+                            ? 'border-yellow-500/60 bg-yellow-500/10 text-white'
+                            : 'border-border bg-background text-textMuted hover:text-white hover:border-textMuted/50'
+                          }`}
+                      >
+                        <span className="font-mono">{n.host}:{n.port}</span>
+                        {mainUrl === `http://${n.host}:${n.port}` && <CheckCircle2 className="w-4 h-4 text-yellow-500" aria-hidden />}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
-              {scanState === 'done' && discovered.length === 0 && (
-                <div className="mb-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-background border border-border">
-                  <WifiOff className="w-4 h-4 text-textMuted shrink-0" />
-                  <p className="text-xs text-textMuted">
-                    No Main Nodes found via mDNS. Enter the IP address manually below
-                    — e.g. <span className="text-white font-mono">http://192.168.0.63:3001</span>
-                  </p>
-                </div>
-              )}
+                {scanState === 'done' && discovered.length === 0 && (
+                  <div className="mb-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-background border border-border">
+                    <WifiOff className="w-4 h-4 text-textMuted shrink-0" aria-hidden />
+                    <p className="text-xs text-textMuted">
+                      No Main Nodes found via mDNS. Enter the IP address manually below
+                      — e.g. <span className="text-white font-mono">http://192.168.0.63:3001</span>
+                    </p>
+                  </div>
+                )}
+              </div>
 
               <input
                 id="setup-main-url"

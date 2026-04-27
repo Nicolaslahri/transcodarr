@@ -1,6 +1,7 @@
 'use client';
 
 import { useAppState } from '@/hooks/useTranscodarrSocket';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { Activity, Cpu, HardDrive, Zap, ArrowRight, CheckCircle2, Clock, Thermometer, MemoryStick, Gauge } from 'lucide-react';
@@ -32,6 +33,10 @@ export default function OverviewPage() {
   const { stats, connected, apiUrl, jobs, workers } = useAppState();
   const containerRef = useRef<HTMLDivElement>(null);
   const [speedStats, setSpeedStats] = useState<SpeedStats | null>(null);
+  // Vestibular users opt out of motion via OS settings; GSAP runs its own
+  // RAF and ignores the CSS @media (prefers-reduced-motion) block, so we
+  // skip the count-up + stagger animations and snap straight to end values.
+  const reducedMotion = useReducedMotion();
 
   // Refresh speed stats whenever jobsTotal changes (a new completion) or on mount
   useEffect(() => {
@@ -50,6 +55,14 @@ export default function OverviewPage() {
   }, []);
 
   useEffect(() => {
+    if (reducedMotion) {
+      // Snap straight to end values without animating in.
+      gsap.utils.toArray<HTMLElement>('.stat-value').forEach((el) => {
+        const end = parseFloat(el.dataset.value || '0');
+        el.innerText = end % 1 !== 0 ? end.toFixed(1) : end.toString();
+      });
+      return;
+    }
     const ctx = gsap.context(() => {
       gsap.from('.stat-card', { y: 20, opacity: 0, duration: 0.7, stagger: 0.08, ease: 'power3.out' });
       gsap.utils.toArray<HTMLElement>('.stat-value').forEach((el) => {
@@ -64,7 +77,7 @@ export default function OverviewPage() {
       });
     }, containerRef);
     return () => ctx.revert();
-  }, [stats]);
+  }, [stats, reducedMotion]);
 
   const recentJobs = jobs.filter(j => j.status === 'complete' || j.status === 'failed').slice(0, 5);
   const activeJobs = jobs.filter(j => ['dispatched', 'receiving', 'transcoding', 'sending', 'swapping'].includes(j.status));

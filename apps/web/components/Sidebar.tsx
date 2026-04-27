@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, ListVideo, Cpu, Film, Settings, Zap, Radio, X } from 'lucide-react';
 import { useAppState, type AppMeta } from '@/hooks/useTranscodarrSocket';
-import { useEffect, useRef } from 'react';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { useCallback, useEffect, useRef } from 'react';
 
 const mainNav = [
   { href: '/overview', icon: LayoutDashboard, label: 'Overview' },
@@ -100,9 +101,9 @@ function SidebarInner({
               )}
               {showFleetBadge && (
                 <span
-                  // text-amber-200 / bg-amber-500/30 yields ≥4.5:1 contrast on
-                  // bg-surface — text-amber-300 / bg-amber-500/20 (previous)
-                  // was ~3.8:1, failing AA at this 12px font size.
+                  // amber-200 (#fde68a) on amber-500/30 over bg-surface (#121216)
+                  // computes to ~8:1 contrast — comfortably above WCAG 2.1 AA.
+                  // (Earlier comments quoted ≥4.5:1 which understated it.)
                   className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-amber-500/30 text-amber-200 text-xxs font-semibold"
                   aria-label={`${pendingWorkersCount} ${pendingWorkersCount === 1 ? 'worker' : 'workers'} awaiting approval`}
                 >
@@ -149,20 +150,33 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
   // Close drawer on route change
   useEffect(() => { onClose?.(); }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Esc closes the drawer; on open, snapshot the previously-focused element
-  // and move focus into the dialog. On close, restore focus so the user
-  // resumes navigation where they were instead of dropping to <body>.
+  // Esc closes the drawer via the shared stack hook so nested modals (if any
+  // ever land inside the drawer) get correct top-of-stack semantics.
+  const handleEscape = useCallback(() => onClose?.(), [onClose]);
+  useEscapeKey(mobileOpen, handleEscape);
+
+  // Focus management: on open, snapshot document.activeElement and move
+  // focus into the dialog (close button). On close, restore focus to that
+  // element so the user resumes where they were. If the original trigger
+  // was unmounted (e.g. route changed), fall back to the <main> element so
+  // focus never silently lands on <body>.
   useEffect(() => {
     if (!mobileOpen) return;
     previouslyFocused.current = (document.activeElement as HTMLElement) ?? null;
     closeButtonRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose?.(); };
-    window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('keydown', onKey);
-      previouslyFocused.current?.focus?.();
+      const trigger = previouslyFocused.current;
+      if (trigger && trigger.isConnected) {
+        trigger.focus?.();
+      } else {
+        const fallback = document.querySelector<HTMLElement>('main');
+        if (fallback) {
+          if (!fallback.hasAttribute('tabindex')) fallback.setAttribute('tabindex', '-1');
+          fallback.focus();
+        }
+      }
     };
-  }, [mobileOpen, onClose]);
+  }, [mobileOpen]);
 
   return (
     <>

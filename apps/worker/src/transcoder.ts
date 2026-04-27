@@ -103,6 +103,15 @@ const DANGEROUS_FFMPEG_PAIRS: Array<[string, string]> = [
   ['-f', 'tee'],
 ];
 
+// Single-arg flags that are dangerous regardless of position or whether a
+// value follows. Lifted out of the pair check so the trailing-arg case is
+// also caught (a bare `-init_hw_device` at the end of args used to slip through).
+const DANGEROUS_FFMPEG_FLAGS = new Set([
+  '-init_hw_device',
+  '-attach',
+  '-dump_attachment',
+]);
+
 export function sanitizeFfmpegArgs(args: string[]): { ok: true } | { ok: false; reason: string } {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -115,6 +124,8 @@ export function sanitizeFfmpegArgs(args: string[]): { ok: true } | { ok: false; 
     if (arg === '-i') return { ok: false, reason: 'recipe args may not contain -i (input is set by worker)' };
     // Reject explicit output redirect — output path is set by worker
     if (arg === '-y' || arg === '-Y') return { ok: false, reason: 'recipe args may not contain -y / -Y' };
+    // Single-flag check: catches dangerous flags whether or not they're followed by a value.
+    if (DANGEROUS_FFMPEG_FLAGS.has(lower)) return { ok: false, reason: `dangerous flag "${arg}"` };
     // Pairwise check: catches argv-split forms like `['-f', 'lavfi']`
     if (i + 1 < args.length) {
       const next = (args[i + 1] ?? '').toLowerCase();

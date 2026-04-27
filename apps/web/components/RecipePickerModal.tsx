@@ -81,7 +81,7 @@ export function RecipePickerModal({ open, onClose, onSelect, selectedId, apiUrl 
   const community = recipes.filter(r =>  r.sourceUrl);
 
   return (
-    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} aria-hidden>
+    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"

@@ -16,7 +16,8 @@
     "dev:worker": "npm run shared:build && turbo dev --filter=@transcodarr/worker",
     "dev:web": "npm run shared:build && turbo dev --filter=@transcodarr/web",
     "lint": "turbo lint",
-    "type-check": "turbo type-check"
+    "type-check": "turbo type-check",
+    "test": "npm run -w @transcodarr/shared test"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

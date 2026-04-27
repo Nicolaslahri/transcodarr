@@ -6,7 +6,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { addWatchedPath, removeWatchedPath, manualScanDirectory, cancelScan } from '../watcher.js';
+import { addWatchedPath, removeWatchedPath, updateWatchedPathExcludes, manualScanDirectory, cancelScan } from '../watcher.js';
 import { invalidateSettingsCache } from '../settings-cache.js';
 import { fireWebhooks } from '../webhooks.js';
 import { isPrivateUrl } from '../ssrf.js';
@@ -258,8 +258,13 @@ export async function settingsRoutes(app: FastifyInstance) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, watchPath, recipe, recurse ? 1 : 0, extensions, priority, minSizeMb, preferred_audio_lang ?? null, preferred_subtitle_lang ?? null, scan_interval_hours, move_to ?? null, exclude_patterns ?? null);
 
-    // Dynamically hot-reload the watcher
-    addWatchedPath(watchPath, recipe);
+    // Dynamically hot-reload the watcher — pass exclude_patterns so the new
+    // path's exclude rules take effect immediately (without this, the patterns
+    // were only respected after a server restart).
+    const parsedExcludes = exclude_patterns
+      ? exclude_patterns.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+    addWatchedPath(watchPath, recipe, true, parsedExcludes);
 
     return { id, path: watchPath, recipe, enabled: true, recurse, extensions, priority, minSizeMb, createdAt: Date.now() };
   });
@@ -268,8 +273,13 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/paths/:id/scan', async (req, reply) => {
     const row = getDb().prepare('SELECT path, recipe, exclude_patterns FROM watched_paths WHERE id = ?').get(req.params.id) as any;
     if (!row) return reply.status(404).send({ error: 'Path not found' });
-    // Start asynchronous full directory scan
-    manualScanDirectory(row.path, row.recipe);
+    // Start asynchronous full directory scan — pass exclude_patterns so the
+    // scan honours them. Without this, manual scans previously enqueued
+    // every supported file ignoring user excludes.
+    const excludePatterns = row.exclude_patterns
+      ? (row.exclude_patterns as string).split(',').map((s: string) => s.trim()).filter(Boolean)
+      : [];
+    manualScanDirectory(row.path, row.recipe, excludePatterns);
     return { ok: true, queued: true };
   });
 
@@ -332,6 +342,19 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (fields.length) {
       vals.push(req.params.id);
       getDb().prepare(`UPDATE watched_paths SET ${fields.join(', ')} WHERE id = ?`).run(...vals);
+
+      // Sync the live watcher's in-memory exclude-patterns map when the user
+      // edits them. Without this update the new patterns took effect only
+      // after a server restart.
+      if (exclude_patterns !== undefined) {
+        const row = getDb().prepare('SELECT path FROM watched_paths WHERE id = ?').get(req.params.id) as any;
+        if (row?.path) {
+          const parsed = exclude_patterns
+            ? exclude_patterns.split(',').map(s => s.trim()).filter(Boolean)
+            : [];
+          updateWatchedPathExcludes(row.path, parsed);
+        }
+      }
     }
     return { ok: true };
   });

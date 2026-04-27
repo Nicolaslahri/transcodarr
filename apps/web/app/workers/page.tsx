@@ -205,8 +205,8 @@ export default function WorkersPage() {
       {addModalOpen && (
         <div
           // No backdrop-click-close — IP / port form. Close via Esc / X.
+          // No aria-hidden — would propagate to the dialog child.
           className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
-          aria-hidden
         >
           <div
             role="dialog"

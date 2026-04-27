@@ -147,6 +147,17 @@ export function addWatchedPath(watchPath: string, recipe: string, triggerScan = 
   }
 }
 
+// Called from settings API PUT when exclude_patterns is changed on an existing
+// row — keeps the live watcher's in-memory map in sync so newly added files
+// respect the updated patterns without requiring a server restart.
+export function updateWatchedPathExcludes(watchPath: string, excludePatterns: string[]): void {
+  if (excludePatterns.length === 0) {
+    pathToExcludePatterns.delete(watchPath);
+  } else {
+    pathToExcludePatterns.set(watchPath, excludePatterns);
+  }
+}
+
 // Called from settings API DELETE/disable — symmetric counterpart to addWatchedPath.
 // Decrements the refcount; only stops chokidar from watching when the count
 // reaches zero. NOTE: callers must call this once per `addWatchedPath` they

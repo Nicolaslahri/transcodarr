@@ -139,9 +139,10 @@ function FsBrowser({
   if (!open) return null;
   return (
     <div
+      // No aria-hidden — would propagate to the role="dialog" child and
+      // silence the entire dialog for screen readers.
       className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
       onClick={onClose}
-      aria-hidden
     >
       <div
         role="dialog"
@@ -575,8 +576,8 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
           // No onClick={closeForm} on the backdrop — this is a form with up to
           // a dozen fields and clicking outside used to silently discard all
           // unsaved input. Users close via Esc or the X button instead.
+          // No aria-hidden — would propagate to the dialog child.
           className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
-          aria-hidden
         >
           <div
             role="dialog"
@@ -1122,9 +1123,9 @@ function ImportRecipeModal({ open, onClose, onSuccess, apiUrl }: { open: boolean
 
   return (
     <div
+      // No aria-hidden — would propagate to the dialog child.
       className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
       onClick={onClose}
-      aria-hidden
     >
       <div
         role="dialog"
@@ -1304,8 +1305,8 @@ function CustomRecipeModal({ open, onClose, onSuccess, apiUrl, initial }: {
     <div
       // No backdrop-click-close on this form modal — accidental clicks would
       // discard ffmpeg args and recipe metadata. Close via Esc or X button.
+      // No aria-hidden — would propagate to the dialog child.
       className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
-      aria-hidden
     >
       <div
         role="dialog"

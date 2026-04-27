@@ -3,6 +3,7 @@
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import Link from 'next/link';
 import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown, FilePlus2, X, Plus, BookOpen } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -333,8 +334,10 @@ export default function QueuePage() {
       {quickAddOpen && (
         <div
           // No backdrop-click-close — this is a form. Close via Esc / X button.
+          // (No aria-hidden on this wrapper — putting it here used to propagate
+          //  to the role="dialog" child and silence the entire modal for screen
+          //  readers, defeating the modal's own a11y attributes.)
           className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 pt-20 lg:pt-4 animate-in fade-in duration-200"
-          aria-hidden
         >
           <div
             role="dialog"
@@ -473,7 +476,7 @@ export default function QueuePage() {
           <div className="flex items-center gap-3 p-4 mt-2 rounded-xl border bg-amber-500/5 border-amber-500/20 text-sm">
             <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
             <span className="text-amber-200 flex-1">No workers connected — jobs will dispatch automatically when a worker comes online.</span>
-            <a href="/fleet" className="text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2 shrink-0">Add Worker →</a>
+            <Link href="/workers" className="text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2 shrink-0">Add Worker →</Link>
           </div>
         )}
       </section>

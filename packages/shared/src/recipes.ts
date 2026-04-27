@@ -434,15 +434,20 @@ const VIDEO_FILTER_FLAGS = new Set(['-vf', '-filter:v', '-filter_complex']);
  * boundaries (`,name=`, `,name,`, `,name)`, `name=` at start) so audio
  * filters like `aformat=` don't trigger false positives.
  */
+// Pre-compiled per filter name so we don't allocate a fresh RegExp per
+// dispatch. Pre-boundary class `[,;\[\]]` includes `]` so named-stream
+// syntax like `[in0]format=yuv420p[out]` (where `format` is preceded by
+// `]`) matches correctly. Trailing-boundary class is unchanged.
+const CUDA_INCOMPATIBLE_FILTER_REGEXES = CUDA_INCOMPATIBLE_FILTER_NAMES.map(
+  name => new RegExp(`(^|[,;\\[\\]])${name}(?=[=,;\\]\\(]|$)`),
+);
+
 function customRecipeNeedsCpuPath(args: string[]): boolean {
   for (let i = 0; i < args.length - 1; i++) {
     if (!VIDEO_FILTER_FLAGS.has(args[i])) continue;
     const graph = args[i + 1];
     if (typeof graph !== 'string') continue;
-    // Boundary-anchored regex per filter: matches `name` only when preceded
-    // by start-of-string or `,` AND followed by `=`/`,`/`)`/`(`/end.
-    for (const name of CUDA_INCOMPATIBLE_FILTER_NAMES) {
-      const re = new RegExp(`(^|[,;\\[])${name}(?=[=,;\\]\\(]|$)`);
+    for (const re of CUDA_INCOMPATIBLE_FILTER_REGEXES) {
       if (re.test(graph)) return true;
     }
   }
@@ -719,8 +724,12 @@ export function shouldSkipFile(currentCodec: string, recipe: Recipe): boolean {
   const h264Aliases = ['h264', 'h.264', 'avc'];
   const av1Aliases  = ['av1'];
 
-  if (target === 'hevc') return hevcAliases.some(a => normalized.includes(a));
-  if (target === 'h264') return h264Aliases.some(a => normalized.includes(a));
-  if (target === 'av1')  return av1Aliases.some(a => normalized.includes(a));
+  // Both `target` and `normalized` may use either alias (recipe says 'h265',
+  // ffprobe says 'hevc', or vice versa). Match by ALIAS GROUP, not literal
+  // string — a community recipe with `targetCodec: 'h265'` should still
+  // recognise an `hevc`-codec file as already-encoded and skip it.
+  if (hevcAliases.includes(target)) return hevcAliases.some(a => normalized.includes(a));
+  if (h264Aliases.includes(target)) return h264Aliases.some(a => normalized.includes(a));
+  if (av1Aliases.includes(target))  return av1Aliases.some(a => normalized.includes(a));
   return normalized.includes(target);
 }

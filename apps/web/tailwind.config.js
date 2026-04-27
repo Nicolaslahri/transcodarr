@@ -38,9 +38,16 @@ module.exports = {
           '0%':   { transform: 'translateX(-100%)' },
           '100%': { transform: 'translateX(400%)' },
         },
+        // CRITICAL: 100% keyframes in fill-mode-`both` animations must NOT
+        // include a non-`none` transform value. Even `translateY(0)` /
+        // `translateX(0)` / `scale(1)` qualify as "having a transform" per
+        // CSS spec, and create a containing block for `position: fixed`
+        // descendants — modals would anchor to whichever animated ancestor
+        // wraps them instead of the viewport. Omit the transform line so it
+        // reverts to the base computed value (`none`) at end-of-animation.
         'fade-up': {
           '0%':   { opacity: '0', transform: 'translateY(14px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' },
+          '100%': { opacity: '1' },
         },
         'fade-in': {
           '0%':   { opacity: '0' },
@@ -48,15 +55,15 @@ module.exports = {
         },
         'scale-in': {
           '0%':   { opacity: '0', transform: 'scale(0.94)' },
-          '100%': { opacity: '1', transform: 'scale(1)' },
+          '100%': { opacity: '1' },
         },
         'slide-down': {
           '0%':   { opacity: '0', transform: 'translateY(-10px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' },
+          '100%': { opacity: '1' },
         },
         'slide-right': {
           '0%':   { opacity: '0', transform: 'translateX(-10px)' },
-          '100%': { opacity: '1', transform: 'translateX(0)' },
+          '100%': { opacity: '1' },
         },
         'glow-pulse': {
           '0%, 100%': { boxShadow: '0 0 0 0 rgba(0,217,255,0)' },

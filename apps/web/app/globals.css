@@ -168,9 +168,20 @@ a[role="button"] {
 }
 
 /* ─── Scan keyframes ─────────────────────────────────────────────────────────*/
+/* DO NOT add `transform: translateY(0)` (or any non-`none` transform) to the
+ * 100% keyframe of any animation that uses `animation-fill-mode: both`.
+ * Per CSS spec, a non-none transform on an ancestor creates a containing
+ * block for `position: fixed` descendants — and `both` fill mode preserves
+ * the end-state values indefinitely. That made every modal in the app
+ * anchor to whichever animate-section ancestor wrapped it, instead of the
+ * viewport. Modals appeared inside page content. Three people-hours and a
+ * lot of patience were spent chasing red herrings before this was found.
+ *
+ * The 100% keyframes here OMIT `transform` entirely so the property reverts
+ * to its base computed value (`none`) after the animation ends. */
 @keyframes fade-up {
   0%   { opacity: 0; transform: translateY(14px); }
-  100% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 1; }
 }
 @keyframes fade-in {
   0%   { opacity: 0; }
@@ -192,7 +203,7 @@ a[role="button"] {
 }
 @keyframes slide-down {
   0%   { opacity: 0; transform: translateY(-10px); }
-  100% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 1; }   /* see fade-up comment — no transform at end */
 }
 @keyframes glow-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(0,217,255,0); }

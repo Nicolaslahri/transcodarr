@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { X, ChevronRight, ExternalLink, Check, Download, Trash2, Loader2 } from 'lucide-react';
 import type { Recipe } from '@transcodarr/shared';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { Modal } from '@/components/Modal';
 
 interface Props {
   open: boolean;
@@ -74,13 +75,12 @@ export function RecipePickerModal({ open, onClose, onSelect, selectedId, apiUrl 
     if (hovered?.id === id) setHovered(null);
   };
 
-  if (!open) return null;
-
   const detail = hovered ?? recipes.find(r => r.id === selectedId) ?? recipes[0];
   const builtIn   = recipes.filter(r => !r.sourceUrl);
   const community = recipes.filter(r =>  r.sourceUrl);
 
   return (
+    <Modal open={open}>
     <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div
         role="dialog"
@@ -258,6 +258,7 @@ export function RecipePickerModal({ open, onClose, onSelect, selectedId, apiUrl 
         </div>
       </div>
     </div>
+    </Modal>
   );
 }
 

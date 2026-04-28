@@ -15,6 +15,7 @@ import { useAppState } from '@/hooks/useTranscodarrSocket';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { FileExplorerModal } from '@/components/FileExplorerModal';
 import { RecipePickerModal } from '@/components/RecipePickerModal';
+import { Modal } from '@/components/Modal';
 
 type Tab = 'folders' | 'filters' | 'recipes' | 'transfer' | 'notifications' | 'general';
 
@@ -136,11 +137,10 @@ function FsBrowser({
   // useEscapeKey closes the dialog on Esc — keyboard users expect this and
   // the audit flagged its absence as a WCAG 2.1.2 issue.
   useEscapeKey(open, onClose);
-  if (!open) return null;
   return (
+    <Modal open={open}>
     <div
-      // No aria-hidden — would propagate to the role="dialog" child and
-      // silence the entire dialog for screen readers.
+      // No aria-hidden — would propagate to the role="dialog" child.
       className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
       onClick={onClose}
     >
@@ -210,6 +210,7 @@ function FsBrowser({
         </div>
       </div>
     </div>
+    </Modal>
   );
 }
 
@@ -570,15 +571,15 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
         );
       })}
 
-      {/* Add / Edit modal */}
-      {adding && (
+      {/* Add / Edit modal — wrapped in <Modal> which portals to document.body
+          so ancestor transforms (animate-section's fade-up, etc.) can't
+          create a containing block that anchors `fixed inset-0` to the
+          page instead of the viewport. */}
+      <Modal open={adding}>
         <div
           // Layout pattern: backdrop is the scroll container (overflow-y-auto),
           // an inner min-h-full flex centers the dialog on tall viewports while
-          // letting the outer scroll on short ones. Without this, `flex
-          // items-center` on the backdrop ALONE pushed the dialog above the
-          // viewport whenever the modal exceeded `100vh - top padding`,
-          // leaving the title + close button unreachable.
+          // letting the outer scroll on short ones.
           //
           // No onClick={closeForm} on the backdrop — this is a form with up to
           // a dozen fields and clicking outside used to silently discard all
@@ -800,7 +801,7 @@ function WatchedFoldersPanel({ apiUrl }: { apiUrl: string }) {
           </div>
         </div>
         </div>
-      )}
+      </Modal>
 
       {!adding && !editingId && (
         <button

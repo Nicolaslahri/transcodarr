@@ -3,6 +3,7 @@
 import { useAppState, type ScanSummary, type ScanProgress } from '@/hooks/useTranscodarrSocket';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { Modal } from '@/components/Modal';
 import Link from 'next/link';
 import { Film, CheckCircle2, XCircle, AlertTriangle, Trash2, ArrowRight, Clock, Zap, ArrowDownToLine, Upload, RefreshCw, Timer, GripVertical, User, PauseCircle, PlayCircle, History, ChevronDown, FilePlus2, X, Plus, BookOpen } from 'lucide-react';
 import type { Job, WorkerInfo } from '@transcodarr/shared';
@@ -330,15 +331,12 @@ export default function QueuePage() {
         </div>
       </header>
 
-      {/* Quick-add file modal */}
-      {quickAddOpen && (
+      {/* Quick-add file modal — portaled via <Modal> to escape any ancestor
+          transform that would otherwise hijack `fixed inset-0`. */}
+      <Modal open={quickAddOpen}>
         <div
-          // Outer scrolls; inner min-h-full + flex centers content. See
-          // settings/page.tsx WatchedFolderModal for the rationale — without
-          // this pattern, `flex items-center` on a fixed-inset-0 backdrop
-          // pushes tall modals above the viewport on short screens.
+          // Outer scrolls; inner min-h-full + flex centers content.
           // No backdrop-click-close — this is a form. Close via Esc / X button.
-          // No aria-hidden — would propagate to the dialog child.
           className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm overflow-y-auto animate-in fade-in duration-200"
         >
         <div className="min-h-full flex items-center justify-center p-4">
@@ -414,7 +412,7 @@ export default function QueuePage() {
           </div>
         </div>
         </div>
-      )}
+      </Modal>
 
       {confirmClear && (
         <div className="flex items-center gap-3 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-sm animate-in fade-in duration-150">

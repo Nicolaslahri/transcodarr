@@ -3,6 +3,7 @@
 import { useAppState } from '@/hooks/useTranscodarrSocket';
 import { useToast } from '@/hooks/useToast';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { Modal } from '@/components/Modal';
 import {
   CheckCircle2, Cpu, Server, ShieldAlert, X, Plus, Trash2,
   Zap, Download, Upload, Settings2, Wifi, HardDrive, AlertTriangle,
@@ -201,11 +202,10 @@ export default function WorkersPage() {
         )}
       </section>
 
-      {/* Add Worker Modal */}
-      {addModalOpen && (
+      {/* Add Worker Modal — portaled via <Modal> */}
+      <Modal open={addModalOpen}>
         <div
           // No backdrop-click-close — IP / port form. Close via Esc / X.
-          // No aria-hidden — would propagate to the dialog child.
           className="modal-overlay fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4"
         >
           <div
@@ -256,7 +256,7 @@ export default function WorkersPage() {
             </form>
           </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }
